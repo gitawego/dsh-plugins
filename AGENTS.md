@@ -30,10 +30,15 @@ delegation is structurally impossible); text-only primaries get a visible
   `dsh-host-webserver` added for M3). Runtime deps: `sharp` +
   `@img/sharp-wasm32` (host Termux uses the wasm32 variant; the DSH install
   at dsh-global already ships it).
-- **Web profile install:** `dsh-vision` is registered in the `web` profile
-  (`~/.dsh/profiles/web/package.json` deps + `dsh.profile.bundles` +
-  `node_modules/dsh-vision -> ~/workspace/dsh-vision` symlink). Composed tree
-  verified via `dsh --profile web --dump-config` (row `- id: vision, name: dsh-vision`).
+- **Web profile install (official `dsh plugin`):** the `web` profile declares
+  `"dsh-vision": "file:/data/data/com.termux/files/home/workspace/dsh-vision"` in
+  `~/.dsh/profiles/web/package.json` dependencies + `dsh-vision` in
+  `dsh.profile.bundles`, and was materialized with
+  `dsh plugin --profile web install` (pnpm install + the dsh bundle reconcile) —
+  `node_modules/dsh-vision` is now a pnpm-managed link into the store and
+  `pnpm-lock.yaml` exists. The file: dep is a LIVE link to the source dir, so
+  rebuilds in the repo are picked up. Composed tree verified via
+  `dsh --profile web --dump-config` (row `- id: vision, name: dsh-vision`).
   **The running GUI still needs a restart to load it** (client bundles only
   refresh via the loader; the web patch disables client-hmr).
 
@@ -139,10 +144,12 @@ delegation is structurally impossible); text-only primaries get a visible
    - `package.json`: `exports["./client"]`, `dsh.client {platform:'web',
      inject:[runtime, ui-tool, ui-settings, locale]}`, build script = server +
      client tsc + wrap; client packages added as devDeps + peers.
-9. **Installed into the web profile** (see "Web profile install" above). pnpm 12 rc
-   rejects path specs on `dsh plugin add` ("should have a @scope"), so the install
-   is manual: symlink + manifest entry. Composed tree verified; runtime load
-   requires a GUI restart.
+9. **Installed into the web profile via the official command** (see "Web profile
+   install" above): `dsh plugin --profile web install` (pnpm install + reconcile)
+   against a manifest-declared `file:` dependency — because pnpm 12 rc rejects
+   path specs on `dsh plugin add <path>` ("should have a @scope", proven with a
+   minimal probe package). Composed tree verified; runtime load requires a GUI
+   restart.
 
 ## What is NOT done (next milestones)
 
@@ -194,10 +201,14 @@ delegation is structurally impossible); text-only primaries get a visible
 5. **The `write` tool is unusable here** (EACCES on the atomic-link step even in the
    session workspace) — but the `edit` tool works; bash heredocs are the reliable
    path for whole-file writes.
-6. **pnpm 12 rc (used by `dsh plugin`)** rejects local path specs ("Package name … is
-   invalid, it should have a @scope"). Manual install: symlink the package into the
-   profile's `node_modules` + add it to the profile `package.json` dependencies and
-   `dsh.profile.bundles` (the `dsh plugin` reconcile step would do this otherwise).
+6. **pnpm 12 rc (used by `dsh plugin`)** rejects local path specs on
+   `dsh plugin add <path>` ("Package name … is invalid, it should have a @scope";
+   registry adds work, every `file:`/`link:`/relative form fails — proven with a
+   probe package). The official sequence that WORKS: declare the dependency in the
+   profile `package.json` as `"<name>": "file:</abs/path>"` (exactly what pnpm add
+   would have written), then run `dsh plugin --profile web install` — pnpm install
+   materializes it as a proper store link and the dsh reconcile step adds it to
+   `dsh.profile.bundles`. file: deps stay live-linked to the source dir.
 
 ## Useful reference paths
 
