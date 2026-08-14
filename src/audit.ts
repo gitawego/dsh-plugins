@@ -17,7 +17,7 @@ export interface AuditEntry {
   error_code: string | undefined
   latency_ms: number
   local_only: boolean
-  transport?: 'native' | 'http'
+  transport?: 'subagent' | 'http'
 }
 
 /** Resolve the audit log path: custom path (with ~ expansion) or the default

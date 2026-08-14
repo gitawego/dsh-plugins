@@ -41,7 +41,7 @@ function formatConfigStatus(c: ResolvedVisionConfig): string {
     'Vision tool config:',
     `  enabled:          ${c.enabled}`,
     `  provider/model:   ${c.provider && c.model ? `${c.provider}/${c.model}` : '(not set)'}`,
-    `  delegation:       ${c.delegation} (native uses provider/model; http uses the http block)`,
+    `  delegation:       ${c.delegation} (auto/native: sub-agent with provider/model; http: the http block)`,
     `  http endpoint:    ${c.http.baseUrl ? `${c.http.baseUrl} model=${c.http.model ?? '(unset)'} credential=${c.http.credential ? String(c.http.credential) : '(unset)'}` : '(not set)'}`,
     `  maxDimension:     ${c.maxDimension}px`,
     `  jpegQuality:      ${c.jpegQuality}`,

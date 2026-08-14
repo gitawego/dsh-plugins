@@ -1,10 +1,8 @@
-/** Delegation transports. http = exact pi-vision port (OpenAI-compatible
- *  /chat/completions or Anthropic /v1/messages with base64 image parts).
- *  native = ctx.llm.stream with a durable ImageBlock attachment (pi-ai
- *  adapter resolves the ref; retry/metering come from the harness). */
-import type { AttachmentStore, ImageAttachmentRef, ImageMediaType } from '@deepseek-ai/dsh-attachment'
-import type { BlockAssembler, GenerateOptions, LlmRuntime, StreamChunk } from '@deepseek-ai/dsh-llm'
-import { createUserMessage } from '@deepseek-ai/dsh-llm'
+/** Delegation transports. Per the DESIGN RULE, delegation is a DSH subagent
+ *  with the vision model (delegate.ts); the http transport here is the
+ *  plugin's own direct endpoint call (OpenAI-compatible /chat/completions or
+ *  Anthropic /v1/messages with base64 image parts) for delegation=http — it
+ *  is NOT another agent tool and does not touch the attachment store. */
 import type { ReasoningLevel } from './config.ts'
 import type { LoadedImage } from './image.ts'
 
@@ -120,98 +118,3 @@ export async function callHttpVision(opts: HttpCallOptions): Promise<string> {
   return text
 }
 
-export interface LlmLike {
-  stream(options: GenerateOptions): AsyncIterable<StreamChunk>
-}
-
-export interface AttachmentsLike {
-  saveImage(input: { data: Uint8Array; mediaType: ImageMediaType; name?: string }): Promise<ImageAttachmentRef>
-}
-
-export interface NativeCallOptions {
-  llm: LlmLike
-  attachments: AttachmentsLike
-  provider: string
-  model: string
-  system?: string
-  reasoningEffort?: string
-  temperature?: number
-  maxTokens?: number
-  signal?: AbortSignal
-}
-
-/** Filesystem error codes that mean the attachment store cannot persist the
- *  image on this host (permission denied, read-only filesystem, quota/space),
- *  across platforms. Store VALIDATION errors (ImageTooLarge etc.) have no
- *  errno code and pass through untouched. */
-const ATTACHMENT_STORE_FS_CODES = new Set(['EACCES', 'EPERM', 'EROFS', 'ENOSPC', 'EDQUOT'])
-
-/** Walk the cause chain (bounded) looking for an errno code. */
-export function fsErrorCode(error: unknown, depth = 3): string | undefined {
-  let current: unknown = error
-  for (let i = 0; i < depth && current instanceof Error; i++) {
-    const code = (current as NodeJS.ErrnoException).code
-    if (typeof code === 'string' && code.length > 0) return code
-    current = (current as Error).cause
-  }
-  return undefined
-}
-
-/** Native transport: save bytes as a durable attachment, send an ImageBlock
- *  through ctx.llm.stream, assemble the text reply. */
-export async function callNativeVision(opts: NativeCallOptions, image: LoadedImage, prompt: string): Promise<string> {
-  const mediaType = image.mimeType as ImageMediaType
-  let ref
-  try {
-    ref = await opts.attachments.saveImage({
-      data: Buffer.from(image.data, 'base64'),
-      mediaType,
-      name: 'describe_image',
-    })
-  } catch (error) {
-    // The attachment store could not persist the image (permission/filesystem
-    // limitation on this host — e.g. the durability sync cannot open a
-    // protected ancestor on Android). Give the user the working alternative
-    // instead of a bare errno, but pass validation errors through unchanged.
-    const code = fsErrorCode(error)
-    if (code !== undefined && ATTACHMENT_STORE_FS_CODES.has(code)) {
-      throw new Error(
-        'The native vision transport could not persist the image in the harness attachment store (filesystem error '
-        + code
-        + ' on this host). Use http delegation instead: Settings → Vision → Delegation → http, with http.baseUrl, a credential, and http.model configured.',
-      )
-    }
-    throw error
-  }
-  const message = createUserMessage({
-    content: [
-      { type: 'image', attachment: ref },
-      { type: 'text', text: prompt },
-    ],
-    source: { kind: 'user' },
-  })
-  const { BlockAssembler } = await import('@deepseek-ai/dsh-llm')
-  const assembler: BlockAssembler = new BlockAssembler()
-  for await (const chunk of opts.llm.stream({
-    provider: opts.provider,
-    model: opts.model,
-    messages: [message],
-    ...(opts.system === undefined ? {} : { system: opts.system }),
-    ...(opts.reasoningEffort === undefined ? {} : { reasoningEffort: opts.reasoningEffort as import('@deepseek-ai/dsh-llm').ReasoningEffortId }),
-    ...(opts.temperature === undefined ? {} : { temperature: opts.temperature }),
-    ...(opts.maxTokens === undefined ? {} : { maxTokens: opts.maxTokens }),
-    ...(opts.signal === undefined ? {} : { signal: opts.signal }),
-  })) {
-    assembler.push(chunk)
-  }
-  const text = assembler.blocks()
-    .filter((block): block is { type: 'text'; text: string } => block.type === 'text')
-    .map((block) => block.text)
-    .join('\n')
-    .trim()
-  if (text.length === 0) throw new Error('Vision model returned no content in the response')
-  return text
-}
-
-/** Minimal LlmRuntime surface the native transport needs. */
-export type { LlmRuntime }

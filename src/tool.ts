@@ -5,7 +5,7 @@ import { defineTool, type JsonValue, type ToolRunContext } from '@deepseek-ai/ds
 import type { VisionGate } from './exposure.ts'
 import type { ResolvedVisionConfig, ReasoningLevel } from './config.ts'
 import { MAX_BATCH_IMAGES, REASONING_LEVELS } from './config.ts'
-import { delegateToVisionModel, type DelegateDeps } from './delegate.ts'
+import { delegateToVisionModel, type CreateSubagent, type DelegateDeps } from './delegate.ts'
 import { mapWithConcurrency } from './batch.ts'
 import { buildBatchToolResult, type BatchImageOutcome } from './marker.ts'
 import type { VisionCache } from './cache.ts'
@@ -17,8 +17,8 @@ export interface DescribeImageDeps {
   cache: () => VisionCache | undefined
   home: string
   resolveCredential: (ref: CredentialRef) => Promise<{ value: string } | undefined>
-  llm: unknown
-  attachments: unknown
+  /** DESIGN RULE: spawn the vision-model DSH subagent (public API). */
+  createSubagent: CreateSubagent
   lifecycleSignal?: AbortSignal
 }
 
@@ -131,8 +131,7 @@ export function createDescribeImageTool(deps: DescribeImageDeps) {
         home: deps.home,
         workspace,
         resolveCredential: deps.resolveCredential,
-        llm: deps.llm as DelegateDeps['llm'],
-        attachments: deps.attachments as DelegateDeps['attachments'],
+        createSubagent: deps.createSubagent,
         signal,
         cache: deps.cache(),
       }

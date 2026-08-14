@@ -1,10 +1,13 @@
 /** DELEGATE pipeline: cache → local-only gate → compress → retry+fallback →
- *  audit. Port of pi-vision's delegateToVisionModel, with injected seams so
- *  tests never touch the network or a real DSH ctx. */
-import type { CredentialRef } from '@deepseek-ai/dsh-credentials'
-import type { ImageAttachmentRef } from '@deepseek-ai/dsh-attachment'
-import type { GenerateOptions, StreamChunk } from '@deepseek-ai/dsh-llm'
-import type { ModelModality } from '@deepseek-ai/dsh-llm'
+ *  audit. Per the NON-NEGOTIABLE DESIGN RULE, the vision model is driven as a
+ *  DSH SUBAGENT (ctx.agents.create with the vision model; the image is sent by
+ *  FILEPATH in a normal text message — the subagent's own pre-step paste hook
+ *  attaches it for the multimodal primary). NO attachment store, NO
+ *  llm.stream-with-ImageBlock, NO base64 in the message, NO pi-ai internals.
+ *  delegation=http keeps the plugin's own direct endpoint call (config-driven,
+ *  not another agent tool). */
+import type { UserMessage } from '@deepseek-ai/dsh-llm'
+import { createUserMessage } from '@deepseek-ai/dsh-llm'
 import type { ResolvedVisionConfig, ReasoningLevel } from './config.ts'
 import { isConfiguredForDelegation } from './config.ts'
 import { loadImage, compressImage, type LoadedImage } from './image.ts'
@@ -12,7 +15,7 @@ import { cacheKey, type VisionCache } from './cache.ts'
 import {
   appendAuditEntry, resolveAuditPath, truncateImagePathForLog, type AuditEntry,
 } from './audit.ts'
-import { callHttpVision, callNativeVision, maxTokensFor, type HttpProtocol } from './transport.ts'
+import { callHttpVision, maxTokensFor, type HttpProtocol } from './transport.ts'
 import { VisionError } from './errors.ts'
 
 export interface DelegateParams {
@@ -26,19 +29,21 @@ export interface CredentialLike {
   value: string
 }
 
-/** Minimal model-metadata seam for transport selection (native vs http). */
-export interface ModelInfoLike {
-  inputModalities?: readonly ModelModality[]
+/** A spawned vision sub-agent: send the image path, wait for quiescence,
+ *  read the final assistant text, dispose. */
+export interface SubagentHandle {
+  send(message: UserMessage): void
+  whenIdle(): Promise<void>
+  replyText(): string | undefined
+  dispose(): Promise<void>
 }
 
-export interface LlmLike {
-  resolveModelInfo(provider: string, model: string, signal?: AbortSignal): Promise<ModelInfoLike>
-  stream(options: GenerateOptions): AsyncIterable<StreamChunk>
-}
-
-export interface AttachmentsLike {
-  saveImage(input: { data: Uint8Array; mediaType: string; name?: string }): Promise<ImageAttachmentRef>
-}
+/** Create the sub-agent with the vision model (DSH public API seam). */
+export type CreateSubagent = (opts: {
+  provider: string
+  model: string
+  cwd: string
+}) => Promise<SubagentHandle>
 
 export interface DelegateDeps {
   config: ResolvedVisionConfig
@@ -46,11 +51,9 @@ export interface DelegateDeps {
   home: string
   /** Workspace root used to resolve relative image paths. */
   workspace: string
-  resolveCredential: (ref: CredentialRef) => Promise<CredentialLike | undefined>
-  /** Required for the native transport (delegation auto/native). */
-  llm?: LlmLike
-  /** Required for the native transport (durable image attachment). */
-  attachments?: AttachmentsLike
+  resolveCredential: (ref: import('@deepseek-ai/dsh-credentials').CredentialRef) => Promise<CredentialLike | undefined>
+  /** Spawn the vision-model sub-agent (DSH public API, DESIGN RULE). */
+  createSubagent: CreateSubagent
   signal?: AbortSignal
   cache?: VisionCache
 }
@@ -66,7 +69,7 @@ export interface DelegateSuccess {
     reasoning: ReasoningLevel
     cached: boolean
     fallback: boolean
-    transport: 'native' | 'http'
+    transport: 'subagent' | 'http'
   }
 }
 
@@ -125,7 +128,7 @@ export async function withRetry<T>(
 const NOT_CONFIGURED_MSG = [
   'Vision tool is not configured.',
   '',
-  'Use /vision show or the Web Settings to set the vision provider and model, or the http endpoint fields for raw-http delegation.',
+  'Use /vision show or the Web Settings to set the vision provider and model (an image-capable model from the harness catalog), or the http endpoint fields for raw-http delegation.',
   'For delegation: auto/native needs provider+model of a registered image-capable model; http needs http.baseUrl, http.credential (a DSH Credential reference), and http.model.',
 ].join('\n')
 
@@ -160,37 +163,71 @@ async function audit(deps: DelegateDeps, entry: AuditEntry): Promise<void> {
   }
 }
 
+/** The sub-agent message body: the image FILEPATH (never base64, never an
+ *  ImageBlock — the subagent's own paste hook attaches it for the multimodal
+ *  primary) plus the request and optional system prompt. */
+export function buildSubagentPrompt(imagePath: string, prompt: string, systemPrompt?: string): string {
+  const lines = [
+    'You are a vision analysis sub-agent. Read the image referenced by the path below and answer the request.',
+    'Respond with the description/answer text only — do not call any tools.',
+    `Image path: ${imagePath}`,
+    `Request: ${prompt}`,
+  ]
+  if (systemPrompt !== undefined && systemPrompt.length > 0) lines.push(`Guidelines: ${systemPrompt}`)
+  return lines.join('\n')
+}
+
+/** Run one vision-model sub-agent and return its final text. */
+async function delegateToSubagent(
+  deps: DelegateDeps,
+  params: DelegateParams,
+  model: { provider: string; model: string },
+  signal: AbortSignal | undefined,
+): Promise<{ text: string; model: string }> {
+  signal?.throwIfAborted()
+  const handle = await deps.createSubagent({
+    provider: model.provider,
+    model: model.model,
+    cwd: deps.workspace,
+  })
+  try {
+    // A NORMAL user-sourced message carrying the filepath: the subagent's own
+    // pre-step paste hook turns the path token into markers + a native
+    // ImageBlock attachment for its multimodal primary (the same UX a user
+    // pasting the path gets). Never base64, never a plugin-injected ImageBlock.
+    handle.send(createUserMessage({
+      content: [{ type: 'text', text: buildSubagentPrompt(params.image_path, params.prompt, deps.config.systemPrompt) }],
+      source: { kind: 'user' },
+    }))
+    await handle.whenIdle()
+    signal?.throwIfAborted()
+    const text = handle.replyText()?.trim()
+    if (text === undefined || text.length === 0) throw new Error('vision subagent returned no content')
+    return { text, model: `${model.provider}/${model.model}` }
+  } finally {
+    await handle.dispose()
+  }
+}
+
 interface ResolvedTransport {
-  kind: 'native' | 'http'
+  kind: 'subagent' | 'http'
   label: string
 }
 
-/** Decide the transport for this call (delegation: auto → native when the
- *  configured provider/model reports image modality, else http). */
+/** Decide the transport for this call (delegation auto/native → subagent with
+ *  the configured vision model; http → the plugin's own endpoint call). */
 async function resolveTransport(deps: DelegateDeps): Promise<ResolvedTransport> {
   const mode = deps.config.delegation
-  if (mode === 'http') return { kind: 'http', label: `${deps.config.http.baseUrl}/${deps.config.http.model}` }
-  if (mode === 'native') {
-    if (deps.llm === undefined || deps.attachments === undefined) {
-      throw new VisionError('not_configured', 'delegation=native requires the llm and attachments services')
+  if (mode === 'http') {
+    if (!deps.config.http.baseUrl || !deps.config.http.credential || !deps.config.http.model) {
+      throw new VisionError('not_configured', NOT_CONFIGURED_MSG)
     }
-    return { kind: 'native', label: `${deps.config.provider}/${deps.config.model}` }
+    return { kind: 'http', label: `${deps.config.http.baseUrl}/${deps.config.http.model}` }
   }
-  // auto
-  if (deps.config.provider && deps.config.model && deps.llm !== undefined && deps.attachments !== undefined) {
-    try {
-      const info = await deps.llm.resolveModelInfo(deps.config.provider, deps.config.model, deps.signal)
-      if (info.inputModalities?.includes('image')) {
-        return { kind: 'native', label: `${deps.config.provider}/${deps.config.model}` }
-      }
-    } catch {
-      /* fall through to http */
-    }
+  if (deps.config.provider && deps.config.model) {
+    return { kind: 'subagent', label: `${deps.config.provider}/${deps.config.model}` }
   }
-  if (!deps.config.http.baseUrl || !deps.config.http.credential || !deps.config.http.model) {
-    throw new VisionError('not_configured', NOT_CONFIGURED_MSG)
-  }
-  return { kind: 'http', label: `${deps.config.http.baseUrl}/${deps.config.http.model}` }
+  throw new VisionError('not_configured', NOT_CONFIGURED_MSG)
 }
 
 async function callTransport(
@@ -200,25 +237,13 @@ async function callTransport(
   params: DelegateParams,
   maxTokens: number,
 ): Promise<{ text: string; model: string }> {
-  if (transport.kind === 'native') {
-    const text = await callNativeVision(
-      {
-        llm: deps.llm as LlmLike,
-        attachments: deps.attachments as AttachmentsLike,
-        provider: deps.config.provider as string,
-        model: deps.config.model as string,
-        system: deps.config.systemPrompt,
-        reasoningEffort: params.reasoning === 'off' ? undefined : params.reasoning,
-        temperature: 0,
-        maxTokens,
-        signal: deps.signal,
-      },
-      image,
-      params.prompt,
-    )
-    return { text, model: `${deps.config.provider}/${deps.config.model}` }
+  if (transport.kind === 'subagent') {
+    return delegateToSubagent(deps, params, {
+      provider: deps.config.provider as string,
+      model: deps.config.model as string,
+    }, deps.signal)
   }
-  const credential = await deps.resolveCredential(deps.config.http.credential as CredentialRef)
+  const credential = await deps.resolveCredential(deps.config.http.credential as import('@deepseek-ai/dsh-credentials').CredentialRef)
   if (credential === undefined) {
     throw new VisionError('auth_error', `Vision tool error: credential "${deps.config.http.credential}" is not configured. Run: dsh credentials set ${deps.config.http.credential}`)
   }
@@ -256,34 +281,16 @@ async function runFallback(
   if (transport.kind === 'http') {
     return {
       ok: false,
-      error: { code: 'vision_call_error', message: `Vision tool error: fallback requires the native transport (provider/model), but delegation uses http.` },
-      details: { primaryError: String(primaryErr instanceof Error ? primaryErr.message : primaryErr).slice(0, 120), fallbackModel: fallbackId },
-    }
-  }
-  if (deps.llm === undefined || deps.attachments === undefined) {
-    return {
-      ok: false,
-      error: { code: 'vision_call_error', message: 'Vision tool error: fallback requires the llm/attachments services.' },
+      error: { code: 'vision_call_error', message: 'Vision tool error: fallback requires the subagent transport (provider/model), but delegation uses http.' },
       details: { primaryError: String(primaryErr instanceof Error ? primaryErr.message : primaryErr).slice(0, 120), fallbackModel: fallbackId },
     }
   }
   try {
-    const text = await callNativeVision(
-      {
-        llm: deps.llm,
-        attachments: deps.attachments,
-        provider: deps.config.fallbackProvider,
-        model: deps.config.fallbackModel,
-        system: deps.config.systemPrompt,
-        reasoningEffort: params.reasoning === 'off' ? undefined : params.reasoning,
-        temperature: 0,
-        maxTokens,
-        signal: deps.signal,
-      },
-      image,
-      params.prompt,
-    )
-    return { ok: true, text, details: { model: fallbackId, image_path: params.image_path, prompt: params.prompt, compressed: params.compress, reasoning: params.reasoning, cached: false, fallback: true, transport: 'native' } }
+    const called = await delegateToSubagent(deps, params, {
+      provider: deps.config.fallbackProvider,
+      model: deps.config.fallbackModel,
+    }, deps.signal)
+    return { ok: true, text: called.text, details: { model: fallbackId, image_path: params.image_path, prompt: params.prompt, compressed: params.compress, reasoning: params.reasoning, cached: false, fallback: true, transport: 'subagent' } }
   } catch (fbErr) {
     return {
       ok: false,
@@ -439,3 +446,4 @@ export async function delegateToVisionModel(deps: DelegateDeps, params: Delegate
     details: { ...baseDetails, model: result.model, cached: false, fallback: result.fallback, transport: transport.kind },
   }
 }
+
