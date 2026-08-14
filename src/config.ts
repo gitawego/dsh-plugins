@@ -80,7 +80,9 @@ export const DEFAULT_CONFIG: VisionConfig = {
   retryBackoffMs: 500,
   fallbackProvider: undefined,
   fallbackModel: undefined,
-  markerStyle: 'code',
+  // 'plain' keeps [Image-#N] markers readable in plain-text chat rendering
+  // (no literal backticks); switch via /vision marker-style code|bold|plain.
+  markerStyle: 'plain',
   textOnlyPasteMode: 'hint',
   autoDelegatePrompt: DEFAULT_AUTO_DELEGATE_PROMPT,
   autoDelegateTimeoutMs: 30000,
@@ -110,7 +112,7 @@ export const Config: Schema<VisionConfig> = z.object({
   retryBackoffMs: z.number().default(500),
   fallbackProvider: z.string(),
   fallbackModel: z.string(),
-  markerStyle: z.union([...MARKER_STYLES] as const).default('code'),
+  markerStyle: z.union([...MARKER_STYLES] as const).default('plain'),
   textOnlyPasteMode: z.union([...PASTE_MODES] as const).default('hint'),
   autoDelegatePrompt: z.string().default(DEFAULT_AUTO_DELEGATE_PROMPT),
   autoDelegateTimeoutMs: z.number().default(30000),
