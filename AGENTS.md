@@ -126,7 +126,11 @@ cache store (never a fallback result) → audit entry.
   NOT exposed (see LESSONS.md).
 - Browser plugin: settings section (provider/model selects fed by the live
   catalog, detected default, delegation/paste/limits fields), `describe_image`
-  tool card, en/zh locale (ns `vision`).
+  tool card, en/zh locale (ns `vision`). **Web-only by design**: the harness
+  loads client bundles only for `platform: "web"` (dsh-client-modules), so the
+  settings page and tool card exist only in the web profile; the HOST surface
+  (describe_image tool, /vision command, paste hook, delegation) runs in every
+  profile — tui/headless configure via `/vision` or `vision:` in settings.yaml.
 
 ### Config surface — `src/config.ts`
 - provider/model (sub-agent path) · delegation (auto/native/http) ·

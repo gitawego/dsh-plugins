@@ -96,6 +96,26 @@ Example http configuration (any OpenAI-compatible vision endpoint):
 > `http` block on Termux; `auto` falls back to http automatically when the store
 > is unavailable.
 
+## Platform support
+
+The harness loads client bundles only for `platform: "web"` (dsh-client-modules
+skips every other platform), so the plugin's **Web client** is available only in the
+`web` profile:
+
+| Surface                | web  | tui / headless |
+|------------------------|------|----------------|
+| `describe_image` tool     | ✓    | ✓ (host tool)  |
+| `/vision` command         | ✓    | ✓ (host command)|
+| Paste markers / auto      | ✓    | ✓ (agent/pre-step hook) |
+| Delegation (subagent/http)| ✓    | ✓              |
+| Settings page (Vision)    | ✓    | — (web-only slot) |
+| Tool call card            | ✓    | — (web-only slot) |
+
+For `tui` / `headless` profiles, configure everything with the `/vision` command
+(`/vision show`, `/vision config ...`) or by editing `vision:` in
+`~/.dsh/settings.yaml` — the settings page is a Web-only convenience, not a
+requirement.
+
 ## Development
 
 ```bash
