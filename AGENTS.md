@@ -11,8 +11,9 @@ Harness (DSH)**, ported 1:1 from [`@gitawego/pi-vision`](https://github.com/gita
 Full design: [SPEC.md](SPEC.md) (feature-parity matrix, architecture, KV-cache
 requirements §18, milestones §15).
 
-Core idea: multimodal primary models see images natively
-
+Core idea: multimodal primary models see images natively (`describe_image` is hidden —
+delegation is structurally impossible); text-only primaries get a visible
+`describe_image` tool that delegates through a cache/retry/fallback pipeline.
 
 ## Design rule — how describe_image must delegate (NON-NEGOTIABLE)
 
@@ -38,9 +39,7 @@ harness's generic agent/tool machinery instead of driving the vision model as a
 subagent, mirroring pi-vision for the pi agent (user directive).
 
 The current delegate.ts native path MUST be reimplemented as subagent-based
-delegation (TDD). Cache/retry/fallback/audit layers stay (orthogonal). (`describe_image` is hidden —
-delegation is structurally impossible); text-only primaries get a visible
-`describe_image` tool that delegates through a cache/retry/fallback pipeline.
+delegation (TDD). Cache/retry/fallback/audit layers stay (orthogonal).
 
 ## Repo state (as of handoff)
 
