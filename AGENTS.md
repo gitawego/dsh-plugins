@@ -11,7 +11,34 @@ Harness (DSH)**, ported 1:1 from [`@gitawego/pi-vision`](https://github.com/gita
 Full design: [SPEC.md](SPEC.md) (feature-parity matrix, architecture, KV-cache
 requirements §18, milestones §15).
 
-Core idea: multimodal primary models see images natively (`describe_image` is hidden —
+Core idea: multimodal primary models see images natively
+
+
+## Design rule — how describe_image must delegate (NON-NEGOTIABLE)
+
+The vision plugin must NEVER delegate to another agent tool, and must NOT depend on
+the harness attachment store or any adapter/pi-ai internals to carry the image.
+Delegation uses ONLY DSH public APIs:
+
+1. Find the vision-capable model from DSH's own registry: ctx.llm.listProviders() /
+   listModels() filtered on inputModalities including 'image' (data-driven, never
+   hardcoded; auto-detect already implements this).
+2. Spawn a DSH subagent with that model as its primary:
+   ctx.agents.create({ agentOptions: { provider, model: <vision model> } }).
+3. Send the subagent the image by FILEPATH (a normal message with the path) — the
+   subagent reads the image and returns its description. NO base64 in the message,
+   NO ctx.attachments.saveImage / ImageBlock transport, NO digging into
+   pi-ai/adapter internals, NO llm.stream with an ImageBlock for delegation.
+4. Return the subagent's text content to the caller; dispose the subagent.
+
+Rationale: the old native transport (ImageBlock -> ctx.attachments.saveImage ->
+ctx.llm.stream) is BROKEN on Android/Termux (the attachment store's durability walk
+opens /data/data -> EACCES) and is conceptually wrong — it routes through the
+harness's generic agent/tool machinery instead of driving the vision model as a
+subagent, mirroring pi-vision for the pi agent (user directive).
+
+The current delegate.ts native path MUST be reimplemented as subagent-based
+delegation (TDD). Cache/retry/fallback/audit layers stay (orthogonal). (`describe_image` is hidden —
 delegation is structurally impossible); text-only primaries get a visible
 `describe_image` tool that delegates through a cache/retry/fallback pipeline.
 
@@ -192,6 +219,9 @@ delegation is structurally impossible); text-only primaries get a visible
   loads + saves via /_dsh/vision/settings, describe an image (check audit tail
   + cache stats), the describe_image card renders, the /_dsh/vision/models
   catalog + detected default, KV-cache per SPEC §18.9.
+- **Reimplement delegation as subagent-based (DESIGN RULE above)**: replace the
+  native transport (saveImage + llm.stream) with a DSH subagent (ctx.agents.create
+  with the vision model, send the image filepath, return its content) — TDD.
 - **Native-transport e2e** against a real pi-ai vision route is untested; **auto-detect**
 - **Native vision path on this host is blocked by the tool sandbox (diagnosed):
   describe_image loads the image fine (audit source_hash matches sha256 of the
