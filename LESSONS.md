@@ -177,6 +177,31 @@ architecture and design rules; this file is the lessons recorder.**
     no new credential needed), http.model=minimax-m3` through the plugin's own
     /_dsh/vision/settings route (live). describe_image with the raw
     /storage/emulated/0/... path returned a full screenshot description.
+15. **CI/CD + publishable package name (user directive: "make sure the GitHub
+    action works as intended, package has correct name, npm token correctly
+    setup")**:
+    - The unscoped `dsh-vision` is ALREADY TAKEN on the npm registry (owner
+      danilky666, v0.2.0) — publishing under it fails. Renamed the package to
+      `@gitawego/dsh-vision` (matches the owner account and the NPM_TOKEN
+      scope, same pattern as `@gitawego/pi-vision`); removed `"private":
+      true` and added `publishConfig.access: public`. The DSH plugin
+      identity stays `dsh-vision` (cordis name, logs, cache dir, CSS);
+      only the client entry id follows the package name (the host keys the
+      boot graph by package name — `scripts/build-client.mjs` now derives
+      the `__ModuleLoader__.load({id})` from package.json instead of
+      hardcoding it). Web profile dep key + bundles entry updated to
+      `@gitawego/dsh-vision`; re-installed and verified via `--dump-config`
+      (row still `id: vision, name: dsh-vision`).
+    - Added `.github/workflows/ci.yml` (npm ci → typecheck → test → build
+      on push/PR) and `.github/workflows/release.yml` (tag `v*` → same
+      gates → idempotent skip-if-published → `npm publish --access public`
+      with `NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}` → GitHub Release),
+      modeled on pi-vision's pnpm workflows but npm-based (this repo ships
+      package-lock.json).
+    - **NPM_TOKEN is per-repo on GitHub** (no cross-repo secret sharing for
+      user accounts): pi-vision's Actions page has the token; the same VALUE
+      must be set as dsh-vision's `NPM_TOKEN` secret
+      (`gh secret set NPM_TOKEN`). Not set yet — one manual step.
 
 ## Diagnoses that shaped the design (deep-dives)
 

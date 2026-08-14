@@ -1,0 +1,76 @@
+name: Release
+
+# Publishes @gitawego/dsh-vision to npm on tag push (v*).
+# Uses the repository NPM_TOKEN secret — the same granular npm token used by
+# gitawego/pi-vision (Read-and-write, scoped to @gitawego, with "Bypass 2FA"
+# so no OTP is needed). Copy that token into this repo's Actions secrets:
+#   gh secret set NPM_TOKEN
+# (GitHub secrets are per-repository — there is no cross-repo sharing, so the
+# same token VALUE is set in each repo that needs it.)
+#
+# Idempotent: skips if the version is already on npm (safe to re-run).
+# Gates on typecheck + tests + build before publishing.
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write  # needed to create GitHub Releases on tag push
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          registry-url: https://registry.npmjs.org
+
+      - run: npm ci
+
+      - run: npm run typecheck
+
+      - run: npm test
+
+      - run: npm run build
+
+      - name: Skip if already published
+        id: check
+        run: |
+          set -u
+          ver=$(node -p "require('./package.json').version")
+          pkg=$(node -p "require('./package.json').name")
+          existing=$(npm view "$pkg@$ver" version 2>/dev/null || true)
+          if [ "$existing" = "$ver" ]; then
+            echo "::notice::$pkg@$ver already on npm — skipping publish"
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "Publishing $pkg@$ver"
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Publish
+        if: steps.check.outputs.skip != 'true'
+        env:
+          NODE_AUTH_TOKEN: ${ secrets.NPM_TOKEN }
+        run: npm publish --access public
+
+      # Keep GitHub Releases in sync with npm: create a release for the tag
+      # (auto-generated notes). Idempotent — skips if the release already exists.
+      - name: Create GitHub Release
+        if: success()
+        env:
+          GH_TOKEN: ${ github.token }
+        run: |
+          tag="${GITHUB_REF_NAME}"
+          if gh release view "$tag" >/dev/null 2>&1; then
+            echo "::notice::Release $tag already exists — skipping"
+          else
+            gh release create "$tag" --generate-notes --title "$tag"
+          fi
+
