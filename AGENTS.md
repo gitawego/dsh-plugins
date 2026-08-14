@@ -193,6 +193,18 @@ delegation is structurally impossible); text-only primaries get a visible
   + cache stats), the describe_image card renders, the /_dsh/vision/models
   catalog + detected default, KV-cache per SPEC §18.9.
 - **Native-transport e2e** against a real pi-ai vision route is untested; **auto-detect**
+- **Native vision path on this host is blocked by the tool sandbox (diagnosed):
+  describe_image loads the image fine (audit source_hash matches sha256 of the
+  bytes), then ctx.attachments.saveImage writes to DSH storage under ~/.dsh
+  (outside the session workspace) and the dsh-fs-sandbox denies it (EACCES ...
+  '/data/data') because the tool worker runs at the DEPLOYMENT DEFAULT sandbox
+  mode — workspace-write (writes only under workspaceRoot) — NOT the session's
+  sandbox/mode override. The documented lever: the web-app row is
+  config.mode: process.env.DSH_PERMISSION_MODE ?? 'workspace-write', so launch
+  with DSH_PERMISSION_MODE=danger-full-access dsh web to run tools unconfined
+  (what this session's bash already uses). Alternative: the http transport
+  avoids the attachment service entirely. SPEC §16.4 allowedDirs does NOT fix
+  this — the denial is the harness worker's, not the plugin's.
   untested with a live pi-ai provider (both need a configured image-capable route).
 - **M4 — polish**: compose preview slot, headless profile verification, README
   expansion, CHANGELOG.
