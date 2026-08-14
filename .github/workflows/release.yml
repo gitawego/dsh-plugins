@@ -46,8 +46,8 @@ jobs:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
           echo "whoami: $(npm whoami 2>&1 || true)"
-          echo "--- token list json (token values masked by GH) ---"
-          npm token list --json 2>&1 | head -120 || true
+          echo "--- raw PUT probe ---"
+          curl -s -X PUT "https://registry.npmjs.org/@gitawego%2fdsh-vision"             -H "Authorization: Bearer ${NODE_AUTH_TOKEN}"             -H "Content-Type: application/json"             -d '{"_id":"@gitawego/dsh-vision","name":"@gitawego/dsh-vision","description":"probe","dist-tags":{},"versions":{},"access":"public"}'             -w "\nHTTP_STATUS:%{http_code}\n" || true
 
       - name: Skip if already published
         id: check
