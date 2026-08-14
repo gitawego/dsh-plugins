@@ -14,6 +14,7 @@
     "declarationMap": false,
     "sourceMap": false,
     "esModuleInterop": true,
+    "jsx": "react-jsx",
     "skipLibCheck": true,
     "forceConsistentCasingInFileNames": true,
     "isolatedModules": true,
@@ -27,5 +28,11 @@
   "include": [
     "src/**/*.ts",
     "tests/**/*.ts"
+  ],
+  "exclude": [
+    // The client-controller test imports src/client/index.tsx, which needs the
+    // client tsconfig (DOM lib + slot augmentations); the client itself is
+    // type-checked by `tsc -p tsconfig.client.json` in the typecheck script.
+    "tests/client-controller.spec.ts"
   ]
 }
