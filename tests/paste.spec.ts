@@ -2,6 +2,7 @@
  *  blocks, and the full pre-step transform with injected fakes (no DSH ctx). */
 import { describe, expect, it, beforeEach, afterEach } from 'vitest'
 import { mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { existsSync, readdirSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { Agent, PreStepDecision } from '@deepseek-ai/dsh-agent'
@@ -27,6 +28,17 @@ function userMessage(text: string): UserMessage {
   return createUserMessage({ content: [{ type: 'text', text }], source: { kind: 'user' } })
 }
 
+function userMessageWithImage(text: string, ref: ImageAttachmentRef): UserMessage {
+  return createUserMessage({
+    content: [{ type: 'text', text }, { type: 'image', attachment: ref }],
+    source: { kind: 'user' },
+  })
+}
+
+const IMG_REF = {
+  attachmentId: 'att-img-1', mediaType: 'image/png', bytes: PNG_1x1.byteLength, width: 1, height: 1, name: 'pasted.png',
+} as ImageAttachmentRef
+
 function okResult(imagePath: string): DelegateResult {
   return {
     ok: true,
@@ -48,6 +60,8 @@ function makeDeps(overrides: Partial<PasteDeps> = {}): PasteDeps & { saveCalls: 
       saveCalls.push(input.mediaType)
       return { attachmentId: 'att-1', mediaType: input.mediaType, bytes: input.data.byteLength, width: 1, height: 1 } as ImageAttachmentRef
     },
+    readImage: async (ref) => ({ ref, data: new Uint8Array(PNG_1x1) }),
+    tmpDir: '/tmp/dsh-vision-paste-test',
     delegateFor: () => async (params) => {
       delegateCalls.push({ image_path: params.image_path, prompt: params.prompt })
       return okResult(params.image_path)
@@ -73,6 +87,15 @@ async function runHook(
 function textOf(msg: UserMessage): string {
   const block = msg.content.find((b): b is { type: 'text'; text: string } => b.type === 'text')
   return block?.text ?? ''
+}
+
+/** Join EVERY text block (the first one carries the collapsed message text;
+ *  block markers/notes are separate text blocks). */
+function allTextOf(msg: UserMessage): string {
+  return msg.content
+    .filter((b): b is { type: 'text'; text: string } => b.type === 'text')
+    .map((b) => b.text)
+    .join('\n')
 }
 
 describe('findImagePathTokens', () => {
@@ -287,3 +310,119 @@ describe('paste hook (pre-step transform)', () => {
   })
 })
 
+describe('paste hook — image BLOCK conversion for text-only primaries', () => {
+  let dir: string
+
+  beforeEach(async () => {
+    dir = await mkdtemp(join(tmpdir(), 'dsh-vision-blocks-'))
+  })
+
+  afterEach(async () => {
+    await rm(dir, { recursive: true, force: true })
+  })
+
+  function blockDeps(overrides: Partial<PasteDeps> = {}) {
+    return makeDeps({
+      tmpDir: dir,
+      config: () => resolveConfig(mergeConfig({ textOnlyPasteMode: 'auto', markerStyle: 'plain', provider: 'p', model: 'm' })),
+      ...overrides,
+    })
+  }
+
+  it('preserves image blocks untouched for multimodal primaries (passthrough)', async () => {
+    const deps = blockDeps({ isMultimodal: () => true })
+    const msg = userMessageWithImage('see this', IMG_REF)
+    const decision = await runHook(deps, makeAgent(dir), [msg])
+    expect(deps.saveCalls).toEqual([]) // existing block is NOT re-saved
+    expect(deps.delegateCalls).toHaveLength(0)
+    if (decision.kind === 'enter') {
+      const out = decision.messages[0]!
+      const images = out.content.filter((b) => b.type === 'image')
+      expect(images).toHaveLength(1) // block kept
+    }
+  })
+
+  it('auto mode: converts an image block to a temp-file description (image block removed)', async () => {
+    const deps = blockDeps()
+    const msg = userMessageWithImage('see this', IMG_REF)
+    const decision = await runHook(deps, makeAgent(dir), [msg])
+    expect(deps.delegateCalls).toHaveLength(1)
+    const delegatedPath = deps.delegateCalls[0]!.image_path
+    expect(delegatedPath.startsWith(dir)).toBe(true)
+    expect(delegatedPath.endsWith('.png')).toBe(true)
+    // Materialized during delegation, then cleaned up (description embedded + cached).
+    expect(existsSync(delegatedPath)).toBe(false)
+    if (decision.kind === 'enter') {
+      const out = decision.messages[0]!
+      expect(out.content.filter((b) => b.type === 'image')).toHaveLength(0) // raw block gone
+      const text = textOf(out)
+      expect(text).toContain('[Image-#1]')
+      expect(text).toContain('a cat on a mat') // delegated description
+      expect(text).toContain('auto-described')
+    }
+  })
+
+  it('hint mode: replaces the block with a marker and names the temp path (no delegate)', async () => {
+    const deps = blockDeps({
+      config: () => resolveConfig(mergeConfig({ textOnlyPasteMode: 'hint', markerStyle: 'plain', provider: 'p', model: 'm' })),
+    })
+    const msg = userMessageWithImage('see this', IMG_REF)
+    const decision = await runHook(deps, makeAgent(dir), [msg])
+    expect(deps.delegateCalls).toHaveLength(0)
+    if (decision.kind === 'enter') {
+      const out = decision.messages[0]!
+      expect(out.content.filter((b) => b.type === 'image')).toHaveLength(0)
+      const text = allTextOf(out)
+      expect(text).toContain('[Image-#1]')
+      expect(text).toContain('describe_image') // hint lets the model delegate on demand
+      expect(text).toContain(dir) // temp path is nameable
+    }
+    // hint mode keeps the materialized temp file so describe_image can read it later
+    expect(readdirSync(dir).filter((f) => f.endsWith('.png'))).toHaveLength(1)
+  })
+
+  it('off mode: replaces the block with a marker only', async () => {
+    const deps = blockDeps({
+      config: () => resolveConfig(mergeConfig({ textOnlyPasteMode: 'off', markerStyle: 'plain', provider: 'p', model: 'm' })),
+    })
+    const msg = userMessageWithImage('see this', IMG_REF)
+    const decision = await runHook(deps, makeAgent(dir), [msg])
+    expect(deps.delegateCalls).toHaveLength(0)
+    if (decision.kind === 'enter') {
+      const out = decision.messages[0]!
+      expect(out.content.filter((b) => b.type === 'image')).toHaveLength(0)
+      const text = allTextOf(out)
+      expect(text).toContain('[Image-#1]')
+      expect(text).not.toContain('describe_image')
+    }
+  })
+
+  it('never throws when reading a block fails; replaces it with a note', async () => {
+    const deps = blockDeps({
+      readImage: async () => { throw new Error('store unavailable') },
+    })
+    const msg = userMessageWithImage('see this', IMG_REF)
+    const decision = await runHook(deps, makeAgent(dir), [msg])
+    expect(deps.delegateCalls).toHaveLength(0)
+    if (decision.kind === 'enter') {
+      const out = decision.messages[0]!
+      expect(out.content.filter((b) => b.type === 'image')).toHaveLength(0)
+      expect(allTextOf(out)).toContain('unreadable')
+    }
+  })
+
+  it('combines path tokens and image blocks with sequential markers (auto)', async () => {
+    const deps = blockDeps()
+    const aPath = join(dir, 'a.png')
+    await writeFile(aPath, PNG_1x1)
+    const msg = userMessageWithImage(`compare ${aPath} and this`, IMG_REF)
+    const decision = await runHook(deps, makeAgent(dir), [msg])
+    expect(deps.delegateCalls).toHaveLength(2)
+    if (decision.kind === 'enter') {
+      const text = textOf(decision.messages[0]!)
+      expect(text).toContain('[Image-#1]') // path token first
+      expect(text).toContain('[Image-#2]') // block second
+      expect(text).toContain('a cat on a mat')
+    }
+  })
+})

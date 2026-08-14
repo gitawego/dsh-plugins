@@ -146,6 +146,11 @@ export function apply(ctx: Context, config: Partial<VisionConfig> = {}) {
     config: () => resolved,
     isMultimodal: (agent) => gate.current(agent)?.multimodal ?? false,
     saveAttachment: (input) => ctx.attachments.saveImage(input),
+    // Text-only primaries: image BLOCKS are materialized under the DSH home
+    // tmp dir (Termux: the OS tmpdir may be unwritable; home is always) and
+    // converted through the shared pipeline.
+    readImage: (ref, signal) => ctx.attachments.readImage(ref, signal),
+    tmpDir: join(home, 'tmp', 'dsh-vision'),
     delegateFor: (workspace) => (params, signal) => delegateToVisionModel(delegateDepsFor(workspace, signal), params),
     logger: ctx.logger,
   }))

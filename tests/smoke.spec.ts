@@ -197,5 +197,42 @@ describe('commands', () => {
     expect(cmd.name).toBe('vision')
     expect(cmd.input?.hint?.length ?? 0).toBeGreaterThan(0)
   })
+
+  it('session-status reports the tracked model switch state for the calling agent', async () => {
+    const tracked = { provider: 'p', model: 'glm-5.2', multimodal: false }
+    const cmd = createVisionCommand({
+      settings: { get: () => ({}) as never, update: async () => {}, mutate: async () => {}, replace: async () => {} },
+      config: () => ({
+        enabled: true,
+        textOnlyPasteMode: 'auto',
+        delegation: 'auto',
+        provider: 'vision', model: 'vl-1',
+        http: { baseUrl: undefined, credential: undefined, model: undefined, protocol: 'openai' },
+      }) as never,
+      gate: { resyncAll: () => {}, current: () => tracked } as never,
+      cache: () => undefined,
+      home: '/tmp',
+      detect: async () => undefined,
+    })
+    const invocation = {
+      commandId: 'c1' as never,
+      agent: {
+        session: {
+          requestHeader: () => ({ config: { provider: 'p', model: 'luna' } }),
+        },
+      } as never,
+      rawInput: 'session-status',
+      signal: new AbortController().signal,
+    } as never
+    const result = await cmd.handler?.(invocation)
+    expect(result?.kind).toBe('success')
+    const text = (result as { text: string }).text
+    expect(text).toContain('p/glm-5.2')
+    expect(text).toContain('text-only → images convert to text')
+    expect(text).toContain('p/luna')
+    expect(text).toContain('switch pending detection')
+    expect(text).toContain('describe_image:   visible')
+    expect(text).toContain('vision/vl-1')
+  })
 })
 
