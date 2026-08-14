@@ -5,8 +5,8 @@ everything a fresh session needs to resume the work.
 
 ## What this project is
 
-`dsh-vision` — a capability-aware vision + paste extension for **DeepSeek Harness
-(DSH)**, ported 1:1 from [`@gitawego/pi-vision`](https://github.com/gitawego/pi-vision)
+`dsh-vision` — a capability-aware vision + paste extension for **DeepSeek
+Harness (DSH)**, ported 1:1 from [`@gitawego/pi-vision`](https://github.com/gitawego/pi-vision)
 (v0.6.0). Private repo: **gitawego/dsh-vision** (clone: `~/workspace/dsh-vision`).
 Full design: [SPEC.md](SPEC.md) (feature-parity matrix, architecture, KV-cache
 requirements §18, milestones §15).
@@ -17,15 +17,25 @@ delegation is structurally impossible); text-only primaries get a visible
 
 ## Repo state (as of handoff)
 
-- **Commit:** `06f6cea` "M1: dsh-vision scaffold + describe_image tool …" — pushed to
-  `origin/main`. Branch `main` tracks `origin/main`.
-- **Status:** `npx tsc --noEmit` clean · `npm run build` works (lib/) · `npm test`
-  green (17 vitest tests in `tests/smoke.spec.ts`).
+- **Commit:** `95e07c5` "M3: Web client plugin …" — pushed to `origin/main`.
+  Branch `main` tracks `origin/main`. History: `06f6cea` M1, `11d1843` M2,
+  `95e07c5` M3.
+- **Status:** `npm run typecheck` clean (server + client tsconfigs) · `npm run
+  build` works (lib/ incl. the client bundle `lib/client.js`) · `npm test`
+  green (35 vitest tests: 17 in `tests/smoke.spec.ts`, 18 in `tests/paste.spec.ts`).
 - **`node_modules/` and `lib/` are gitignored** — a fresh checkout needs
   `npm install` + `npm run build`.
-- Dev deps installed from npm (`@deepseek-ai/*@0.1.0-rc.6` published). Runtime deps:
-  `sharp` + `@img/sharp-wasm32` (host Termux uses the wasm32 variant; the DSH install
+- Dev deps installed from npm (`@deepseek-ai/*@0.1.0-rc.6` published; client
+  packages `dsh-client-runtime/ui-slots/ui-tool/ui-settings/locale` +
+  `dsh-host-webserver` added for M3). Runtime deps: `sharp` +
+  `@img/sharp-wasm32` (host Termux uses the wasm32 variant; the DSH install
   at dsh-global already ships it).
+- **Web profile install:** `dsh-vision` is registered in the `web` profile
+  (`~/.dsh/profiles/web/package.json` deps + `dsh.profile.bundles` +
+  `node_modules/dsh-vision -> ~/workspace/dsh-vision` symlink). Composed tree
+  verified via `dsh --profile web --dump-config` (row `- id: vision, name: dsh-vision`).
+  **The running GUI still needs a restart to load it** (client bundles only
+  refresh via the loader; the web patch disables client-hmr).
 
 ## Session history (what was done)
 
@@ -38,10 +48,13 @@ delegation is structurally impossible); text-only primaries get a visible
      contract, `agent.ctx.tools.register/restrict` for per-agent visibility.
    - `dsh-agent` — `agent/created|disposed`, `agent/request` waterfall (authoritative
      per-request `LlmCallConfig.provider/model`), `agent/pre-step` waterfall
-     (`{agent, messages, turn, step, signal}` → `PreStepDecision`).
+     (`{agent, messages, turn, step, signal}` → `PreStepDecision`; the ENTER branch
+     messages are what the loop durably logs as `user/message` and sends to the
+     model — rewriting them with the same message id is the correct paste seam).
    - `dsh-llm` — `LlmModelInfo.inputModalities` (absent=unknown, `[]`=negative),
      `resolveModelInfo(provider, model)`, `listProviders()`, `listModels(provider)`,
-     `stream(GenerateOptions)`, `BlockAssembler`, `createUserMessage`, `ImageBlock`.
+     `stream(GenerateOptions)`, `BlockAssembler`, `createUserMessage`, `freezeMessage`,
+     `ImageBlock`.
    - `dsh-attachment` — `ctx.attachments.saveImage/readImage`, `ImageAttachmentRef`.
    - `dsh-credentials` — `credentialRef(name)` + `ctx.credentials.resolve(ref)`.
    - `dsh-settings` — `ctx.settings.register(ns, schema, {base, applies:'live',
@@ -58,11 +71,22 @@ delegation is structurally impossible); text-only primaries get a visible
      visible to every agent via `agent → preset → global` scope chain; the client
      plugin contract (`dsh.client` in package.json, `./client` export, `slots`,
      `locale`, `settings.section` + `tool.call.toolview` slots).
+   - **Client contract (M3):** `dsh.client = {platform, inject[]}` scanned by
+     `dsh-client-modules`; bundle at `exports["./client"]` served as
+     `/plugins/<id>/client.js`; bundle registers
+     `window.__ModuleLoader__.load({id, factory})`; browser half exports
+     `inject` (service names: `slots`, `locale`, `settingsScope`) + `apply(ctx)`;
+     `ctx.slots.inject(name, cb)` + `ctx.slots.register` (keyed toolview
+     `{name:'tool.call.toolview', key:'describe_image'}`; list settings section
+     `{name:'settings.section', id, order, label}`); `ctx.locale.register(ns, {en, zh})`
+     + `bind`; settings form via `ctx.settingsScope.bind({namespace:'vision'})`
+     (`SettingsScope.getSnapshot/subscribe/set/unset` — NO `load`).
 3. **Studied the working reference plugin**
    `~/workspace/dsh-vision-toolkit-ref` (cloned from Anionex/dsh-vision-toolkit):
    bundle patch + `dsh.bundle.patch`, agent-scoped progressive exposure via
    `agent.ctx.tools.register`/`restrict` (its `VisionToolExposure` class is the
-   template for our gate), credentials, settings, Web client structure.
+   template for our gate), credentials, settings, Web client structure (tsconfig.client.json,
+   scripts/build-client.mjs, web.ts host routes via `ctx.inject(['webServer'], …)`).
 4. **Wrote the implementation spec** → `SPEC.md` (17+1 sections; later moved into the
    repo). §18 added on request: **high token-cache-rate rules** (byte-stable schema
    registered once, rare/idempotent visibility flips, zero dynamic prompt
@@ -71,44 +95,63 @@ delegation is structurally impossible); text-only primaries get a visible
 5. **Created the repo**: `gh repo create dsh-vision --private` (gitawego), cloned to
    `~/workspace/dsh-vision`.
 6. **Implemented M1** (all in `src/`, typecheck-clean, tested):
-   - `config.ts` — full pi-vision config surface + DSH-only `delegation`
-     ('auto'|'native'|'http') and `http {baseUrl, credential, model, protocol}`.
-   - `errors.ts`, `capability.ts` (isImageCapable), `image.ts` (load/hash/MIME sniff/
-     sharp compress with graceful fallback), `marker.ts`, `batch.ts`
-     (mapWithConcurrency, abort-aware), `cache.ts` (memory+disk LRU, content-addressed
-     keys), `audit.ts` (JSONL, privacy-truncated paths).
-   - `transport.ts` — http (OpenAI /chat/completions + Anthropic /v1/messages bodies)
-     and native (ImageBlock via ctx.attachments + ctx.llm.stream + BlockAssembler).
-   - `delegate.ts` — the full pipeline: preflight → load+hash → cache → local-only
-     gate → compress on miss → retry+fallback → cache-store (never fallback) → audit.
-   - `exposure.ts` — `VisionGate`: per-agent primary-model tracking via
-     `agent/created` + `agent/request`, deny-mask via `agent.ctx.tools.restrict`,
-     idempotent flips only (KV-cache).
-   - `tool.ts` — `describe_image` (single + batch ≤50, `image_paths`), constant
-     schema, redirect for multimodal primaries, throw → isError on all-failed.
-   - `defaults.ts` — data-driven auto-detect (Tier-1 live catalog scan, prefers the
-     active primary's provider).
-   - `commands.ts` — `/vision` with all pi-vision subcommands writing through settings.
-   - `index.ts` — apply(): settings ns + live watch, gate install, tool register,
-     command register, auto-detect on agent/created, disposers.
-   - `tests/smoke.spec.ts` — 17 tests (config clamps, credential validation,
-     capability, markers, batch concurrency+abort, cache LRU+disk, audit, truncation).
+   `config.ts`, `errors.ts`, `capability.ts`, `image.ts`, `marker.ts`, `batch.ts`,
+   `cache.ts`, `audit.ts`, `transport.ts` (http + native), `delegate.ts` (the full
+   pipeline), `exposure.ts` (`VisionGate`), `tool.ts` (`describe_image`), `defaults.ts`
+   (data-driven auto-detect), `commands.ts` (`/vision`), `index.ts` (apply()),
+   `tests/smoke.spec.ts` (17 tests).
+7. **Implemented M2 — paste UX** (commit `11d1843`):
+   - `src/paste.ts` — `createPasteHook(deps)` registered on `agent/pre-step`:
+     detects image path tokens in user-sourced messages, rewrites them to
+     `[Image-#N]` markers, and branches: multimodal primary → attach ImageBlocks
+     via `ctx.attachments.saveImage` (markers positional); text-only primary →
+     `textOnlyPasteMode` hint (markers + path list nudging describe_image) / auto
+     (delegate through the shared pipeline, bounded concurrency, batch timeout,
+     hint fallback) / off (markers only). Identity-preserving rewrite via
+     `freezeMessage({...msg, content})`. Never throws (falls back to the original
+     decision). KV-cache: adds text only for messages with resolvable image tokens.
+   - `src/marker.ts` additions: `renderMarkersResolved` (token→index map,
+     right-to-left longest-match), `buildPasteHintLine`, `buildDescriptionsBlock`.
+   - `src/index.ts`: `delegateDepsFor(workspace, signal)` shared entry point;
+     paste hook wired.
+   - `tests/paste.spec.ts` — 18 tests (token extraction, marker rendering,
+     hook transforms with injected fakes: multimodal attach, hint, off, auto,
+     all-fail→hint, localOnly short-circuit, disabled→markers-only, plugin-source
+     untouched, reject passthrough, timeout→hint).
+8. **Implemented M3 — Web client plugin** (commit `95e07c5`):
+   - `src/web.ts` — optional host route `/_dsh/vision/models` (GET) returning a
+     **data-driven** catalog: all registered providers + image-capable models from
+     the live LLM registry, the currently configured provider/model, and the
+     detected default (catalog-scan preference, primary-provider first). **No
+     provider/model ids are hardcoded anywhere.** Installed via
+     `ctx.inject(['webServer'], …)` (web profile only).
+   - `src/client/index.tsx` — browser plugin: en/zh locale (ns `vision`),
+     `describe_image` tool card (`tool.call.toolview`, keyed), Vision settings
+     section (`settings.section`, id `vision`): provider/model inputs with
+     datalist suggestions from the live catalog, detected default preselected
+     when unset and marked "(detected)", plus delegation/paste/limits/behavior
+     fields; writes through `ctx.settingsScope.bind({namespace:'vision'})`
+     (`set`/`unset` per field; http written as the whole nested object).
+   - `tsconfig.client.json` (CJS + react-jsx + `paths` mapping every client
+     subpath to its `lib/types` — required because `moduleResolution: node`
+     ignores package exports), `scripts/build-client.mjs` (wraps the compiled
+     CJS in `window.__ModuleLoader__.load({id:'dsh-vision', …})` → `lib/client.js`).
+   - `package.json`: `exports["./client"]`, `dsh.client {platform:'web',
+     inject:[runtime, ui-tool, ui-settings, locale]}`, build script = server +
+     client tsc + wrap; client packages added as devDeps + peers.
+9. **Installed into the web profile** (see "Web profile install" above). pnpm 12 rc
+   rejects path specs on `dsh plugin add` ("should have a @scope"), so the install
+   is manual: symlink + manifest entry. Composed tree verified; runtime load
+   requires a GUI restart.
 
 ## What is NOT done (next milestones)
 
-- **M2 — paste UX** (`src/paste.ts`): `agent/pre-step` waterfall — detect image path
-  tokens in user messages, rewrite to `[Image-#N]` markers, attach ImageBlocks
-  (multimodal) / hint / auto-delegate (text-only) per `textOnlyPasteMode`.
-- **M3 — Web client plugin**: `dsh.client` declaration + `src/client/index.tsx`
-  (settings.section for the Vision form, `tool.call.toolview` card for
-  describe_image, locale, optional `/_dsh/vision/...` host routes via
-  dsh-host-webserver), plus a separate client tsconfig + bundle build
-  (reference: dsh-vision-toolkit-ref's tsconfig.client.json + scripts/build-client.mjs).
-- **M3 — native transport e2e** untested against a real vision route; **auto-detect**
-  untested with a live pi-ai provider.
-- **Install/verify in a real profile**: `dsh plugin --profile web add ~/workspace/dsh-vision`,
-  restart `dsh web`, `/vision show`, describe an image, check audit tail + cache stats;
-  KV-cache check per SPEC §18.9.
+- **Restart `dsh web` and verify manually** (the running GUI predates the install):
+  `/vision show`, describe an image (check audit tail + cache stats), confirm the
+  Vision settings section and describe_image card render, check the
+  `/_dsh/vision/models` catalog and the detected default, KV-cache per SPEC §18.9.
+- **Native-transport e2e** against a real pi-ai vision route is untested; **auto-detect**
+  untested with a live pi-ai provider (both need a configured image-capable route).
 - **M4 — polish**: compose preview slot, headless profile verification, README
   expansion, CHANGELOG.
 - `allowedDirs` hardening (SPEC §16.4) is deferred to v2.
@@ -121,9 +164,10 @@ delegation is structurally impossible); text-only primaries get a visible
 - **DSH_HOME:** `/data/data/com.termux/files/home/.dsh`; profiles: `web` (GUI at
   http://127.0.0.1:3080), `headless`, `tui`. Web profile bundles: dsh-base + dsh-web-app.
 - **gh** authenticated as `gitawego` (ssh protocol; repo `gitawego/dsh-vision`).
-- **Session workspace quirk:** the agent session workspace is
-  `~/workspace/dsh-mcp-adapter` (a different project). The `write` tool is EACCES
-  everywhere in this environment; **all file writes go through bash heredocs**.
+- **Session workspace quirk:** the agent session workspace IS `~/workspace/dsh-vision`.
+  The `write` tool fails with EACCES (its atomic-rename link step is denied) but
+  the `edit` tool WORKS — prefer `edit` for targeted changes; use bash heredocs
+  (one file per call, quoted `<<'EOF'`) for new files.
 
 ## Tooling pitfalls (learned the hard way — do not repeat)
 
@@ -134,29 +178,40 @@ delegation is structurally impossible); text-only primaries get a visible
    content must keep `\n` as two characters).
 2. **Heredocs:** write ONE file per bash call (multiple heredocs in one template
    literal have intermittently failed to parse). Use `<<'EOF'` (quoted delimiter) so
-   `$`, backticks, and backslashes in the content are preserved literally.
-3. **Shell quoting of argv:** do NOT pass TS code with single quotes through bash
-   single-quoted args (quotes get stripped/concatenated). Prefer writing a patch
-   script file (heredoc) and running it; the helper pattern
-   `node <file> '<JSON pairs>'` also breaks on single quotes — use the script-file
-   approach instead.
+   `$`, backticks, and backslashes in the content are preserved literally. `mkdir -p`
+   parent dirs first (e.g. `src/client`, `scripts`).
+3. **Shell quoting of argv:** do NOT pass TS/JS code with single quotes or regexes
+   through bash single-quoted args, and do NOT rely on sed for multi-line inserts
+   (GNU sed on this host rejects `\n` replacements and `\b` word boundaries).
+   Prefer the `edit` tool for small changes and a node patch script (heredoc'd to a
+   file, run, deleted) for anything structural. In node patch scripts use template
+   literals (backticks) for multi-line anchors — real newlines in the file are fine,
+   but a `\n` written into a double-quoted JS string becomes a real newline and
+   breaks the literal.
 4. **npm:** esbuild's postinstall was skipped by npm's allowScripts gate; vitest still
    ran fine. If a future install breaks esbuild, run
    `npm install-scripts approve esbuild && npm rebuild esbuild`.
-5. **The write tool is unusable here** (EACCES even in the session workspace) — bash
-   heredocs are the only reliable file-writing path.
+5. **The `write` tool is unusable here** (EACCES on the atomic-link step even in the
+   session workspace) — but the `edit` tool works; bash heredocs are the reliable
+   path for whole-file writes.
+6. **pnpm 12 rc (used by `dsh plugin`)** rejects local path specs ("Package name … is
+   invalid, it should have a @scope"). Manual install: symlink the package into the
+   profile's `node_modules` + add it to the profile `package.json` dependencies and
+   `dsh.profile.bundles` (the `dsh plugin` reconcile step would do this otherwise).
 
 ## Useful reference paths
 
 - pi-vision source: `~/workspace/pi-vision` (extensions/ + lib/)
-- reference DSH plugin: `~/workspace/dsh-vision-toolkit-ref` (src/ + cordis.patch.yml)
+- reference DSH plugin: `~/workspace/dsh-vision-toolkit-ref` (src/ + cordis.patch.yml,
+  client build + web.ts patterns)
 - DSH API docs: `/data/data/com.termux/files/home/dsh-global/node_modules/@deepseek-ai/<pkg>/README.md`
 - SPEC (this project's design + KV-cache rules): `SPEC.md`
 
 ## Resume checklist
 
 1. `cd ~/workspace/dsh-vision && npm install && npm run build && npm test` — expect all
-   green (typecheck + 17 tests).
-2. Implement M2 paste hook (`src/paste.ts` + wire into `index.ts` via `agent/pre-step`).
-3. Implement M3 client plugin + native-transport e2e.
-4. Install into the web profile and verify manually; commit + push each milestone.
+   green (typecheck + 35 tests).
+2. Restart `dsh web` (user action) and verify the plugin end-to-end (list above).
+3. Native-transport e2e + auto-detect against a live pi-ai vision route.
+4. M4 polish; commit + push each milestone.
+
