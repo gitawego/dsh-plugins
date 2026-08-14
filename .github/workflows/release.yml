@@ -1,12 +1,17 @@
 name: Release
 
-# Publishes @gitawego/dsh-vision to npm on tag push (v*).
-# Uses the repository NPM_TOKEN secret — the same granular npm token used by
-# gitawego/pi-vision (Read-and-write, scoped to @gitawego, with "Bypass 2FA"
-# so no OTP is needed). Copy that token into this repo's Actions secrets:
-#   gh secret set NPM_TOKEN
-# (GitHub secrets are per-repository — there is no cross-repo sharing, so the
-# same token VALUE is set in each repo that needs it.)
+# Publishes @gitawego/dsh-vision to npm on tag push (v*) via OIDC TRUSTED
+# PUBLISHING (no NPM_TOKEN — npm deprecated bypass-2FA granular access tokens
+# for org/package management in early August 2026; see
+# https://github.blog/changelog/2026-07-08-npm-install-time-security-and-gat-bypass2fa-deprecation/).
+#
+# One-time setup on npmjs.com (package Settings → Trusted publishing — after
+# the FIRST version exists; publish v0.1.0 once interactively with 2FA to
+# create the package):
+#   { "provider": "github", "owner": "gitawego", "repo": "dsh-vision",
+#     "workflow_filename": "release.yml" }
+# Then every v* tag publishes automatically with provenance via the OIDC
+# token (id-token: write) — no long-lived publish token.
 #
 # Idempotent: skips if the version is already on npm (safe to re-run).
 # Gates on typecheck + tests + build before publishing.
@@ -17,7 +22,8 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: write  # needed to create GitHub Releases on tag push
+  contents: write  # GitHub Release on tag push
+  id-token: write  # npm OIDC trusted publishing (provenance)
 
 jobs:
   publish:
@@ -39,16 +45,6 @@ jobs:
 
       - run: npm run build
 
-      # TEMPORARY diagnostic: identify the npm account/scope of the token in
-      # NODE_AUTH_TOKEN (no secrets printed — npm masks token values).
-      - name: Diagnose npm auth
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-        run: |
-          echo "whoami: $(npm whoami 2>&1 || true)"
-          echo "--- raw PUT probe ---"
-          curl -s -X PUT "https://registry.npmjs.org/@gitawego%2fdsh-vision"             -H "Authorization: Bearer ${NODE_AUTH_TOKEN}"             -H "Content-Type: application/json"             -d '{"_id":"@gitawego/dsh-vision","name":"@gitawego/dsh-vision","description":"probe","dist-tags":{},"versions":{},"access":"public"}'             -w "\nHTTP_STATUS:%{http_code}\n" || true
-
       - name: Skip if already published
         id: check
         run: |
@@ -64,11 +60,12 @@ jobs:
             echo "skip=false" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: Publish
+      # OIDC trusted publishing: no NODE_AUTH_TOKEN. npm exchanges the GitHub
+      # OIDC token for a Sigstore certificate and the registry accepts the
+      # publish because this repo+workflow is a registered trusted publisher.
+      - name: Publish (OIDC trusted publishing)
         if: steps.check.outputs.skip != 'true'
-        env:
-          NODE_AUTH_TOKEN: ${ secrets.NPM_TOKEN }
-        run: npm publish --access public
+        run: npm publish --provenance --access public
 
       # Keep GitHub Releases in sync with npm: create a release for the tag
       # (auto-generated notes). Idempotent — skips if the release already exists.
