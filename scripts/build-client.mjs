@@ -14,9 +14,6 @@ const wrapped = [
   'var module = { exports: {} }; var exports = module.exports;',
   source.replace(/\n?\/\/# sourceMappingURL=.*$/u, ''),
   'return module.exports; } });',
-  'var module = { exports: {} }; var exports = module.exports;',
-  source.replace(/\n?\/\/# sourceMappingURL=.*$/u, ''),
-  'return module.exports; } });',
   '//# sourceMappingURL=client.js.map',
   '',
 ].join('\n')

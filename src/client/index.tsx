@@ -668,7 +668,7 @@ const CSS = `
 .dvs-tool{margin:4px 0;border:1px solid var(--dsw-alias-border-l1,rgba(255,255,255,.06));border-radius:12px;background:var(--dsw-alias-bg-layer-1,#191920);overflow:hidden;font-family:var(--dsw-font-family,-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif)}
 .dvs-tool-head{width:100%;min-height:38px;display:flex;align-items:center;gap:8px;padding:8px 10px;border:0;background:transparent;color:var(--dsw-alias-label-primary,#f5f5f7);text-align:left;cursor:pointer;font:inherit}
 .dvs-tool-head:focus-visible{outline:2px solid var(--dsw-alias-brand-primary,#4d7ef7);outline-offset:-2px}
-.dvs-tool-icon{width:22px;height:22px;display:grid;place-items:center;border-radius:7px;color:var(--dsw-alias-brand-text,#fff);background:color-mix(in srgb, var(--dsw-alias-brand-primary,#4d7ef7) 18%, transparent);flex:none}
+.dvs-tool-icon{width:22px;height:22px;display:grid;place-items:center;border-radius:7px;color:var(--dsw-alias-state-business-primary,#4d7ef7);background:color-mix(in srgb, var(--dsw-alias-state-business-primary,#4d7ef7) 14%, transparent);flex:none}
 .dvs-tool-title{font-size:13px;font-weight:600;white-space:nowrap}
 .dvs-tool-summary{font-size:12px;color:var(--dsw-alias-label-tertiary,#9a9aa3)}
 .dvs-tool-status{margin-left:auto;font-size:11.5px;color:var(--dsw-alias-label-secondary,#c8c8cf);max-width:45%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
@@ -702,14 +702,14 @@ const CSS = `
 .dvs-field{display:grid;gap:6px;align-content:start;min-width:0}
 .dvs-field span{font-size:12.5px;font-weight:550;color:var(--dsw-alias-label-secondary,#c8c8cf)}
 .dvs-field .dvs-hint{font-size:11.5px;line-height:1.5;color:var(--dsw-alias-label-tertiary,#9a9aa3)}
-.dvs-field input,.dvs-field select{width:100%;height:36px;padding:0 10px;border:1px solid var(--dsw-alias-border-l2,rgba(255,255,255,.12));border-radius:8px;background:var(--dsw-alias-bg-layer-2,#14141a);color:var(--dsw-alias-label-primary,#f5f5f7);font:inherit;font-size:13px;outline:none;transition:border-color .12s var(--ds-ease-in-out,cubic-bezier(.4,0,.2,1)),box-shadow .12s var(--ds-ease-in-out,cubic-bezier(.4,0,.2,1))}
+.dvs-field input,.dvs-field select{box-sizing:border-box;width:100%;min-width:0;height:36px;padding:0 10px;border:1px solid var(--dsw-alias-border-l2,rgba(255,255,255,.12));border-radius:8px;background:var(--dsw-alias-bg-layer-2,#14141a);color:var(--dsw-alias-label-primary,#f5f5f7);font:inherit;font-size:13px;outline:none;transition:border-color .12s var(--ds-ease-in-out,cubic-bezier(.4,0,.2,1)),box-shadow .12s var(--ds-ease-in-out,cubic-bezier(.4,0,.2,1))}
 .dvs-field input:focus,.dvs-field select:focus{border-color:var(--dsw-alias-brand-primary,#4d7ef7);box-shadow:0 0 0 2px color-mix(in srgb, var(--dsw-alias-brand-primary,#4d7ef7) 25%, transparent)}
 .dvs-field input::placeholder{color:var(--dsw-alias-label-dimmed,#6f6f78)}
 .dvs-check{display:flex;align-items:center;gap:9px;font-size:13px;color:var(--dsw-alias-label-primary,#f5f5f7);min-height:22px;cursor:pointer}
 .dvs-check input{accent-color:var(--dsw-alias-brand-primary,#4d7ef7);width:15px;height:15px;flex:none;margin:0}
 .dvs-save-row{display:flex;gap:10px;align-items:center}
 .dvs-primary,.dvs-outline{height:34px;padding:0 18px;border-radius:9px;font-size:13px;font-weight:600;cursor:pointer;transition:background-color .12s var(--ds-ease-in-out,cubic-bezier(.4,0,.2,1))}
-.dvs-primary{background:var(--dsw-alias-button-primary-fill,#4d7ef7);color:var(--dsw-alias-brand-text,#fff);border:0}
+.dvs-primary{background:var(--dsw-alias-button-primary-fill,#4d7ef7);color:var(--dsw-alias-label-primary-inverted,#17171c);border:0}
 .dvs-primary:hover:not(:disabled){background:var(--dsw-alias-button-primary-hover,#3f66d9)}
 .dvs-primary:disabled,.dvs-outline:disabled{opacity:.45;cursor:default}
 .dvs-outline{background:transparent;border:1px solid var(--dsw-alias-border-l2,rgba(255,255,255,.12));color:var(--dsw-alias-label-primary,#f5f5f7)}
