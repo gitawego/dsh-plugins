@@ -39,6 +39,16 @@ jobs:
 
       - run: npm run build
 
+      # TEMPORARY diagnostic: identify the npm account/scope of the token in
+      # NODE_AUTH_TOKEN (no secrets printed — npm masks token values).
+      - name: Diagnose npm auth
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          echo "whoami: $(npm whoami 2>&1 || true)"
+          echo "--- token list (masked) ---"
+          npm token list 2>&1 | head -24 || true
+
       - name: Skip if already published
         id: check
         run: |
