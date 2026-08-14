@@ -17,13 +17,13 @@ delegation is structurally impossible); text-only primaries get a visible
 
 ## Repo state (as of handoff)
 
-- **Commit:** `0ca7f16` "settings UI: route Vision settings through the plugin's
-  own /_dsh/vision/settings endpoint …" — pushed to `origin/main`. Branch `main`
-  tracks `origin/main`. History: `06f6cea` M1, `11d1843` M2, `95e07c5` M3,
-  `761217b` /vision input hint, `0ca7f16` settings-route + lifecycle.
+- **Commit:** `a4aa3c9` "AGENTS.md: document native-path sandbox diagnosis …" —
+  pushed to `origin/main`. Branch `main` tracks `origin/main`. History: `06f6cea` M1,
+  `11d1843` M2, `95e07c5` M3, `761217b` /vision input hint, `0ca7f16` settings-route
+  + lifecycle, `a906f5b` settings dropdowns + legibility, `a4aa3c9` sandbox note.
 - **Status:** `npm run typecheck` clean (server + client tsconfigs) · `npm run
   build` works (lib/ incl. the client bundle `lib/client.js`) · `npm test`
-  green (**50 tests**: smoke 18, paste 18, `tests/web.spec.ts` 7, `tests/client-controller.spec.ts` 8).
+  green (**55 tests**: smoke 18, paste 18, `tests/web.spec.ts` 7, `tests/client-controller.spec.ts` 12).
   TDD is required for further work: write the failing test first, then implement.
 - **`node_modules/` and `lib/` are gitignored** — a fresh checkout needs
   `npm install` + `npm run build`. `package.json` has a `prepare` script
