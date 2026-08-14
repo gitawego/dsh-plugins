@@ -181,3 +181,21 @@ describe('audit', () => {
     expect(resolveAuditPath('/tmp/my.log', '/home/u/.dsh')).toBe('/tmp/my.log')
   })
 })
+
+import { createVisionCommand } from '../src/commands.ts'
+
+describe('commands', () => {
+  it('declares the input hint the Web client needs to intercept subcommand lines', () => {
+    const cmd = createVisionCommand({
+      settings: { get: () => ({}) as never, update: async () => {}, mutate: async () => {}, replace: async () => {} },
+      config: () => ({} as never),
+      gate: { resyncAll: () => {} } as never,
+      cache: () => undefined,
+      home: '/tmp',
+      detect: async () => undefined,
+    })
+    expect(cmd.name).toBe('vision')
+    expect(cmd.input?.hint?.length ?? 0).toBeGreaterThan(0)
+  })
+})
+

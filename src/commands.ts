@@ -80,6 +80,10 @@ export function createVisionCommand(deps: VisionCommandDeps): CommandDefinition 
   return {
     name: 'vision',
     description: 'Vision tool configuration. Subcommands: show, on, off, provider <p>, model [<id>], max-dim <px>, quality <1-100>, reasoning-effort <level>, system-prompt [<text>|clear], cache <clear|show>, fallback [<p/m>|clear], clear, paste-mode [hint|auto|off], marker-style [s], auto-prompt [<text>|clear], preview <path>, batch-concurrency [<1-20>], local-only [on|off], audit <clear|show|path|on|off>, audit-path [<path>|clear], auto-detect [on|off].',
+    // The shipped Web command UI only intercepts lines with arguments when
+    // the command declares an input hint (bare /vision still executes);
+    // without this, subcommands fall through to a normal chat message.
+    input: { hint: 'show · on|off · model <provider/model> · provider <name> · paste-mode <hint|auto|off> · marker-style <code|bold|plain> · local-only <on|off> · cache <show|clear> · audit <show|clear|on|off> · fallback <p/m> · clear' },
     handler: async (invocation: CommandInvocation): Promise<CommandResult> => {
       const parts = invocation.rawInput.trim().split(/\s+/).filter(Boolean)
       const sub = parts[0] ?? ''
