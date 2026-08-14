@@ -17,12 +17,14 @@ delegation is structurally impossible); text-only primaries get a visible
 
 ## Repo state (as of handoff)
 
-- **Commit:** `95e07c5` "M3: Web client plugin …" — pushed to `origin/main`.
-  Branch `main` tracks `origin/main`. History: `06f6cea` M1, `11d1843` M2,
-  `95e07c5` M3.
+- **Commit:** `0ca7f16` "settings UI: route Vision settings through the plugin's
+  own /_dsh/vision/settings endpoint …" — pushed to `origin/main`. Branch `main`
+  tracks `origin/main`. History: `06f6cea` M1, `11d1843` M2, `95e07c5` M3,
+  `761217b` /vision input hint, `0ca7f16` settings-route + lifecycle.
 - **Status:** `npm run typecheck` clean (server + client tsconfigs) · `npm run
   build` works (lib/ incl. the client bundle `lib/client.js`) · `npm test`
-  green (35 vitest tests: 17 in `tests/smoke.spec.ts`, 18 in `tests/paste.spec.ts`).
+  green (**50 tests**: smoke 18, paste 18, `tests/web.spec.ts` 7, `tests/client-controller.spec.ts` 8).
+  TDD is required for further work: write the failing test first, then implement.
 - **`node_modules/` and `lib/` are gitignored** — a fresh checkout needs
   `npm install` + `npm run build`. `package.json` has a `prepare` script
   (`npm run build`) so git-URL installs of the package can build `lib/`.
@@ -89,6 +91,17 @@ delegation is structurally impossible); text-only primaries get a visible
      `{name:'settings.section', id, order, label}`); `ctx.locale.register(ns, {en, zh})`
      + `bind`; settings form via `ctx.settingsScope.bind({namespace:'vision'})`
      (`SettingsScope.getSnapshot/subscribe/set/unset` — NO `load`).
+     **IMPORTANT: plugin settings namespaces are NOT exposed to the web client's
+     settings proxy by default** — `dsh-host-apiproxy` filters `settings.describe`
+     through an explicit allowlist (`modelProviderNamespaces()` + hardcoded
+     `WEB_SETTINGS_NAMESPACES`/`PRODUCT_SETTINGS_NAMESPACES`; a plugin opt-in is
+     "deferred work"). `ctx.settingsScope.bind({namespace})` therefore resolves to
+     `unavailable` for plugin namespaces and the form renders empty. The
+     established pattern (reference plugin + ours): the plugin serves its own
+     same-origin route over the settings seam (ours: `/_dsh/vision/settings`)
+     and the client fetches/POSTs it. Keep `import type {} from
+     '@deepseek-ai/dsh-client-ui-settings/client'` in the client — it carries the
+     `settings.section` SlotMap declaration.
 3. **Studied the working reference plugin**
    `~/workspace/dsh-vision-toolkit-ref` (cloned from Anionex/dsh-vision-toolkit):
    bundle patch + `dsh.bundle.patch`, agent-scoped progressive exposure via
@@ -153,13 +166,32 @@ delegation is structurally impossible); text-only primaries get a visible
    path specs on `dsh plugin add <path>` ("should have a @scope", proven with a
    minimal probe package). Composed tree verified; runtime load requires a GUI
    restart.
+10. **Post-restart debugging + settings-route fix** (commits `761217b`, `0ca7f16`):
+    - /vision (bare) worked but subcommands fell through to chat: the web client
+      only intercepts args-bearing command lines when the command declares an
+      `input` hint (matchEnter in dsh-client-ui-commands) → added `input:
+      {hint}` to the /vision definition.
+    - The Vision settings page rendered EMPTY: the harness settings proxy does not
+      expose plugin namespaces (see the IMPORTANT note above) → routed the form
+      through the plugin's own /_dsh/vision/settings route (GET snapshot +
+      same-origin POST save, validated via resolveConfig(mergeConfig(...)),
+      writes through the shared settings seam), client switched from
+      ctx.settingsScope to a fetch-based SettingsController.
+    - Full lifecycle teardown: apply() now captures and calls EVERY disposer
+      LIFO (tool, command, paste hook, settings watch, auto-detect, gate) — the
+      settings namespace + web routes are fiber-effect-scoped and auto-disposed
+      by the loader. Persisted user settings are intentionally NOT wiped on
+      unload (that's user data; /vision clear resets).
+    - TDD is required: new logic ships with tests first (tests/web.spec.ts for
+      the route, tests/client-controller.spec.ts for the client stores).
 
 ## What is NOT done (next milestones)
 
-- **Restart `dsh web` and verify manually** (the running GUI predates the install):
-  `/vision show`, describe an image (check audit tail + cache stats), confirm the
-  Vision settings section and describe_image card render, check the
-  `/_dsh/vision/models` catalog and the detected default, KV-cache per SPEC §18.9.
+- **Restart `dsh web` and verify manually** (the running GUI predates the latest
+  build): /vision + subcommands (input-hint fix), the Vision settings page now
+  loads + saves via /_dsh/vision/settings, describe an image (check audit tail
+  + cache stats), the describe_image card renders, the /_dsh/vision/models
+  catalog + detected default, KV-cache per SPEC §18.9.
 - **Native-transport e2e** against a real pi-ai vision route is untested; **auto-detect**
   untested with a live pi-ai provider (both need a configured image-capable route).
 - **M4 — polish**: compose preview slot, headless profile verification, README
@@ -235,7 +267,7 @@ delegation is structurally impossible); text-only primaries get a visible
 ## Resume checklist
 
 1. `cd ~/workspace/dsh-vision && npm install && npm run build && npm test` — expect all
-   green (typecheck + 35 tests).
+   green (typecheck + 50 tests).
 2. Restart `dsh web` (user action) and verify the plugin end-to-end (list above).
 3. Native-transport e2e + auto-detect against a live pi-ai vision route.
 4. M4 polish; commit + push each milestone.
