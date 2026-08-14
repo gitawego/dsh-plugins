@@ -150,16 +150,28 @@ cache store (never a fallback result) → audit entry.
 
 - Branch `main` tracks `origin/main`; current HEAD `a152381` (Termux path
   translation). Commits by milestone are listed in LESSONS.md.
+- **Package name**: `@gitawego/dsh-vision` (scoped — the unscoped `dsh-vision`
+  is taken on npm by another author; the scoped name matches the owner account
+  and the NPM_TOKEN scope, same as `@gitawego/pi-vision`). The DSH plugin
+  identity stays `dsh-vision` (cordis name + client loader id derive from the
+  package name only for the client entry).
+- **CI/CD**: `.github/workflows/ci.yml` (npm ci → typecheck → test → build on
+  push/PR) and `.github/workflows/release.yml` (tag `v*` → gates → npm
+  publish with `NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}` → GitHub Release;
+  idempotent skip-if-published). The NPM_TOKEN value is the same granular
+  @gitawego token pi-vision uses — set it in THIS repo's Actions secrets
+  (`gh secret set NPM_TOKEN`); GitHub secrets are per-repo, so the value is
+  copied, not referenced across repos.
 - `npm run typecheck` clean (server + client) · `npm run build` works
   (lib/ incl. `lib/client.js`) · `npm test` green (**95 tests**: smoke 18,
   paste 18, web 9, paths 9, delegate 13, subagent 8, transport 10,
   client-controller 10). TDD is required: failing test first, then implement.
 - `node_modules/` and `lib/` are gitignored — fresh checkout needs
   `npm install` + `npm run build` (package.json `prepare` runs it).
-- **Web profile install**: `dsh-vision` is a `file:` dep of the `web`
-  profile (pnpm 12 rc COPIES it into its store — NOT a live link), so re-run
-  `dsh plugin --profile web install` after every rebuild. The running GUI
-  needs a restart to load new builds (client bundles only refresh via the
+- **Web profile install**: `@gitawego/dsh-vision` is a `file:` dep of the
+  `web` profile (pnpm 12 rc COPIES it into its store — NOT a live link), so
+  re-run `dsh plugin --profile web install` after every rebuild. The running
+  GUI needs a restart to load new builds (client bundles only refresh via the
   loader; client-hmr is disabled in the web patch).
 
 ## Next milestones
