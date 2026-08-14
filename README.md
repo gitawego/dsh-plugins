@@ -96,6 +96,43 @@ Example http configuration (any OpenAI-compatible vision endpoint):
 > `http` block on Termux; `auto` falls back to http automatically when the store
 > is unavailable.
 
+## Routing & model-switch behavior
+
+The plugin routes images by the **current session model's capability** (detected from
+the live harness catalog, never hardcoded):
+
+| Session primary model | Image behavior |
+|---|---|
+| Multimodal (e.g. a vision "luna") | **Native pass-through**: pasted path tokens become `[Image-#N]` markers + ImageBlock attachments; the model sees the raw image. `describe_image` is hidden (delegation would be wasteful). |
+| Text-only (e.g. `glm-5.2`) | **Convert to text**: path tokens and GUI image blocks are delegated to the configured vision model (cache/retry/fallback) or surfaced as hint markers for `describe_image`. The tool is visible. |
+
+**Mid-session model switches are detected at the earliest point of the next step**
+(`system-prompt/assemble`, which fires before the paste hook and before tool
+visibility is frozen), so the first step after a switch already routes correctly —
+paste auto-converts (or attaches natively), and `describe_image` is shown/hidden
+accordingly. `/vision session-status` reports the tracked model, the logged request
+header, and flags a switch that is still pending detection.
+
+**Harness (GUI) constraints on rc.6** — the `dsh-host-apiproxy` wire refuses two
+operations before this plugin ever sees the message, independent of the plugin:
+
+- sending a prompt with images while the session model is text-only →
+  `attachment-error` "Model X does not support image input";
+- switching to a text-only model while the session already contains images →
+  `model-unavailable` "…but this session already contains images".
+
+So via the GUI, "upload an image while on glm-5.2" and "switch to glm-5.2 in an
+image session" are blocked by design. The plugin's supported route for those flows is
+**image paths + `textOnlyPasteMode: auto`** (paste the path; the vision model
+describes it; the text-only model reads the description), or switching models before
+images enter the session. Image blocks that DO reach the paste hook on a text-only
+primary (tui/headless/direct API, or future wires) are materialized to hash-named
+temp files under `<DSH_HOME>/tmp/dsh-vision/` (Termux-safe: the OS tmpdir may be
+unwritable) and converted through the same pipeline — a raw image block never reaches
+a text-only model's request boundary. Auto-converted temp files are removed after
+delegation; hint-mode files are retained (content-hash-deduped) so the model can name
+them with `describe_image`.
+
 ## Platform support
 
 The harness loads client bundles only for `platform: "web"` (dsh-client-modules

@@ -79,11 +79,11 @@ function numberArg(raw: string | undefined, min: number, max: number, label: str
 export function createVisionCommand(deps: VisionCommandDeps): CommandDefinition {
   return {
     name: 'vision',
-    description: 'Vision tool configuration. Subcommands: show, on, off, provider <p>, model [<id>], max-dim <px>, quality <1-100>, reasoning-effort <level>, system-prompt [<text>|clear], cache <clear|show>, fallback [<p/m>|clear], clear, paste-mode [hint|auto|off], marker-style [s], auto-prompt [<text>|clear], preview <path>, batch-concurrency [<1-20>], local-only [on|off], audit <clear|show|path|on|off>, audit-path [<path>|clear], auto-detect [on|off].',
+    description: 'Vision tool configuration. Subcommands: show, session-status, on, off, provider <p>, model [<id>], max-dim <px>, quality <1-100>, reasoning-effort <level>, system-prompt [<text>|clear], cache <clear|show>, fallback [<p/m>|clear], clear, paste-mode [hint|auto|off], marker-style [s], auto-prompt [<text>|clear], preview <path>, batch-concurrency [<1-20>], local-only [on|off], audit <clear|show|path|on|off>, audit-path [<path>|clear], auto-detect [on|off].',
     // The shipped Web command UI only intercepts lines with arguments when
     // the command declares an input hint (bare /vision still executes);
     // without this, subcommands fall through to a normal chat message.
-    input: { hint: 'show · on|off · model <provider/model> · provider <name> · paste-mode <hint|auto|off> · marker-style <code|bold|plain> · local-only <on|off> · cache <show|clear> · audit <show|clear|on|off> · fallback <p/m> · clear' },
+    input: { hint: 'show · session-status · on|off · model <provider/model> · provider <name> · paste-mode <hint|auto|off> · marker-style <code|bold|plain> · local-only <on|off> · cache <show|clear> · audit <show|clear|on|off> · fallback <p/m> · clear' },
     handler: async (invocation: CommandInvocation): Promise<CommandResult> => {
       const parts = invocation.rawInput.trim().split(/\s+/).filter(Boolean)
       const sub = parts[0] ?? ''
@@ -95,6 +95,31 @@ export function createVisionCommand(deps: VisionCommandDeps): CommandDefinition 
           return ok(formatConfigStatus(c) + '\n\nUse the Web Settings (Vision section) for the interactive form.')
         case 'show':
           return ok(formatConfigStatus(c))
+        case 'session-status': {
+          const agent = invocation.agent
+          const tracked = deps.gate.current(agent)
+          const header = agent.session.requestHeader?.()
+          const logged = header?.config
+          const id = (p: string | undefined, m: string | undefined) => (p && m ? `${p}/${m}` : '(unset)')
+          const trackedId = id(tracked?.provider, tracked?.model)
+          const loggedId = id(logged?.provider, logged?.model)
+          const inSync = trackedId === loggedId
+          const multimodal = tracked?.multimodal ?? false
+          const describeVisible = c.enabled && !multimodal
+          const delegateTarget = c.provider && c.model
+            ? `${c.provider}/${c.model}`
+            : c.http.baseUrl
+              ? `${c.http.baseUrl} model=${c.http.model ?? '(unset)'}`
+              : '(not configured)'
+          return ok([
+            'Session vision routing:',
+            `  tracked primary:  ${trackedId} — ${multimodal ? 'multimodal → images pass through natively' : 'text-only → images convert to text'}`,
+            `  logged header:    ${loggedId}${inSync ? '' : '  ⚠ differs from tracked (switch pending detection)'}`,
+            `  describe_image:   ${describeVisible ? 'visible' : 'hidden'}${c.enabled ? '' : ' (vision disabled)'}`,
+            `  paste mode:       ${c.textOnlyPasteMode}${multimodal ? ' (multimodal: native attachment regardless)' : ''}`,
+            `  delegation:       ${c.delegation} → ${delegateTarget}`,
+          ].join('\n'))
+        }
         case 'on': {
           await settings.update({ enabled: true })
           deps.gate.resyncAll()

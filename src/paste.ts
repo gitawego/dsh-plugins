@@ -11,6 +11,11 @@
  *    the shared cache/retry/fallback pipeline (bounded concurrency, batch
  *    timeout, hint fallback)
  *  - text-only primary, "off": markers only
+ *  - image BLOCKS (GUI/direct-API attachments) on text-only primaries are
+ *    materialized to hash-named temp files (join(home,'tmp','dsh-vision'))
+ *    and flow through the SAME pipeline: markers + hint (path nameable for
+ *    describe_image) / auto-delegated descriptions. A raw image block never
+ *    reaches a text-only model's request boundary.
  *
  *  KV-cache (SPEC §18): the hook adds text ONLY when a user message contains
  *  resolvable image path tokens. Ordinary messages keep a byte-identical
@@ -20,13 +25,14 @@ import type { Agent, PreStepDecision } from '@deepseek-ai/dsh-agent'
 import type { ImageAttachmentRef, ImageMediaType } from '@deepseek-ai/dsh-attachment'
 import type { ContentBlock, UserMessage } from '@deepseek-ai/dsh-llm'
 import { freezeMessage } from '@deepseek-ai/dsh-llm'
-import { existsSync, statSync } from 'node:fs'
-import { isAbsolute, resolve as resolvePath } from 'node:path'
+import { createHash } from 'node:crypto'
+import { existsSync, mkdirSync, statSync, unlinkSync, writeFileSync } from 'node:fs'
+import { isAbsolute, join as joinPath, resolve as resolvePath } from 'node:path'
 import { mapWithConcurrency } from './batch.ts'
 import { isConfiguredForDelegation, type PasteMode, type ResolvedVisionConfig } from './config.ts'
 import type { DelegateParams, DelegateResult } from './delegate.ts'
 import { loadImage, type SupportedMime } from './image.ts'
-import { buildDescriptionsBlock, buildPasteHintLine, renderMarkersResolved } from './marker.ts'
+import { buildDescriptionsBlock, buildPasteHintLine, renderMarker, renderMarkersResolved } from './marker.ts'
 import { resolveInputPath } from './paths.ts'
 
 // Path-like tokens ending in a known image extension (pi-vision F8 port):
@@ -116,6 +122,34 @@ function buildResolvedMap(
 /** Attachment seam (ctx.attachments.saveImage) so tests inject a fake. */
 export type SaveAttachment = (input: { data: Uint8Array; mediaType: ImageMediaType; name?: string }) => Promise<ImageAttachmentRef>
 
+/** Attachment read seam (ctx.attachments.readImage): fetch stored bytes for
+ *  an image block so text-only primaries can convert it to text. */
+export type ReadImage = (
+  ref: ImageAttachmentRef,
+  signal?: AbortSignal,
+) => Promise<{ ref: ImageAttachmentRef; data: Uint8Array }>
+
+const BLOCK_EXT: Partial<Record<ImageMediaType, string>> = {
+  'image/png': '.png',
+  'image/jpeg': '.jpg',
+  'image/webp': '.webp',
+  'image/gif': '.gif',
+}
+
+/** Write image-block bytes to a content-hash-named temp file under the
+ *  plugin-owned tmp dir (Termux: DSH home, not the OS tmpdir). Returns the
+ *  absolute path (a normal filepath the delegate pipeline and the
+ *  describe_image hint can name), or undefined for unsupported media. */
+export function writeBlockTempFile(tmpDir: string, data: Uint8Array, mediaType: ImageMediaType): string | undefined {
+  const ext = BLOCK_EXT[mediaType]
+  if (ext === undefined) return undefined
+  const hash = createHash('sha256').update(data).digest('hex').slice(0, 24)
+  mkdirSync(tmpDir, { recursive: true })
+  const file = joinPath(tmpDir, hash + ext)
+  if (!existsSync(file)) writeFileSync(file, data, { mode: 0o600 })
+  return file
+}
+
 /** One delegation entry point for a specific agent workspace. */
 export type PasteDelegate = (params: DelegateParams, signal: AbortSignal) => Promise<DelegateResult>
 
@@ -124,6 +158,10 @@ export interface PasteDeps {
   /** Whether the given agent's primary model processes images natively. */
   isMultimodal: (agent: Agent) => boolean
   saveAttachment: SaveAttachment
+  /** Read stored bytes for an image block (text-only conversion). */
+  readImage: ReadImage
+  /** Plugin-owned temp dir for materialized image blocks (join(home,'tmp','dsh-vision')). */
+  tmpDir: string
   /** Build the delegation entry point for one agent's workspace. */
   delegateFor: (workspace: string) => PasteDelegate
   logger?: { warn: (message: string, ...args: unknown[]) => void }
@@ -165,8 +203,53 @@ async function autoDelegateOne(
   }
 }
 
+/** Best-effort delete of materialized block temp files (auto mode: the
+ *  description is embedded + cached, so the file is no longer needed; on
+ *  full hint fallback the files are kept because the hint names them). */
+function cleanupTempFiles(paths: readonly string[]): void {
+  for (const p of paths) {
+    try { unlinkSync(p) } catch { /* best-effort */ }
+  }
+}
+
+/** One image block materialized to a temp-file path (or failed). */
+interface BlockMaterialization {
+  blockIndex: number
+  /** Absolute temp-file path when the bytes were readable + writable. */
+  path?: string
+  failed?: boolean
+  name?: string
+}
+
+/** Read every image block of a user message and materialize it to a
+ *  content-hash-named temp file (text-only primaries only — multimodal keeps
+ *  blocks native). Failures are recorded, never thrown. */
+async function materializeImageBlocks(
+  deps: PasteDeps,
+  msg: UserMessage,
+  signal: AbortSignal,
+): Promise<BlockMaterialization[]> {
+  const out: BlockMaterialization[] = []
+  for (let i = 0; i < msg.content.length; i++) {
+    const block = msg.content[i]
+    if (block === undefined || block.type !== 'image') continue
+    const ref = (block as { attachment: ImageAttachmentRef }).attachment
+    try {
+      const stored = await deps.readImage(ref, signal)
+      const file = writeBlockTempFile(deps.tmpDir, stored.data, ref.mediaType)
+      if (file === undefined) out.push({ blockIndex: i, failed: true, name: ref.name })
+      else out.push({ blockIndex: i, path: file })
+    } catch {
+      out.push({ blockIndex: i, failed: true, name: ref.name })
+    }
+  }
+  return out
+}
+
 /** Rewrite one user message: markers (+ attachments / hint / descriptions).
- *  Returns undefined when the message is untouched. */
+ *  Image BLOCKS on text-only primaries are materialized to temp-file paths
+ *  and flow through the same pipeline; a raw image block never reaches a
+ *  text-only model's request boundary. Returns undefined when untouched. */
 async function transformMessage(
   deps: PasteDeps,
   config: ResolvedVisionConfig,
@@ -177,15 +260,25 @@ async function transformMessage(
   mode: PasteMode,
 ): Promise<UserMessage | undefined> {
   const textBlocks = msg.content.filter((b): b is { type: 'text'; text: string } => b.type === 'text')
-  if (textBlocks.length === 0) return undefined
+  const imageBlockCount = msg.content.filter((b) => b.type === 'image').length
+  if (textBlocks.length === 0 && imageBlockCount === 0) return undefined
   const text = textBlocks.map((b) => b.text).join('\n')
-  const tokens = findImagePathTokens(text)
-  if (tokens.length === 0) return undefined
-  const existingImageCount = msg.content.filter((b) => b.type === 'image').length
+  const pathTokens = findImagePathTokens(text)
+
+  // Text-only primaries: materialize image blocks to temp files so markers /
+  // hint / auto-delegation handle them like pasted path tokens. Multimodal
+  // primaries keep the blocks untouched (native passthrough).
+  const blockMaterializations = !multimodal && imageBlockCount > 0
+    ? await materializeImageBlocks(deps, msg, signal)
+    : []
+  const blockTokens = blockMaterializations.filter((m) => m.path !== undefined).map((m) => m.path as string)
+
+  const tokens = [...pathTokens, ...blockTokens]
+  const existingImageCount = imageBlockCount
   const loaded = await loadAndDedup(tokens, workspace)
-  if (loaded.length === 0) return undefined
+  if (loaded.length === 0 && blockMaterializations.length === 0) return undefined
   const resolved = buildResolvedMap(tokens, loaded, existingImageCount, multimodal)
-  const rewritten = renderMarkersResolved(text, tokens, resolved, config.markerStyle)
+  const rewritten = renderMarkersResolved(text, pathTokens, resolved, config.markerStyle)
   const nonText = msg.content.filter((b) => b.type !== 'text')
 
   // ── MULTIMODAL: attach images natively (markers reference positions) ──
@@ -201,16 +294,41 @@ async function transformMessage(
   // ── TEXT-ONLY: markers + branch on paste mode ──
   const hintImages = loaded.map((l) => ({ token: l.token, index: resolved.get(l.token)?.index ?? 0 }))
   const hint = buildPasteHintLine(hintImages)
+
+  // Rebuild content: collapsed rewritten text first, then every non-text
+  // block in original order — image blocks become marker text blocks (or a
+  // note when the bytes could not be read). Raw image blocks never reach the
+  // model's request boundary on a text-only primary.
+  const markerByIndex = new Map<number, string>()
+  for (const m of blockMaterializations) {
+    if (m.path !== undefined) {
+      markerByIndex.set(m.blockIndex, renderMarker((resolved.get(m.path)?.index ?? 0) + 1, config.markerStyle))
+    } else {
+      markerByIndex.set(m.blockIndex, `[Image: ${m.name ?? 'attachment'} (unreadable — the active model cannot process images)]`)
+    }
+  }
+  const body: ContentBlock[] = []
+  for (let i = 0; i < msg.content.length; i++) {
+    const block = msg.content[i]!
+    if (block.type === 'text') continue
+    if (block.type === 'image') {
+      const marker = markerByIndex.get(i)
+      if (marker !== undefined) body.push({ type: 'text', text: marker })
+      continue
+    }
+    body.push(block)
+  }
+
   if (mode === 'off') {
-    return freezeMessage({ ...msg, content: [{ type: 'text', text: rewritten }, ...nonText] })
+    return freezeMessage({ ...msg, content: [{ type: 'text', text: rewritten }, ...body] })
   }
   if (mode === 'hint') {
-    return freezeMessage({ ...msg, content: [{ type: 'text', text: rewritten + '\n' + hint }, ...nonText] })
+    return freezeMessage({ ...msg, content: [{ type: 'text', text: rewritten + '\n' + hint }, ...body] })
   }
 
   // mode === 'auto': short-circuit when every delegation would be refused.
   if (config.localOnly || !isConfiguredForDelegation(config)) {
-    return freezeMessage({ ...msg, content: [{ type: 'text', text: rewritten + '\n' + hint }, ...nonText] })
+    return freezeMessage({ ...msg, content: [{ type: 'text', text: rewritten + '\n' + hint }, ...body] })
   }
 
   const controller = new AbortController()
@@ -235,11 +353,14 @@ async function transformMessage(
   }
   if (ok === 0) {
     // All failed/timed out → hint fallback (paths intact for describe_image).
-    return freezeMessage({ ...msg, content: [{ type: 'text', text: rewritten + '\n' + hint }, ...nonText] })
+    return freezeMessage({ ...msg, content: [{ type: 'text', text: rewritten + '\n' + hint }, ...body] })
   }
+  // Auto mode: descriptions are embedded (and cached), so the materialized
+  // block temp files are no longer needed — best-effort remove them.
+  cleanupTempFiles(blockTokens)
   const visionModel = config.provider && config.model ? `${config.provider}/${config.model}` : '(unconfigured)'
   const block = buildDescriptionsBlock(descriptions, visionModel, config.markerStyle)
-  return freezeMessage({ ...msg, content: [{ type: 'text', text: rewritten + block }, ...nonText] })
+  return freezeMessage({ ...msg, content: [{ type: 'text', text: rewritten + block }, ...body] })
 }
 
 /** Transform the enter-batch: rewrite user messages, leave everything else
