@@ -5,6 +5,7 @@ import { createHash } from 'node:crypto'
 import { readFile, stat } from 'node:fs/promises'
 import { existsSync } from 'node:fs'
 import { isAbsolute, resolve as resolvePath } from 'node:path'
+import { resolveInputPath } from './paths.ts'
 
 export const MAX_IMAGE_BYTES = 64 * 1024 * 1024
 
@@ -105,7 +106,10 @@ export async function loadImage(
 
   // file path
   const expanded = trimmed.startsWith('~/') ? resolvePath(opts.cwd, trimmed) : trimmed
-  const abs = isAbsolute(expanded) ? expanded : resolvePath(opts.cwd, expanded)
+  const abs0 = isAbsolute(expanded) ? expanded : resolvePath(opts.cwd, expanded)
+  // Android/Termux: shared-storage spellings (/storage/emulated/0, /sdcard)
+  // are translated to the app-accessible <home>/storage/... path when present.
+  const abs = resolveInputPath(abs0)
   if (!existsSync(abs)) return { ok: false, error: { code: 'not_found', path: input } }
   let st
   try {
