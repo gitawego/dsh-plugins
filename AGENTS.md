@@ -37,8 +37,10 @@ delegation is structurally impossible); text-only primaries get a visible
   `dsh.profile.bundles`, and was materialized with
   `dsh plugin --profile web install` (pnpm install + the dsh bundle reconcile) —
   `node_modules/dsh-vision` is now a pnpm-managed link into the store and
-  `pnpm-lock.yaml` exists. The file: dep is a LIVE link to the source dir, so
-  rebuilds in the repo are picked up. Composed tree verified via
+  `pnpm-lock.yaml` exists. NOTE: pnpm 12 rc COPIES the file: dep into its
+  store (different inodes; the copy even contains `.git`) — it is NOT a live
+  link, so after rebuilding the repo you must re-run
+  `dsh plugin --profile web install` to refresh the profile copy. Composed tree verified via
   `dsh --profile web --dump-config` (row `- id: vision, name: dsh-vision`).
   **The running GUI still needs a restart to load it** (client bundles only
   refresh via the loader; the web patch disables client-hmr).
@@ -209,7 +211,8 @@ delegation is structurally impossible); text-only primaries get a visible
    profile `package.json` as `"<name>": "file:</abs/path>"` (exactly what pnpm add
    would have written), then run `dsh plugin --profile web install` — pnpm install
    materializes it as a proper store link and the dsh reconcile step adds it to
-   `dsh.profile.bundles`. file: deps stay live-linked to the source dir.
+   `dsh.profile.bundles`. pnpm 12 rc COPIES file: deps into the store (no live
+   link) — re-run `dsh plugin --profile web install` after every repo rebuild.
    **Git-URL installs** were probed and are NOT used (decision recorded): pnpm 12 rc
    rewrites every github git-spec to an https fetch (this host has ssh-only github
    auth — the fix is a global `url."git@github.com:".insteadOf "https://github.com/"`
