@@ -33,7 +33,7 @@ function okResult(imagePath: string): DelegateResult {
     text: 'a cat on a mat',
     details: {
       model: 'p/m', image_path: imagePath, prompt: 'prompt', compressed: true,
-      reasoning: 'off', cached: false, fallback: false, transport: 'native',
+      reasoning: 'off', cached: false, fallback: false, transport: 'subagent',
     },
   }
 }

@@ -38,18 +38,25 @@ opens /data/data -> EACCES) and is conceptually wrong — it routes through the
 harness's generic agent/tool machinery instead of driving the vision model as a
 subagent, mirroring pi-vision for the pi agent (user directive).
 
-The current delegate.ts native path MUST be reimplemented as subagent-based
-delegation (TDD). Cache/retry/fallback/audit layers stay (orthogonal).
+The native transport (ImageBlock -> ctx.attachments.saveImage -> ctx.llm.stream)
+has been REMOVED and delegation is now subagent-based (commit "subagent delegation",
+see Repo state): delegate.ts drives a DSH subagent via ctx.agents.create with the
+vision model; the image travels by FILEPATH in a normal user-sourced message and
+the subagent's own pre-step paste hook attaches it for its multimodal primary.
+The plugin keeps the http transport (delegation=http) as its own direct endpoint
+call. Cache/retry/fallback/audit layers are unchanged (orthogonal).
 
 ## Repo state (as of handoff)
 
 - **Commit:** `a4aa3c9` "AGENTS.md: document native-path sandbox diagnosis …" —
   pushed to `origin/main`. Branch `main` tracks `origin/main`. History: `06f6cea` M1,
   `11d1843` M2, `95e07c5` M3, `761217b` /vision input hint, `0ca7f16` settings-route
-  + lifecycle, `a906f5b` settings dropdowns + legibility, `a4aa3c9` sandbox note.
+  + lifecycle, `a906f5b` settings dropdowns + legibility, `a4aa3c9` sandbox note,
+  then the subagent-delegation rewrite (see Session history §11).
 - **Status:** `npm run typecheck` clean (server + client tsconfigs) · `npm run
   build` works (lib/ incl. the client bundle `lib/client.js`) · `npm test`
-  green (**55 tests**: smoke 18, paste 18, `tests/web.spec.ts` 7, `tests/client-controller.spec.ts` 12).
+  green (**90 tests**: smoke 18, paste 18, web 9, paths 9, delegate 8,
+  subagent 8, transport 10, client-controller 10).
   TDD is required for further work: write the failing test first, then implement.
 - **`node_modules/` and `lib/` are gitignored** — a fresh checkout needs
   `npm install` + `npm run build`. `package.json` has a `prepare` script
@@ -210,6 +217,40 @@ delegation (TDD). Cache/retry/fallback/audit layers stay (orthogonal).
       unload (that's user data; /vision clear resets).
     - TDD is required: new logic ships with tests first (tests/web.spec.ts for
       the route, tests/client-controller.spec.ts for the client stores).
+11. **Reimplemented delegation as subagent-based (DESIGN RULE)** (commit "subagent
+    delegation"): the native transport (ImageBlock -> ctx.attachments.saveImage ->
+    ctx.llm.stream) is REMOVED from src/transport.ts (now http-only) and
+    src/delegate.ts drives the vision model as a DSH subagent:
+    - `src/subagent.ts` (new) — `createVisionSubagent(agentsLike, {provider,
+      model, cwd})`: ctx.agents.create with `sessionId: SessionId('vision-'+uuid)`,
+      `meta {cwd, origin:'subagent'}`, `agentOptions {provider, model}`; wraps
+      `agent.followup(msg)` / `agent.whenIdle()` / `lastAssistantText(
+      session.deriveMessages())` / `handle.dispose()` into the `SubagentHandle`
+      seam. `AgentsLike` is a structural subset of ctx.agents so tests fake the
+      registry. `AgentOptions`/`Agent`/`SessionId`/`deriveMessages` all verified
+      against the installed @deepseek-ai types.
+    - `src/delegate.ts` — `DelegateDeps.createSubagent` replaces the old
+      llm/attachments deps; `delegateToSubagent()` sends the prompt via
+      `createUserMessage({source:{kind:'user'}})` — a NORMAL user-sourced message
+      so the subagent's own pre-step paste hook turns the filepath into markers +
+      a native ImageBlock for its multimodal primary (never base64, never a
+      plugin ImageBlock). Audit `transport` literal is now 'subagent' | 'http'.
+    - `src/index.ts`/`src/tool.ts` — wire `createSubagent: (opts) =>
+      createVisionSubagent(ctx.agents, opts)` (tool deps no longer carry
+      llm/attachments).
+    - Config/UI wording updated (auto/native = sub-agent with provider/model;
+      http = plugin-owned endpoint; the settings page shows the http section
+      only for delegation=http).
+    - TDD: `tests/delegate.spec.ts` (8: subagent created with the vision model,
+      filepath-not-base64-not-ImageBlock in the message, not_configured,
+      creation-failure -> vision_call_error, no-content failure, dispose-always,
+      cache/local-only short-circuit without spawning, abort-before-create —
+      with a real 1x1 PNG fixture in a temp dir), `tests/subagent.spec.ts` (8:
+      create options incl. cwd/origin/sessionId, normal followup message, reply
+      text, dispose forwarding, creation-failure propagation, lastAssistantText
+      incl. reasoning-only skip), `tests/transport.spec.ts` rewritten http-only
+      (10: body shapes without attachment refs, response extraction, maxTokensFor,
+      mocked-fetch endpoint calls incl. status error + no-content).
 
 ## What is NOT done (next milestones)
 
@@ -218,23 +259,17 @@ delegation (TDD). Cache/retry/fallback/audit layers stay (orthogonal).
   loads + saves via /_dsh/vision/settings, describe an image (check audit tail
   + cache stats), the describe_image card renders, the /_dsh/vision/models
   catalog + detected default, KV-cache per SPEC §18.9.
-- **Reimplement delegation as subagent-based (DESIGN RULE above)**: replace the
-  native transport (saveImage + llm.stream) with a DSH subagent (ctx.agents.create
-  with the vision model, send the image filepath, return its content) — TDD.
-- **Native-transport e2e** against a real pi-ai vision route is untested; **auto-detect**
-- **Native vision path on this host is blocked by the tool sandbox (diagnosed):
-  describe_image loads the image fine (audit source_hash matches sha256 of the
-  bytes), then ctx.attachments.saveImage writes to DSH storage under ~/.dsh
-  (outside the session workspace) and the dsh-fs-sandbox denies it (EACCES ...
-  '/data/data') because the tool worker runs at the DEPLOYMENT DEFAULT sandbox
-  mode — workspace-write (writes only under workspaceRoot) — NOT the session's
-  sandbox/mode override. The documented lever: the web-app row is
-  config.mode: process.env.DSH_PERMISSION_MODE ?? 'workspace-write', so launch
-  with DSH_PERMISSION_MODE=danger-full-access dsh web to run tools unconfined
-  (what this session's bash already uses). Alternative: the http transport
-  avoids the attachment service entirely. SPEC §16.4 allowedDirs does NOT fix
-  this — the denial is the harness worker's, not the plugin's.
-  untested with a live pi-ai provider (both need a configured image-capable route).
+- **Subagent delegation e2e against a live route is untested**: the pipeline is
+  unit-tested (delegate.spec.ts + subagent.spec.ts with injected seams), but no
+  real image-capable provider has been configured on this host yet, so the live
+  ctx.agents.create -> followup -> deriveMessages loop has not run end-to-end.
+  **auto-detect** is likewise untested with a live provider (needs a configured
+  image-capable route). Note: the OLD native path (ImageBlock -> saveImage ->
+  llm.stream) is GONE — the tool-sandbox EACCES diagnosis at /data/data no
+  longer applies to delegation. The multimodal-paste attachment path
+  (ctx.attachments.saveImage for the primary's OWN ImageBlocks) is a separate
+  use and is still subject to the workspace-write sandbox on this host
+  (lever: DSH_PERMISSION_MODE=danger-full-access dsh web).
 - **M4 — polish**: compose preview slot, headless profile verification, README
   expansion, CHANGELOG.
 - `allowedDirs` hardening (SPEC §16.4) is deferred to v2.
@@ -308,8 +343,8 @@ delegation (TDD). Cache/retry/fallback/audit layers stay (orthogonal).
 ## Resume checklist
 
 1. `cd ~/workspace/dsh-vision && npm install && npm run build && npm test` — expect all
-   green (typecheck + 50 tests).
+   green (typecheck + 90 tests).
 2. Restart `dsh web` (user action) and verify the plugin end-to-end (list above).
-3. Native-transport e2e + auto-detect against a live pi-ai vision route.
+3. Subagent-delegation e2e + auto-detect against a live image-capable route.
 4. M4 polish; commit + push each milestone.
 

@@ -52,8 +52,9 @@ export interface VisionConfig {
   auditLog: boolean
   auditLogPath: string | undefined
   autoDetectVisionModel: boolean
-  /** DSH-only: how delegation reaches the vision model. auto = native when the
-   *  configured provider/model is a registered image-capable route, else http. */
+  /** DSH-only: how delegation reaches the vision model. auto/native = spawn a
+   *  DSH sub-agent with the configured provider/model (the image travels by
+   *  filepath in a normal message); http = the plugin's own endpoint call. */
   delegation: DelegationMode
   /** DSH-only: OpenAI-compatible endpoint used by the http transport. */
   http: {

@@ -22,6 +22,7 @@ import { delegateToVisionModel, type DelegateDeps } from './delegate.ts'
 import { detectVisionModel } from './defaults.ts'
 import { VisionGate } from './exposure.ts'
 import { createPasteHook } from './paste.ts'
+import { createVisionSubagent } from './subagent.ts'
 import type { SettingsLike } from './commands.ts'
 import { installVisionWeb } from './web.ts'
 import { createDescribeImageTool } from './tool.ts'
@@ -74,8 +75,8 @@ export function apply(ctx: Context, config: Partial<VisionConfig> = {}) {
     home,
     workspace,
     resolveCredential: (ref) => ctx.credentials.resolve(ref),
-    llm: ctx.llm as DelegateDeps['llm'],
-    attachments: ctx.attachments as DelegateDeps['attachments'],
+    // DESIGN RULE: the vision model is driven as a DSH subagent (public API).
+    createSubagent: (opts) => createVisionSubagent(ctx.agents, opts),
     signal,
     cache,
   })
@@ -86,8 +87,7 @@ export function apply(ctx: Context, config: Partial<VisionConfig> = {}) {
     cache: () => cache,
     home,
     resolveCredential: (ref) => ctx.credentials.resolve(ref),
-    llm: ctx.llm,
-    attachments: ctx.attachments,
+    createSubagent: (opts) => createVisionSubagent(ctx.agents, opts),
   })
   const toolDisposer = ctx.tools.register(tool)
 

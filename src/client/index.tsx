@@ -28,9 +28,9 @@ const en = {
   provider: 'Provider',
   model: 'Model',
   delegation: 'Delegation',
-  delegationAuto: 'auto (native when the configured model is image-capable, else http)',
-  delegationNative: 'native (ctx.llm.stream with an ImageBlock)',
-  delegationHttp: 'http (OpenAI-compatible endpoint)',
+  delegationAuto: 'auto (spawn a DSH sub-agent with the configured vision model; image sent by filepath)',
+  delegationNative: 'native (sub-agent — same behavior as auto, kept for compatibility)',
+  delegationHttp: 'http (plugin-owned direct endpoint call, no agent tools)',
   http: 'HTTP endpoint',
   baseUrl: 'Base URL',
   credential: 'Credential reference',
@@ -82,9 +82,9 @@ const zh: Record<LocaleKey, string> = {
   provider: 'Provider',
   model: 'Model',
   delegation: '委派方式',
-  delegationAuto: 'auto（配置的模型支持图像时走 native，否则 http）',
-  delegationNative: 'native（ctx.llm.stream + ImageBlock）',
-  delegationHttp: 'http（OpenAI 兼容端点）',
+  delegationAuto: 'auto（以配置的视觉模型启动 DSH 子代理，图片以文件路径发送）',
+  delegationNative: 'native（子代理——与 auto 相同，保留兼容）',
+  delegationHttp: 'http（插件自有端点直连，不经过任何代理工具）',
   http: 'HTTP 端点',
   baseUrl: '服务地址',
   credential: 'Credential 引用',
@@ -616,7 +616,7 @@ function LoadedSettings({ settings, catalog, t }: { settings: SettingsController
         <label className="dvs-check"><input type="checkbox" checked={draft.localOnly} onChange={(event) => { update('localOnly', event.target.checked) }} />{t('localOnly')}</label>
       </div></section>
 
-      {draft.delegation === 'native' ? null : (
+      {draft.delegation === 'http' ? (
         <section className="dvs-panel"><h3>{t('http')}</h3><div className="dvs-grid">
           <label className="dvs-field"><span>{t('baseUrl')}</span><input value={draft.baseUrl} onChange={(event) => { update('baseUrl', event.target.value) }} placeholder="https://…" /></label>
           <label className="dvs-field"><span>{t('credential')}</span><input value={draft.credential} onChange={(event) => { update('credential', event.target.value) }} placeholder="VISION_API_KEY" /></label>
@@ -625,7 +625,7 @@ function LoadedSettings({ settings, catalog, t }: { settings: SettingsController
             <select value={draft.protocol} onChange={(event) => { update('protocol', event.target.value) }}><option value="openai">openai</option><option value="anthropic">anthropic</option></select>
           </label>
         </div></section>
-      )}
+      ) : null}
 
       <section className="dvs-panel"><h3>{t('paste')}</h3><div className="dvs-grid">
         <label className="dvs-field"><span>{t('textOnlyPasteMode')}</span>
