@@ -1,7 +1,9 @@
 /** dsh-vision — capability-aware vision + paste extension for DeepSeek
  *  Harness (pi-vision port). M1: describe_image tool with the v0.2–v0.5
  *  resilience pipeline, per-agent capability gating, /vision command, and
- *  data-driven auto-detect. Paste UX (M2) and Web client (M3) follow. */
+ *  data-driven auto-detect. M2: paste UX via agent/pre-step (markers,
+ *  ImageBlock attach for multimodal primaries, hint / auto-delegate for
+ *  text-only primaries). */
 import type { Context } from '@deepseek-ai/cordis'
 import type {} from '@deepseek-ai/dsh-agent'
 import type {} from '@deepseek-ai/dsh-attachment'
@@ -15,8 +17,10 @@ import { join } from 'node:path'
 import { VisionCache } from './cache.ts'
 import { createVisionCommand } from './commands.ts'
 import { Config, VISION_SETTINGS_NAMESPACE, mergeConfig, resolveConfig, type ResolvedVisionConfig, type VisionConfig } from './config.ts'
+import { delegateToVisionModel, type DelegateDeps } from './delegate.ts'
 import { detectVisionModel } from './defaults.ts'
 import { VisionGate } from './exposure.ts'
+import { createPasteHook } from './paste.ts'
 import { createDescribeImageTool } from './tool.ts'
 
 export const name = 'dsh-vision'
@@ -60,6 +64,19 @@ export function apply(ctx: Context, config: Partial<VisionConfig> = {}) {
     () => resolved.enabled,
   )
 
+  // Shared delegation entry point (tool + paste auto mode). Workspace and the
+  // per-call cancellation signal differ per use; the rest is live config.
+  const delegateDepsFor = (workspace: string, signal?: AbortSignal): DelegateDeps => ({
+    config: resolved,
+    home,
+    workspace,
+    resolveCredential: (ref) => ctx.credentials.resolve(ref),
+    llm: ctx.llm as DelegateDeps['llm'],
+    attachments: ctx.attachments as DelegateDeps['attachments'],
+    signal,
+    cache,
+  })
+
   const tool = createDescribeImageTool({
     config: () => resolved,
     gate,
@@ -87,6 +104,16 @@ export function apply(ctx: Context, config: Partial<VisionConfig> = {}) {
     detect: () => detectVisionModel(ctx.llm),
   })
   ctx.commands.register(command)
+
+  // M2: paste UX — rewrite user messages carrying image path tokens before
+  // they enter a step (markers, native attachment, hint/auto-delegate).
+  const pasteDisposer = ctx.on('agent/pre-step', createPasteHook({
+    config: () => resolved,
+    isMultimodal: (agent) => gate.current(agent)?.multimodal ?? false,
+    saveAttachment: (input) => ctx.attachments.saveImage(input),
+    delegateFor: (workspace) => (params, signal) => delegateToVisionModel(delegateDepsFor(workspace, signal), params),
+    logger: ctx.logger,
+  }))
 
   // Live re-resolution on settings changes; cache shape + mask re-sync.
   const settingsWatch = settings.watch(async (next: unknown) => {
@@ -122,7 +149,9 @@ export function apply(ctx: Context, config: Partial<VisionConfig> = {}) {
 
   return () => {
     gateDisposer()
+    pasteDisposer()
     autoDetect()
     settingsWatch()
   }
 }
+
