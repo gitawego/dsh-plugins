@@ -19,6 +19,8 @@ export interface DescribeImageDeps {
   resolveCredential: (ref: CredentialRef) => Promise<{ value: string } | undefined>
   /** DESIGN RULE: spawn the vision-model DSH subagent (public API). */
   createSubagent: CreateSubagent
+  /** Native-delivery probe (attachment store liveness) — memoized in index.ts. */
+  canDeliverImage: () => Promise<boolean>
   lifecycleSignal?: AbortSignal
 }
 
@@ -132,6 +134,7 @@ export function createDescribeImageTool(deps: DescribeImageDeps) {
         workspace,
         resolveCredential: deps.resolveCredential,
         createSubagent: deps.createSubagent,
+        canDeliverImage: deps.canDeliverImage,
         signal,
         cache: deps.cache(),
       }

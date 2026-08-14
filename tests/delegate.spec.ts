@@ -2,7 +2,7 @@
  *  a DSH subagent with the vision model; the image is delivered by FILEPATH in
  *  the subagent message. No attachment store, no llm.stream-with-ImageBlock.
  *  Config-driven; edge cases covered. */
-import { afterAll, describe, expect, it, vi } from 'vitest'
+import { afterAll, afterEach, describe, expect, it, vi } from 'vitest'
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -33,6 +33,7 @@ function makeDeps(overrides: Partial<DelegateDeps> = {}): DelegateDeps & { calls
     home: FIXTURE_DIR,
     workspace: FIXTURE_DIR,
     resolveCredential: async () => ({ value: 'key' }),
+    canDeliverImage: async () => true, // native ImageBlock delivery available by default
     createSubagent: async (opts) => {
       calls.push(opts as unknown as Record<string, unknown>)
       const messages: UserMessage[] = []
@@ -145,6 +146,66 @@ describe('subagent delegation (DESIGN RULE)', () => {
     expect(result.ok).toBe(false)
     if (!result.ok) expect(result.error.code).toBe('aborted')
     expect(deps.calls).toHaveLength(0)
+  })
+
+  // ── native-first delivery: subagent (ImageBlock) preferred; base64 http only
+  // when the harness cannot deliver the image natively (Android/Termux EACCES).
+  it('auto: falls back to the http endpoint when the subagent cannot receive images natively', async () => {
+    let created = false
+    const fetchMock = vi.fn(async (_url: string | URL, _init?: RequestInit) => ({
+      ok: true, status: 200, json: async () => ({ choices: [{ message: { content: 'a cat via http' } }] }), text: async () => '',
+    }))
+    vi.stubGlobal('fetch', fetchMock)
+    try {
+      const deps = makeDeps({
+        canDeliverImage: async () => false,
+        config: config({
+          delegation: 'auto',
+          http: { baseUrl: 'https://opencode.ai/zen/go/v1', credential: 'KEY', model: 'minimax-m3', protocol: 'openai' },
+        }),
+        createSubagent: async () => { created = true; throw new Error('should not run') },
+      })
+      const result = await delegateToVisionModel(deps, { image_path: IMG, prompt: 'x', compress: true, reasoning: 'off' })
+      expect(created).toBe(false)
+      expect(result.ok).toBe(true)
+      if (result.ok) {
+        expect(result.text).toBe('a cat via http')
+        expect(result.details.transport).toBe('http')
+      }
+      expect(String(fetchMock.mock.calls[0]![0])).toBe('https://opencode.ai/zen/go/v1/chat/completions')
+    } finally {
+      vi.unstubAllGlobals()
+    }
+  })
+
+  it('auto: not_configured with http guidance when the native path is unavailable and http is unset', async () => {
+    const deps = makeDeps({ canDeliverImage: async () => false })
+    const result = await delegateToVisionModel(deps, { image_path: IMG, prompt: 'x', compress: true, reasoning: 'off' })
+    expect(result.ok).toBe(false)
+    if (!result.ok) {
+      expect(result.error.code).toBe('not_configured')
+      expect(result.error.message).toMatch(/http/i)
+    }
+    expect(deps.calls).toHaveLength(0)
+  })
+
+  it('native: image_delivery_unavailable instead of a silent subagent run when the native path cannot deliver', async () => {
+    const deps = makeDeps({ canDeliverImage: async () => false, config: config({ delegation: 'native' }) })
+    const result = await delegateToVisionModel(deps, { image_path: IMG, prompt: 'x', compress: true, reasoning: 'off' })
+    expect(result.ok).toBe(false)
+    if (!result.ok) {
+      expect(result.error.code).toBe('image_delivery_unavailable')
+      expect(result.error.message).toMatch(/attachment store/i)
+    }
+    expect(deps.calls).toHaveLength(0)
+  })
+
+  it('auto: uses the subagent (native) whenever the harness can deliver the image', async () => {
+    const deps = makeDeps({ canDeliverImage: async () => true })
+    const result = await delegateToVisionModel(deps, { image_path: IMG, prompt: 'native', compress: true, reasoning: 'off' })
+    expect(result.ok).toBe(true)
+    if (result.ok) expect(result.details.transport).toBe('subagent')
+    expect(deps.calls).toHaveLength(1)
   })
 })
 
