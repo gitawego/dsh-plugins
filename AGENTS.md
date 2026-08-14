@@ -42,9 +42,27 @@ The native transport (ImageBlock -> ctx.attachments.saveImage -> ctx.llm.stream)
 has been REMOVED and delegation is now subagent-based (commit "subagent delegation",
 see Repo state): delegate.ts drives a DSH subagent via ctx.agents.create with the
 vision model; the image travels by FILEPATH in a normal user-sourced message and
-the subagent's own pre-step paste hook attaches it for its multimodal primary.
-The plugin keeps the http transport (delegation=http) as its own direct endpoint
-call. Cache/retry/fallback/audit layers are unchanged (orthogonal).
+the subagent's own pre-step paste hook attaches it natively (ImageBlock) for its
+multimodal primary.
+
+**Native-first delivery (user directive, "use the native way as much as possible,
+avoid base64 as much as possible"):** the sub-agent path IS the native path (the
+image rides DSH's own ImageBlock machinery). `delegate.ts` probes once per
+process whether the attachment store can write (`DelegateDeps.canDeliverImage`,
+injected memoized from index.ts via `ctx.attachments.saveImage` on a 1x1 PNG).
+When it cannot — proven on Android/Termux: the store's durability walk
+(`ensureDurableHome` -> `syncDirectory` on every ancestor of DSH_HOME up to `/`)
+opens `/data/data` O_RDONLY -> EACCES, a raw Android permission independent of
+the tool sandbox, so the store can NEVER write under /data/data, and
+`~/.dsh/attachments/v1` stays empty — then:
+  - `delegation=auto` falls back to the plugin's own http endpoint call
+    (base64 image — unavoidable there: the OpenAI/Anthropic inline-image
+    formats ARE base64 by protocol), if http.baseUrl/credential/model are set,
+    else returns not_configured with guidance;
+  - `delegation=native` refuses loudly with `image_delivery_unavailable`
+    (never a silent "no image" subagent reply);
+  - `delegation=http` is the explicit base64 path.
+Cache/retry/fallback/audit layers are unchanged (orthogonal).
 
 ## Repo state (as of handoff)
 
@@ -55,7 +73,7 @@ call. Cache/retry/fallback/audit layers are unchanged (orthogonal).
   then the subagent-delegation rewrite (see Session history §11).
 - **Status:** `npm run typecheck` clean (server + client tsconfigs) · `npm run
   build` works (lib/ incl. the client bundle `lib/client.js`) · `npm test`
-  green (**90 tests**: smoke 18, paste 18, web 9, paths 9, delegate 8,
+  green (**94 tests**: smoke 18, paste 18, web 9, paths 9, delegate 12,
   subagent 8, transport 10, client-controller 10).
   TDD is required for further work: write the failing test first, then implement.
 - **`node_modules/` and `lib/` are gitignored** — a fresh checkout needs
@@ -239,8 +257,7 @@ call. Cache/retry/fallback/audit layers are unchanged (orthogonal).
       createVisionSubagent(ctx.agents, opts)` (tool deps no longer carry
       llm/attachments).
     - Config/UI wording updated (auto/native = sub-agent with provider/model;
-      http = plugin-owned endpoint; the settings page shows the http section
-      only for delegation=http).
+      http = plugin-owned endpoint).
     - TDD: `tests/delegate.spec.ts` (8: subagent created with the vision model,
       filepath-not-base64-not-ImageBlock in the message, not_configured,
       creation-failure -> vision_call_error, no-content failure, dispose-always,
@@ -251,6 +268,28 @@ call. Cache/retry/fallback/audit layers are unchanged (orthogonal).
       incl. reasoning-only skip), `tests/transport.spec.ts` rewritten http-only
       (10: body shapes without attachment refs, response extraction, maxTokensFor,
       mocked-fetch endpoint calls incl. status error + no-content).
+12. **Native-first delivery + http fallback (user directive: "use the native way
+    as much as possible, avoid base64 as much as possible"; on this host the
+    sub-agent path could NOT see pasted images — the model answered "I don't
+    see an image" because the sub-agent's own paste hook attaches via
+    ctx.attachments.saveImage and the store can NEVER write under /data/data)**:
+    - Verified end-to-end: the durability walk (`ensureDurableHome` ->
+      `syncDirectory` on every ancestor of DSH_HOME up to `/`) opens
+      `/data/data` O_RDONLY -> EACCES for this uid (reproduced in node:
+      `open('/data/data','r')` fails even with DSH_PERMISSION_MODE=full), so
+      the store is unusable for ANY caller on Android/Termux;
+      `~/.dsh/attachments/v1` contains no objects. Termux path translation
+      was NOT the problem (both spellings exist and resolve).
+    - `DelegateDeps.canDeliverImage` (memoized 1x1-PNG `ctx.attachments.
+      saveImage` probe wired in index.ts/tool.ts) decides: `auto` uses the
+      sub-agent (native) when available, else falls back to the plugin's own
+      http endpoint call when http.baseUrl/credential/model are set, else
+      not_configured with guidance; `native` refuses loudly with the new
+      `image_delivery_unavailable` code (no silent "no image" replies);
+      `http` is the explicit base64 path. Settings page shows the http block
+      for auto and http (auto can use it). Tests/delegate.spec.ts +4 (auto
+      http fallback with mocked fetch, auto not_configured guidance, native
+      refusal, auto native preference) — 94 tests green.
 
 ## What is NOT done (next milestones)
 
@@ -259,17 +298,20 @@ call. Cache/retry/fallback/audit layers are unchanged (orthogonal).
   loads + saves via /_dsh/vision/settings, describe an image (check audit tail
   + cache stats), the describe_image card renders, the /_dsh/vision/models
   catalog + detected default, KV-cache per SPEC §18.9.
-- **Subagent delegation e2e against a live route is untested**: the pipeline is
-  unit-tested (delegate.spec.ts + subagent.spec.ts with injected seams), but no
-  real image-capable provider has been configured on this host yet, so the live
-  ctx.agents.create -> followup -> deriveMessages loop has not run end-to-end.
-  **auto-detect** is likewise untested with a live provider (needs a configured
-  image-capable route). Note: the OLD native path (ImageBlock -> saveImage ->
-  llm.stream) is GONE — the tool-sandbox EACCES diagnosis at /data/data no
-  longer applies to delegation. The multimodal-paste attachment path
-  (ctx.attachments.saveImage for the primary's OWN ImageBlocks) is a separate
-  use and is still subject to the workspace-write sandbox on this host
-  (lever: DSH_PERMISSION_MODE=danger-full-access dsh web).
+- **On this host (Android/Termux) describe_image must use delegation=http**:
+  the native sub-agent path cannot deliver images (attachment store can never
+  write under /data/data — see Design rule). The provider endpoint is
+  discoverable from DSH's own registry (`opencode-go` -> pi-ai catalog
+  OpenCode Zen Go, `https://opencode.ai/zen/go/v1`, openai-completions API;
+  auth env `OPENCODE_GO_API_KEY`); configure
+  `delegation=http`, `http.baseUrl=https://opencode.ai/zen/go/v1`,
+  `http.model=minimax-m3`, `http.credential=<a DSH credential holding the
+  key>` via /vision or the settings page, then describe_image calls the
+  endpoint directly. Live e2e of the sub-agent loop + auto-detect need a host
+  with a working attachment store. The multimodal-paste attachment path
+  (ctx.attachments.saveImage for the primary's OWN ImageBlocks) is broken on
+  this host for the same reason (any user paste into a multimodal session
+  silently degrades to markers).
 - **M4 — polish**: compose preview slot, headless profile verification, README
   expansion, CHANGELOG.
 - `allowedDirs` hardening (SPEC §16.4) is deferred to v2.
@@ -343,8 +385,9 @@ call. Cache/retry/fallback/audit layers are unchanged (orthogonal).
 ## Resume checklist
 
 1. `cd ~/workspace/dsh-vision && npm install && npm run build && npm test` — expect all
-   green (typecheck + 90 tests).
+   green (typecheck + 94 tests).
 2. Restart `dsh web` (user action) and verify the plugin end-to-end (list above).
-3. Subagent-delegation e2e + auto-detect against a live image-capable route.
+3. On Termux: set delegation=http + the http block (see What is NOT done) and
+   verify describe_image; sub-agent e2e + auto-detect need a store-capable host.
 4. M4 polish; commit + push each milestone.
 

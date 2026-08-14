@@ -54,6 +54,13 @@ export interface DelegateDeps {
   resolveCredential: (ref: import('@deepseek-ai/dsh-credentials').CredentialRef) => Promise<CredentialLike | undefined>
   /** Spawn the vision-model sub-agent (DSH public API, DESIGN RULE). */
   createSubagent: CreateSubagent
+  /** Whether the harness can deliver image bytes to a spawned sub-agent
+   *  NATIVELY (ImageBlock via the attachment store). Injected from index.ts
+   *  as a memoized probe; absent (tests) means the native path is assumed
+   *  available. When it is not (Android/Termux: the store's durability walk
+   *  hits EACCES at /data/data), auto delegation falls back to the plugin's
+   *  own http endpoint call and native mode refuses loudly. */
+  canDeliverImage?: () => Promise<boolean>
   signal?: AbortSignal
   cache?: VisionCache
 }
@@ -130,6 +137,17 @@ const NOT_CONFIGURED_MSG = [
   '',
   'Use /vision show or the Web Settings to set the vision provider and model (an image-capable model from the harness catalog), or the http endpoint fields for raw-http delegation.',
   'For delegation: auto/native needs provider+model of a registered image-capable model; http needs http.baseUrl, http.credential (a DSH Credential reference), and http.model.',
+].join('\n')
+
+/** The sub-agent cannot receive the image natively on this host (the
+ *  attachment store cannot write — Android/Termux EACCES at /data/data).
+ *  Native mode refuses; auto mode falls back to the http endpoint. */
+const IMAGE_DELIVERY_UNAVAILABLE_MSG = [
+  'The vision sub-agent cannot receive images natively on this host: the DSH attachment store cannot write under this DSH home (on Android/Termux the durability walk hits EACCES at /data/data).',
+  '',
+  'Options:',
+  '  - Use delegation=http and set http.baseUrl, http.credential (a DSH credential), and http.model to call the vision endpoint directly (image sent as base64 in the standard API request).',
+  '  - Run on a host where the attachment store can write, so delegation auto/native delivers the image natively (ImageBlock).',
 ].join('\n')
 
 const LOCAL_ONLY_MSG = (cacheHint: string): string => [
@@ -214,18 +232,31 @@ interface ResolvedTransport {
   label: string
 }
 
-/** Decide the transport for this call (delegation auto/native → subagent with
- *  the configured vision model; http → the plugin's own endpoint call). */
+function httpConfigured(deps: DelegateDeps): boolean {
+  return !!(deps.config.http.baseUrl && deps.config.http.credential && deps.config.http.model)
+}
+
+/** Decide the transport for this call. NATIVE-first (DESIGN RULE + user
+ *  directive): auto/native → the DSH sub-agent with the configured vision
+ *  model, whose message carries the image by filepath and attaches it natively
+ *  (ImageBlock) for its multimodal primary. Only when the harness cannot
+ *  deliver the image natively (attachment store unavailable — Android/Termux)
+ *  does auto fall back to the plugin's own http endpoint call (base64 image);
+ *  native mode refuses loudly instead of silently degrading. */
 async function resolveTransport(deps: DelegateDeps): Promise<ResolvedTransport> {
   const mode = deps.config.delegation
   if (mode === 'http') {
-    if (!deps.config.http.baseUrl || !deps.config.http.credential || !deps.config.http.model) {
-      throw new VisionError('not_configured', NOT_CONFIGURED_MSG)
-    }
+    if (!httpConfigured(deps)) throw new VisionError('not_configured', NOT_CONFIGURED_MSG)
     return { kind: 'http', label: `${deps.config.http.baseUrl}/${deps.config.http.model}` }
   }
+  // auto / native → sub-agent with the configured vision model (native path).
   if (deps.config.provider && deps.config.model) {
-    return { kind: 'subagent', label: `${deps.config.provider}/${deps.config.model}` }
+    const deliverable = deps.canDeliverImage === undefined ? true : await deps.canDeliverImage()
+    if (deliverable) return { kind: 'subagent', label: `${deps.config.provider}/${deps.config.model}` }
+    // Native delivery impossible on this host.
+    if (mode === 'native') throw new VisionError('image_delivery_unavailable', IMAGE_DELIVERY_UNAVAILABLE_MSG)
+    if (httpConfigured(deps)) return { kind: 'http', label: `${deps.config.http.baseUrl}/${deps.config.http.model}` }
+    throw new VisionError('not_configured', IMAGE_DELIVERY_UNAVAILABLE_MSG)
   }
   throw new VisionError('not_configured', NOT_CONFIGURED_MSG)
 }

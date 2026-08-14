@@ -29,6 +29,12 @@ import { createDescribeImageTool } from './tool.ts'
 
 export const name = 'dsh-vision'
 
+/** 1x1 PNG used by the attachment-store liveness probe (native delivery). */
+const PROBE_PNG_1x1 = Buffer.from(
+  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==',
+  'base64',
+)
+
 export { Config }
 
 export const inject = ['tools', 'agents', 'llm', 'credentials', 'attachments', 'settings', 'commands']
@@ -68,6 +74,27 @@ export function apply(ctx: Context, config: Partial<VisionConfig> = {}) {
     () => resolved.enabled,
   )
 
+  // NATIVE-first delivery probe: the sub-agent path attaches the image via
+  // the harness attachment store (ImageBlock). On Android/Termux the store's
+  // durability walk cannot open /data/data (EACCES), so the native path is
+  // unusable there; auto delegation then falls back to the http endpoint.
+  // Probe once per process (the failure is environmental, not transient).
+  let storeCanWrite: boolean | undefined
+  const canDeliverImage = async (): Promise<boolean> => {
+    if (storeCanWrite !== undefined) return storeCanWrite
+    try {
+      await ctx.attachments.saveImage({
+        data: new Uint8Array(PROBE_PNG_1x1),
+        mediaType: 'image/png',
+        name: 'dsh-vision-store-probe',
+      })
+      storeCanWrite = true
+    } catch {
+      storeCanWrite = false
+    }
+    return storeCanWrite
+  }
+
   // Shared delegation entry point (tool + paste auto mode). Workspace and the
   // per-call cancellation signal differ per use; the rest is live config.
   const delegateDepsFor = (workspace: string, signal?: AbortSignal): DelegateDeps => ({
@@ -77,6 +104,7 @@ export function apply(ctx: Context, config: Partial<VisionConfig> = {}) {
     resolveCredential: (ref) => ctx.credentials.resolve(ref),
     // DESIGN RULE: the vision model is driven as a DSH subagent (public API).
     createSubagent: (opts) => createVisionSubagent(ctx.agents, opts),
+    canDeliverImage,
     signal,
     cache,
   })
@@ -88,6 +116,7 @@ export function apply(ctx: Context, config: Partial<VisionConfig> = {}) {
     home,
     resolveCredential: (ref) => ctx.credentials.resolve(ref),
     createSubagent: (opts) => createVisionSubagent(ctx.agents, opts),
+    canDeliverImage,
   })
   const toolDisposer = ctx.tools.register(tool)
 

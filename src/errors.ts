@@ -14,6 +14,7 @@ export type VisionErrorCode =
   | 'invalid_base64'
   | 'local_only'
   | 'vision_call_error'
+  | 'image_delivery_unavailable'
   | 'aborted'
   | 'batch_too_large'
   | 'no_image_path'
