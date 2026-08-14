@@ -33,7 +33,7 @@ function streamingLlm() {
   }
 }
 
-const VALID_REF: ImageAttachmentRef = { attachmentId: 'a1', mediaType: 'image/png', bytes: 1, width: 1, height: 1 }
+const VALID_REF = { attachmentId: 'a1', mediaType: 'image/png', bytes: 1, width: 1, height: 1 } as unknown as ImageAttachmentRef
 
 describe('callNativeVision attachment-store failures (generic, cross-platform)', () => {
   it.each(['EACCES', 'EPERM', 'EROFS', 'ENOSPC', 'EDQUOT'])(
