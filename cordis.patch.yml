@@ -2,4 +2,4 @@
 # profile's `dsh.profile.bundles` (installed via `dsh plugin`).
 - insert:
     - id: vision
-      name: 'dsh-vision'
+      name: '@gitawego/dsh-vision'
