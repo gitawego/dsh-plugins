@@ -1,406 +1,192 @@
-# AGENTS.md — dsh-vision (session handoff)
+# AGENTS.md — dsh-vision (architecture)
 
-Read this first. It records the full session history, the exact repo state, and
-everything a fresh session needs to resume the work.
+Read this first. This file records the **project architecture and the
+non-negotiable design rules**. It is deliberately NOT a lessons recorder:
+session history, debugging deep-dives, tooling pitfalls, and host/environment
+facts live in [LESSONS.md](LESSONS.md). Full design: [SPEC.md](SPEC.md)
+(feature-parity matrix, architecture, KV-cache requirements §18, milestones §15).
 
 ## What this project is
 
 `dsh-vision` — a capability-aware vision + paste extension for **DeepSeek
-Harness (DSH)**, ported 1:1 from [`@gitawego/pi-vision`](https://github.com/gitawego/pi-vision)
-(v0.6.0). Private repo: **gitawego/dsh-vision** (clone: `~/workspace/dsh-vision`).
-Full design: [SPEC.md](SPEC.md) (feature-parity matrix, architecture, KV-cache
-requirements §18, milestones §15).
+Harness (DSH)**, ported 1:1 from `@gitawego/pi-vision` (v0.6.0). Private repo:
+**gitawego/dsh-vision** (clone: `~/workspace/dsh-vision`).
 
-Core idea: multimodal primary models see images natively (`describe_image` is hidden —
-delegation is structurally impossible); text-only primaries get a visible
-`describe_image` tool that delegates through a cache/retry/fallback pipeline.
+Core idea: multimodal primary models see images natively (`describe_image` is
+hidden — delegation is structurally impossible); text-only primaries get a
+visible `describe_image` tool that delegates through a
+cache/retry/fallback pipeline.
 
 ## Design rule — how describe_image must delegate (NON-NEGOTIABLE)
 
-The vision plugin must NEVER delegate to another agent tool, and must NOT depend on
-the harness attachment store or any adapter/pi-ai internals to carry the image.
-Delegation uses ONLY DSH public APIs:
+The vision plugin must NEVER delegate to another agent tool, and must NOT depend
+on the harness attachment store or any adapter/pi-ai internals to carry the
+image. Delegation uses ONLY DSH public APIs:
 
-1. Find the vision-capable model from DSH's own registry: ctx.llm.listProviders() /
-   listModels() filtered on inputModalities including 'image' (data-driven, never
-   hardcoded; auto-detect already implements this).
+1. Find the vision-capable model from DSH's own registry: ctx.llm.listProviders()
+   / listModels() filtered on inputModalities including 'image' (data-driven,
+   never hardcoded; auto-detect implements this).
 2. Spawn a DSH subagent with that model as its primary:
    ctx.agents.create({ agentOptions: { provider, model: <vision model> } }).
 3. Send the subagent the image by FILEPATH (a normal message with the path) — the
-   subagent reads the image and returns its description. NO base64 in the message,
-   NO ctx.attachments.saveImage / ImageBlock transport, NO digging into
+   subagent reads the image and returns its description. NO base64 in the
+   message, NO ctx.attachments.saveImage / ImageBlock transport, NO digging into
    pi-ai/adapter internals, NO llm.stream with an ImageBlock for delegation.
 4. Return the subagent's text content to the caller; dispose the subagent.
 
 Rationale: the old native transport (ImageBlock -> ctx.attachments.saveImage ->
-ctx.llm.stream) is BROKEN on Android/Termux (the attachment store's durability walk
-opens /data/data -> EACCES) and is conceptually wrong — it routes through the
-harness's generic agent/tool machinery instead of driving the vision model as a
-subagent, mirroring pi-vision for the pi agent (user directive).
+ctx.llm.stream) is BROKEN on Android/Termux (the attachment store's durability
+walk opens /data/data -> EACCES) and is conceptually wrong — it routes through
+the harness's generic agent/tool machinery instead of driving the vision model
+as a subagent, mirroring pi-vision for the pi agent (user directive). See
+LESSONS.md for the full diagnosis.
 
-The native transport (ImageBlock -> ctx.attachments.saveImage -> ctx.llm.stream)
-has been REMOVED and delegation is now subagent-based (commit "subagent delegation",
-see Repo state): delegate.ts drives a DSH subagent via ctx.agents.create with the
-vision model; the image travels by FILEPATH in a normal user-sourced message and
-the subagent's own pre-step paste hook attaches it natively (ImageBlock) for its
-multimodal primary.
-
-**Native-first delivery (user directive, "use the native way as much as possible,
-avoid base64 as much as possible"):** the sub-agent path IS the native path (the
-image rides DSH's own ImageBlock machinery). `delegate.ts` probes once per
-process whether the attachment store can write (`DelegateDeps.canDeliverImage`,
-injected memoized from index.ts via `ctx.attachments.saveImage` on a 1x1 PNG).
-When it cannot — proven on Android/Termux: the store's durability walk
-(`ensureDurableHome` -> `syncDirectory` on every ancestor of DSH_HOME up to `/`)
-opens `/data/data` O_RDONLY -> EACCES, a raw Android permission independent of
-the tool sandbox, so the store can NEVER write under /data/data, and
-`~/.dsh/attachments/v1` stays empty — then:
+**Native-first delivery (user directive, "use the native way as much as
+possible, avoid base64 as much as possible"):** the sub-agent path IS the
+native path (the image rides DSH's own ImageBlock machinery). `delegate.ts`
+probes once per process whether the attachment store can write
+(`DelegateDeps.canDeliverImage`, memoized 1x1-PNG `ctx.attachments.saveImage`
+probe wired in index.ts/tool.ts). When it cannot — Android/Termux: the store's
+durability walk syncs every ancestor of DSH_HOME up to `/` and `/data/data`
+is O_RDONLY-EACCES for any Termux uid, so the store can NEVER write there —
+then:
   - `delegation=auto` falls back to the plugin's own http endpoint call
-    (base64 image — unavoidable there: the OpenAI/Anthropic inline-image
-    formats ARE base64 by protocol), if http.baseUrl/credential/model are set,
-    else returns not_configured with guidance;
+    (base64 image — unavoidable: the OpenAI/Anthropic inline-image formats ARE
+    base64 by protocol), if http.baseUrl/credential/model are set, else returns
+    not_configured with guidance;
   - `delegation=native` refuses loudly with `image_delivery_unavailable`
     (never a silent "no image" subagent reply);
   - `delegation=http` is the explicit base64 path.
-Cache/retry/fallback/audit layers are unchanged (orthogonal).
+Cache/retry/fallback/audit layers are orthogonal to the transport choice.
 
-## Repo state (as of handoff)
+## Architecture
 
-- **Commit:** `a4aa3c9` "AGENTS.md: document native-path sandbox diagnosis …" —
-  pushed to `origin/main`. Branch `main` tracks `origin/main`. History: `06f6cea` M1,
-  `11d1843` M2, `95e07c5` M3, `761217b` /vision input hint, `0ca7f16` settings-route
-  + lifecycle, `a906f5b` settings dropdowns + legibility, `a4aa3c9` sandbox note,
-  then the subagent-delegation rewrite (see Session history §11).
-- **Status:** `npm run typecheck` clean (server + client tsconfigs) · `npm run
-  build` works (lib/ incl. the client bundle `lib/client.js`) · `npm test`
-  green (**95 tests**: smoke 18, paste 18, web 9, paths 9, delegate 13,
-  subagent 8, transport 10, client-controller 10).
-  TDD is required for further work: write the failing test first, then implement.
-- **`node_modules/` and `lib/` are gitignored** — a fresh checkout needs
-  `npm install` + `npm run build`. `package.json` has a `prepare` script
-  (`npm run build`) so git-URL installs of the package can build `lib/`.
-- Dev deps installed from npm (`@deepseek-ai/*@0.1.0-rc.6` published; client
-  packages `dsh-client-runtime/ui-slots/ui-tool/ui-settings/locale` +
-  `dsh-host-webserver` added for M3). Runtime deps: `sharp` +
-  `@img/sharp-wasm32` (host Termux uses the wasm32 variant; the DSH install
-  at dsh-global already ships it).
-- **Web profile install (official `dsh plugin`):** the `web` profile declares
-  `"dsh-vision": "file:/data/data/com.termux/files/home/workspace/dsh-vision"` in
-  `~/.dsh/profiles/web/package.json` dependencies + `dsh-vision` in
-  `dsh.profile.bundles`, and was materialized with
-  `dsh plugin --profile web install` (pnpm install + the dsh bundle reconcile) —
-  `node_modules/dsh-vision` is now a pnpm-managed link into the store and
-  `pnpm-lock.yaml` exists. NOTE: pnpm 12 rc COPIES the file: dep into its
-  store (different inodes; the copy even contains `.git`) — it is NOT a live
-  link, so after rebuilding the repo you must re-run
-  `dsh plugin --profile web install` to refresh the profile copy. Composed tree verified via
-  `dsh --profile web --dump-config` (row `- id: vision, name: dsh-vision`).
-  **The running GUI still needs a restart to load it** (client bundles only
-  refresh via the loader; the web patch disables client-hmr).
+### Runtime surface — `src/index.ts` (apply)
+- Registers the `vision` settings namespace (applies 'live'), installs the
+  gate, wires the tool / command / paste hook / web routes, and returns a full
+  LIFO teardown (gate, auto-detect, settings watch, paste hook, command, tool).
+- `delegateDepsFor(workspace, signal)`: the single `DelegateDeps` factory
+  shared by the tool and paste auto-delegation — live config, home, workspace,
+  resolveCredential (ctx.credentials), `createSubagent` (ctx.agents via
+  src/subagent.ts), `canDeliverImage` (memoized store probe).
 
-## Session history (what was done)
+### Delegation pipeline — `src/delegate.ts`
+Flow: enabled → configured → **normalizeImagePath** (Termux storage translation
+once — the translated path is what loading, the sub-agent message, details, and
+audit all carry) → `resolveTransport` (native-first) → loadImage → cache hit →
+local-only gate → compress on miss → `withRetry(callTransport)` → fallback →
+cache store (never a fallback result) → audit entry.
+- `DelegateDeps` seams (all injectable for tests): config, home, workspace,
+  resolveCredential, createSubagent, canDeliverImage?, signal?, cache?.
+- `resolveTransport`: http → plugin endpoint; auto/native → subagent when
+  canDeliverImage; auto falls back to http; native refuses with
+  `image_delivery_unavailable`.
+- Result: `DelegateResult {ok, text, details{model, image_path, transport:
+  'subagent'|'http', cached, fallback}}`.
 
-1. **Studied pi-vision** (`~/workspace/pi-vision`): vision.ts / paste.ts extensions,
-   lib/{config,delegate,capability,cache,audit,image}.ts — the feature surface and
-   the exact delegation pipeline to port.
-2. **Studied DSH plugin APIs** in the harness install at
-   `/data/data/com.termux/files/home/dsh-global/node_modules/@deepseek-ai/*`:
-   - `dsh-tools` — `ctx.tools.register(defineTool(...))`, `ToolDefinition` output
-     contract, `agent.ctx.tools.register/restrict` for per-agent visibility.
-   - `dsh-agent` — `agent/created|disposed`, `agent/request` waterfall (authoritative
-     per-request `LlmCallConfig.provider/model`), `agent/pre-step` waterfall
-     (`{agent, messages, turn, step, signal}` → `PreStepDecision`; the ENTER branch
-     messages are what the loop durably logs as `user/message` and sends to the
-     model — rewriting them with the same message id is the correct paste seam).
-   - `dsh-llm` — `LlmModelInfo.inputModalities` (absent=unknown, `[]`=negative),
-     `resolveModelInfo(provider, model)`, `listProviders()`, `listModels(provider)`,
-     `stream(GenerateOptions)`, `BlockAssembler`, `createUserMessage`, `freezeMessage`,
-     `ImageBlock`.
-   - `dsh-attachment` — `ctx.attachments.saveImage/readImage`, `ImageAttachmentRef`.
-   - `dsh-credentials` — `credentialRef(name)` + `ctx.credentials.resolve(ref)`.
-   - `dsh-settings` — `ctx.settings.register(ns, schema, {base, applies:'live',
-     validate})` → `SettingsScope {get, watch, update, replace}`; `mutate(ns, ops)`
-     only on the service (not the scope). `ctx.settings.mutate(ns, ops)` for unsets.
-   - `dsh-commands` — `ctx.commands.register({name, description, handler(invocation)})`
-     → `CommandResult {kind:'success', text?} | {kind:'error', text}`.
-   - `dsh-llm-pi-ai` — the adapter resolves ImageBlock refs via
-     `resolveAttachments: () => ctx.get('attachments')`; `listModels` reports
-     `inputModalities` from entry input → catalog → route `defaultInput`. This makes
-     the **native transport** (ctx.llm.stream with an ImageBlock) work for registered
-     pi-ai vision routes.
-   - Web surface: agent presets (dsh-agent-presets) — host-plane global tools are
-     visible to every agent via `agent → preset → global` scope chain; the client
-     plugin contract (`dsh.client` in package.json, `./client` export, `slots`,
-     `locale`, `settings.section` + `tool.call.toolview` slots).
-   - **Client contract (M3):** `dsh.client = {platform, inject[]}` scanned by
-     `dsh-client-modules`; bundle at `exports["./client"]` served as
-     `/plugins/<id>/client.js`; bundle registers
-     `window.__ModuleLoader__.load({id, factory})`; browser half exports
-     `inject` (service names: `slots`, `locale`, `settingsScope`) + `apply(ctx)`;
-     `ctx.slots.inject(name, cb)` + `ctx.slots.register` (keyed toolview
-     `{name:'tool.call.toolview', key:'describe_image'}`; list settings section
-     `{name:'settings.section', id, order, label}`); `ctx.locale.register(ns, {en, zh})`
-     + `bind`; settings form via `ctx.settingsScope.bind({namespace:'vision'})`
-     (`SettingsScope.getSnapshot/subscribe/set/unset` — NO `load`).
-     **IMPORTANT: plugin settings namespaces are NOT exposed to the web client's
-     settings proxy by default** — `dsh-host-apiproxy` filters `settings.describe`
-     through an explicit allowlist (`modelProviderNamespaces()` + hardcoded
-     `WEB_SETTINGS_NAMESPACES`/`PRODUCT_SETTINGS_NAMESPACES`; a plugin opt-in is
-     "deferred work"). `ctx.settingsScope.bind({namespace})` therefore resolves to
-     `unavailable` for plugin namespaces and the form renders empty. The
-     established pattern (reference plugin + ours): the plugin serves its own
-     same-origin route over the settings seam (ours: `/_dsh/vision/settings`)
-     and the client fetches/POSTs it. Keep `import type {} from
-     '@deepseek-ai/dsh-client-ui-settings/client'` in the client — it carries the
-     `settings.section` SlotMap declaration.
-3. **Studied the working reference plugin**
-   `~/workspace/dsh-vision-toolkit-ref` (cloned from Anionex/dsh-vision-toolkit):
-   bundle patch + `dsh.bundle.patch`, agent-scoped progressive exposure via
-   `agent.ctx.tools.register`/`restrict` (its `VisionToolExposure` class is the
-   template for our gate), credentials, settings, Web client structure (tsconfig.client.json,
-   scripts/build-client.mjs, web.ts host routes via `ctx.inject(['webServer'], …)`).
-4. **Wrote the implementation spec** → `SPEC.md` (17+1 sections; later moved into the
-   repo). §18 added on request: **high token-cache-rate rules** (byte-stable schema
-   registered once, rare/idempotent visibility flips, zero dynamic prompt
-   contribution, suffix-only paste rewrites, stable delegation request shape,
-   verification via `cacheReadTokens`/`cacheWriteTokens`).
-5. **Created the repo**: `gh repo create dsh-vision --private` (gitawego), cloned to
-   `~/workspace/dsh-vision`.
-6. **Implemented M1** (all in `src/`, typecheck-clean, tested):
-   `config.ts`, `errors.ts`, `capability.ts`, `image.ts`, `marker.ts`, `batch.ts`,
-   `cache.ts`, `audit.ts`, `transport.ts` (http + native), `delegate.ts` (the full
-   pipeline), `exposure.ts` (`VisionGate`), `tool.ts` (`describe_image`), `defaults.ts`
-   (data-driven auto-detect), `commands.ts` (`/vision`), `index.ts` (apply()),
-   `tests/smoke.spec.ts` (17 tests).
-7. **Implemented M2 — paste UX** (commit `11d1843`):
-   - `src/paste.ts` — `createPasteHook(deps)` registered on `agent/pre-step`:
-     detects image path tokens in user-sourced messages, rewrites them to
-     `[Image-#N]` markers, and branches: multimodal primary → attach ImageBlocks
-     via `ctx.attachments.saveImage` (markers positional); text-only primary →
-     `textOnlyPasteMode` hint (markers + path list nudging describe_image) / auto
-     (delegate through the shared pipeline, bounded concurrency, batch timeout,
-     hint fallback) / off (markers only). Identity-preserving rewrite via
-     `freezeMessage({...msg, content})`. Never throws (falls back to the original
-     decision). KV-cache: adds text only for messages with resolvable image tokens.
-   - `src/marker.ts` additions: `renderMarkersResolved` (token→index map,
-     right-to-left longest-match), `buildPasteHintLine`, `buildDescriptionsBlock`.
-   - `src/index.ts`: `delegateDepsFor(workspace, signal)` shared entry point;
-     paste hook wired.
-   - `tests/paste.spec.ts` — 18 tests (token extraction, marker rendering,
-     hook transforms with injected fakes: multimodal attach, hint, off, auto,
-     all-fail→hint, localOnly short-circuit, disabled→markers-only, plugin-source
-     untouched, reject passthrough, timeout→hint).
-8. **Implemented M3 — Web client plugin** (commit `95e07c5`):
-   - `src/web.ts` — optional host route `/_dsh/vision/models` (GET) returning a
-     **data-driven** catalog: all registered providers + image-capable models from
-     the live LLM registry, the currently configured provider/model, and the
-     detected default (catalog-scan preference, primary-provider first). **No
-     provider/model ids are hardcoded anywhere.** Installed via
-     `ctx.inject(['webServer'], …)` (web profile only).
-   - `src/client/index.tsx` — browser plugin: en/zh locale (ns `vision`),
-     `describe_image` tool card (`tool.call.toolview`, keyed), Vision settings
-     section (`settings.section`, id `vision`): provider/model inputs with
-     datalist suggestions from the live catalog, detected default preselected
-     when unset and marked "(detected)", plus delegation/paste/limits/behavior
-     fields; writes through `ctx.settingsScope.bind({namespace:'vision'})`
-     (`set`/`unset` per field; http written as the whole nested object).
-   - `tsconfig.client.json` (CJS + react-jsx + `paths` mapping every client
-     subpath to its `lib/types` — required because `moduleResolution: node`
-     ignores package exports), `scripts/build-client.mjs` (wraps the compiled
-     CJS in `window.__ModuleLoader__.load({id:'dsh-vision', …})` → `lib/client.js`).
-   - `package.json`: `exports["./client"]`, `dsh.client {platform:'web',
-     inject:[runtime, ui-tool, ui-settings, locale]}`, build script = server +
-     client tsc + wrap; client packages added as devDeps + peers.
-9. **Installed into the web profile via the official command** (see "Web profile
-   install" above): `dsh plugin --profile web install` (pnpm install + reconcile)
-   against a manifest-declared `file:` dependency — because pnpm 12 rc rejects
-   path specs on `dsh plugin add <path>` ("should have a @scope", proven with a
-   minimal probe package). Composed tree verified; runtime load requires a GUI
-   restart.
-10. **Post-restart debugging + settings-route fix** (commits `761217b`, `0ca7f16`):
-    - /vision (bare) worked but subcommands fell through to chat: the web client
-      only intercepts args-bearing command lines when the command declares an
-      `input` hint (matchEnter in dsh-client-ui-commands) → added `input:
-      {hint}` to the /vision definition.
-    - The Vision settings page rendered EMPTY: the harness settings proxy does not
-      expose plugin namespaces (see the IMPORTANT note above) → routed the form
-      through the plugin's own /_dsh/vision/settings route (GET snapshot +
-      same-origin POST save, validated via resolveConfig(mergeConfig(...)),
-      writes through the shared settings seam), client switched from
-      ctx.settingsScope to a fetch-based SettingsController.
-    - Full lifecycle teardown: apply() now captures and calls EVERY disposer
-      LIFO (tool, command, paste hook, settings watch, auto-detect, gate) — the
-      settings namespace + web routes are fiber-effect-scoped and auto-disposed
-      by the loader. Persisted user settings are intentionally NOT wiped on
-      unload (that's user data; /vision clear resets).
-    - TDD is required: new logic ships with tests first (tests/web.spec.ts for
-      the route, tests/client-controller.spec.ts for the client stores).
-11. **Reimplemented delegation as subagent-based (DESIGN RULE)** (commit "subagent
-    delegation"): the native transport (ImageBlock -> ctx.attachments.saveImage ->
-    ctx.llm.stream) is REMOVED from src/transport.ts (now http-only) and
-    src/delegate.ts drives the vision model as a DSH subagent:
-    - `src/subagent.ts` (new) — `createVisionSubagent(agentsLike, {provider,
-      model, cwd})`: ctx.agents.create with `sessionId: SessionId('vision-'+uuid)`,
-      `meta {cwd, origin:'subagent'}`, `agentOptions {provider, model}`; wraps
-      `agent.followup(msg)` / `agent.whenIdle()` / `lastAssistantText(
-      session.deriveMessages())` / `handle.dispose()` into the `SubagentHandle`
-      seam. `AgentsLike` is a structural subset of ctx.agents so tests fake the
-      registry. `AgentOptions`/`Agent`/`SessionId`/`deriveMessages` all verified
-      against the installed @deepseek-ai types.
-    - `src/delegate.ts` — `DelegateDeps.createSubagent` replaces the old
-      llm/attachments deps; `delegateToSubagent()` sends the prompt via
-      `createUserMessage({source:{kind:'user'}})` — a NORMAL user-sourced message
-      so the subagent's own pre-step paste hook turns the filepath into markers +
-      a native ImageBlock for its multimodal primary (never base64, never a
-      plugin ImageBlock). Audit `transport` literal is now 'subagent' | 'http'.
-    - `src/index.ts`/`src/tool.ts` — wire `createSubagent: (opts) =>
-      createVisionSubagent(ctx.agents, opts)` (tool deps no longer carry
-      llm/attachments).
-    - Config/UI wording updated (auto/native = sub-agent with provider/model;
-      http = plugin-owned endpoint).
-    - TDD: `tests/delegate.spec.ts` (8: subagent created with the vision model,
-      filepath-not-base64-not-ImageBlock in the message, not_configured,
-      creation-failure -> vision_call_error, no-content failure, dispose-always,
-      cache/local-only short-circuit without spawning, abort-before-create —
-      with a real 1x1 PNG fixture in a temp dir), `tests/subagent.spec.ts` (8:
-      create options incl. cwd/origin/sessionId, normal followup message, reply
-      text, dispose forwarding, creation-failure propagation, lastAssistantText
-      incl. reasoning-only skip), `tests/transport.spec.ts` rewritten http-only
-      (10: body shapes without attachment refs, response extraction, maxTokensFor,
-      mocked-fetch endpoint calls incl. status error + no-content).
-12. **Native-first delivery + http fallback (user directive: "use the native way
-    as much as possible, avoid base64 as much as possible"; on this host the
-    sub-agent path could NOT see pasted images — the model answered "I don't
-    see an image" because the sub-agent's own paste hook attaches via
-    ctx.attachments.saveImage and the store can NEVER write under /data/data)**:
-    - Verified end-to-end: the durability walk (`ensureDurableHome` ->
-      `syncDirectory` on every ancestor of DSH_HOME up to `/`) opens
-      `/data/data` O_RDONLY -> EACCES for this uid (reproduced in node:
-      `open('/data/data','r')` fails even with DSH_PERMISSION_MODE=full), so
-      the store is unusable for ANY caller on Android/Termux;
-      `~/.dsh/attachments/v1` contains no objects. Termux path translation
-      was NOT the problem (both spellings exist and resolve).
-    - `DelegateDeps.canDeliverImage` (memoized 1x1-PNG `ctx.attachments.
-      saveImage` probe wired in index.ts/tool.ts) decides: `auto` uses the
-      sub-agent (native) when available, else falls back to the plugin's own
-      http endpoint call when http.baseUrl/credential/model are set, else
-      not_configured with guidance; `native` refuses loudly with the new
-      `image_delivery_unavailable` code (no silent "no image" replies);
-      `http` is the explicit base64 path. Settings page shows the http block
-      for auto and http (auto can use it). Tests/delegate.spec.ts +4 (auto
-      http fallback with mocked fetch, auto not_configured guidance, native
-      refusal, auto native preference) — 94 tests green.
-13. **Termux path translation at the delegation choke point (user directive:
-    "describe_image should be able to translate the path adapted to termux")**:
-    `resolveInputPath` already translated for LOADING, but the RAW
-    /storage/emulated/0 spelling was what reached the sub-agent message, the
-    details, and the audit log. `delegateToVisionModel` now normalizes ONCE at
-    the top (`normalizeImagePath` = `resolveInputPath`; `normalized` params
-    threaded through loadImage/cache-key/audits/callTransport/runFallback/
-    details), so the app-accessible path is what every consumer sees. TDD:
-    `tests/delegate.spec.ts` +1 platform-gated (`describe.runIf(isTermux(
-    process.env, homedir()))`) asserting the sub-agent message carries
-    `~/storage/dcim/...` and never `/storage/emulated/0/` — 95 tests green.
-14. **describe_image VERIFIED WORKING on this host via delegation=http**:
-    applied `delegation=http, http.baseUrl=https://opencode.ai/zen/go/v1,
-    http.credential=OPENCODE_GO_API_KEY (resolves from ~/.dsh/.credentials.yaml,
-    no new credential needed), http.model=minimax-m3` through the plugin's own
-    /_dsh/vision/settings route (live). describe_image with the raw
-    /storage/emulated/0/... path returned a full screenshot description
-    (transport http, model https://opencode.ai/zen/go/v1/minimax-m3).
+### Transports
+- **Sub-agent (native)** — `src/subagent.ts`: `createVisionSubagent` over
+  `ctx.agents.create` (public API): sessionId `SessionId('vision-'+uuid)`,
+  meta {cwd, origin:'subagent'}, agentOptions {provider, model}; wraps
+  followup / whenIdle / `lastAssistantText(session.deriveMessages())` /
+  dispose into the `SubagentHandle` seam. The image rides a normal
+  user-sourced message; the subagent's OWN pre-step paste hook attaches it
+  natively (ImageBlock) for its multimodal primary. `AgentsLike` is a
+  structural subset of ctx.agents so tests fake the registry.
+- **http (base64, fallback/explicit)** — `src/transport.ts`: the plugin's own
+  direct endpoint call (OpenAI-compatible `/chat/completions` or Anthropic
+  `/v1/messages`) with a base64 data-URL image — the pi-vision reference
+  mechanism. Config-driven (http block), no agent, no store.
 
-## What is NOT done (next milestones)
+### Capability gate + tool — `src/exposure.ts`, `src/tool.ts`, `src/capability.ts`
+- `VisionGate`: per-agent deny mask hiding `describe_image` while the
+  primary model is multimodal (seeds on agent/created, resyncs on
+  agent/request, idempotent — stable request prefixes for KV-cache, SPEC §18).
+- `describe_image`: constant schema (registered once), passthrough redirect
+  for multimodal primaries, batch path (≤50 images, bounded concurrency,
+  per-image resilience).
 
-- **Restart `dsh web` and verify manually** (the running GUI predates the latest
-  build): /vision + subcommands (input-hint fix), the Vision settings page now
-  loads + saves via /_dsh/vision/settings, describe an image (check audit tail
-  + cache stats), the describe_image card renders, the /_dsh/vision/models
-  catalog + detected default, KV-cache per SPEC §18.9.
-- **On this host (Android/Termux) delegation=http is CONFIGURED and
-  describe_image works** (verified live; see §14). The native sub-agent path
-  cannot deliver images here (attachment store can never write under
-  /data/data — see Design rule); the sub-agent loop's live e2e + auto-detect
-  still need a store-capable host. The multimodal-paste attachment path
-  (ctx.attachments.saveImage for the primary's OWN ImageBlocks) is broken on
-  this host for the same reason (any user paste into a multimodal session
-  silently degrades to markers).
+### Paste UX — `src/paste.ts` + `src/marker.ts` + `src/paths.ts`
+- `agent/pre-step` hook: user messages containing image path tokens are
+  rewritten to `[Image-#N]` markers; multimodal primary → native ImageBlock
+  attachments (markers positional); text-only primary → hint line (default) /
+  auto-delegate through the shared pipeline (bounded concurrency, batch
+  timeout, hint fallback) / off. Never throws.
+- `src/paths.ts`: Termux-only storage-path translation
+  (`/storage/emulated/0|/sdcard/<Top>/...` → `<home>/storage/<mapped>/...`),
+  strictly gated on Termux (env markers or canonical home), used by
+  image.ts/paste.ts and now by delegate.ts's normalizeImagePath.
+
+### Web client — `src/web.ts` + `src/client/index.tsx`
+- Host routes (web profile only): `/_dsh/vision/models` (data-driven catalog:
+  providers + image-capable models from the live ctx.llm registry + detected
+  default — nothing hardcoded) and `/_dsh/vision/settings` (GET snapshot +
+  same-origin POST save through the settings seam). The route exists because
+  the harness settings proxy allowlists namespaces and plugin namespaces are
+  NOT exposed (see LESSONS.md).
+- Browser plugin: settings section (provider/model selects fed by the live
+  catalog, detected default, delegation/paste/limits fields), `describe_image`
+  tool card, en/zh locale (ns `vision`).
+
+### Config surface — `src/config.ts`
+- provider/model (sub-agent path) · delegation (auto/native/http) ·
+  http{baseUrl, credential (a DSH credential-ref NAME), model, protocol} ·
+  localOnly · cache{Enabled, Persist, MaxEntries} ·
+  retry{Attempts, BackoffMs} · fallback{Provider, Model} ·
+  textOnlyPasteMode (hint/auto/off) · markerStyle (code/bold/plain) ·
+  systemPrompt · autoDelegatePrompt/TimeoutMs · batchConcurrency ·
+  autoDetectVisionModel (data-driven) · auditLog/auditLogPath · limits
+  (maxDimension, jpegQuality, previewMaxWidthCells).
+
+### Key data flows
+- **describe_image**: tool execute → gate (multimodal? redirect) →
+  delegateToVisionModel → normalizeImagePath → resolveTransport → loadImage →
+  cache/retry/fallback → http | subagent → audit. Every failure returns a
+  structured, actionable error.
+- **Paste**: user message with image path → pre-step hook → markers (+
+  attachments | hint | auto-delegated descriptions).
+
+## Repo state (brief)
+
+- Branch `main` tracks `origin/main`; current HEAD `a152381` (Termux path
+  translation). Commits by milestone are listed in LESSONS.md.
+- `npm run typecheck` clean (server + client) · `npm run build` works
+  (lib/ incl. `lib/client.js`) · `npm test` green (**95 tests**: smoke 18,
+  paste 18, web 9, paths 9, delegate 13, subagent 8, transport 10,
+  client-controller 10). TDD is required: failing test first, then implement.
+- `node_modules/` and `lib/` are gitignored — fresh checkout needs
+  `npm install` + `npm run build` (package.json `prepare` runs it).
+- **Web profile install**: `dsh-vision` is a `file:` dep of the `web`
+  profile (pnpm 12 rc COPIES it into its store — NOT a live link), so re-run
+  `dsh plugin --profile web install` after every rebuild. The running GUI
+  needs a restart to load new builds (client bundles only refresh via the
+  loader; client-hmr is disabled in the web patch).
+
+## Next milestones
+
+- **Restart `dsh web`** (user action) and verify end-to-end (on this host
+  describe_image already works via delegation=http — see LESSONS.md).
 - **M4 — polish**: compose preview slot, headless profile verification, README
   expansion, CHANGELOG.
+- Sub-agent live e2e + auto-detect still need a host with a working attachment
+  store.
 - `allowedDirs` hardening (SPEC §16.4) is deferred to v2.
 
-## Environment facts a resuming session needs
+## References
 
-- **DSH install (source of truth for API types):**
-  `/data/data/com.termux/files/home/dsh-global/node_modules/@deepseek-ai/*` — read
-  README.md + lib/types/*.d.ts there before changing API usage.
-- **DSH_HOME:** `/data/data/com.termux/files/home/.dsh`; profiles: `web` (GUI at
-  http://127.0.0.1:3080), `headless`, `tui`. Web profile bundles: dsh-base + dsh-web-app.
-- **gh** authenticated as `gitawego` (ssh protocol; repo `gitawego/dsh-vision`).
-- **Session workspace quirk:** the agent session workspace IS `~/workspace/dsh-vision`.
-  The `write` tool fails with EACCES (its atomic-rename link step is denied) but
-  the `edit` tool WORKS — prefer `edit` for targeted changes; use bash heredocs
-  (one file per call, quoted `<<'EOF'`) for new files.
-
-## Tooling pitfalls (learned the hard way — do not repeat)
-
-1. **run_code + template literals:** every backtick in a bash-command template literal
-   MUST be escaped `\``, and `${...}` must be `\${...}`, or the code fails to parse
-   ("Expected ',', got 'ident'"). A `\n` inside a template literal is a REAL newline
-   (write `\\n` for a literal backslash-n, e.g. inside single-quoted heredocs the
-   content must keep `\n` as two characters).
-2. **Heredocs:** write ONE file per bash call (multiple heredocs in one template
-   literal have intermittently failed to parse). Use `<<'EOF'` (quoted delimiter) so
-   `$`, backticks, and backslashes in the content are preserved literally. `mkdir -p`
-   parent dirs first (e.g. `src/client`, `scripts`).
-3. **Shell quoting of argv:** do NOT pass TS/JS code with single quotes or regexes
-   through bash single-quoted args, and do NOT rely on sed for multi-line inserts
-   (GNU sed on this host rejects `\n` replacements and `\b` word boundaries).
-   Prefer the `edit` tool for small changes and a node patch script (heredoc'd to a
-   file, run, deleted) for anything structural. In node patch scripts use template
-   literals (backticks) for multi-line anchors — real newlines in the file are fine,
-   but a `\n` written into a double-quoted JS string becomes a real newline and
-   breaks the literal.
-4. **npm:** esbuild's postinstall was skipped by npm's allowScripts gate; vitest still
-   ran fine. If a future install breaks esbuild, run
-   `npm install-scripts approve esbuild && npm rebuild esbuild`.
-5. **The `write` tool is unusable here** (EACCES on the atomic-link step even in the
-   session workspace) — but the `edit` tool works; bash heredocs are the reliable
-   path for whole-file writes.
-6. **pnpm 12 rc (used by `dsh plugin`)** rejects local path specs on
-   `dsh plugin add <path>` ("Package name … is invalid, it should have a @scope";
-   registry adds work, every `file:`/`link:`/relative form fails — proven with a
-   probe package). The official sequence that WORKS: declare the dependency in the
-   profile `package.json` as `"<name>": "file:</abs/path>"` (exactly what pnpm add
-   would have written), then run `dsh plugin --profile web install` — pnpm install
-   materializes it as a proper store link and the dsh reconcile step adds it to
-   `dsh.profile.bundles`. pnpm 12 rc COPIES file: deps into the store (no live
-   link) — re-run `dsh plugin --profile web install` after every repo rebuild.
-   **Git-URL installs** were probed and are NOT used (decision recorded): pnpm 12 rc
-   rewrites every github git-spec to an https fetch (this host has ssh-only github
-   auth — the fix is a global `url."git@github.com:".insteadOf "https://github.com/"`
-   git config, verified working), AND it blocks dependency build scripts via an
-   `allowBuilds` allowlist in `pnpm-workspace.yaml` (the `pnpm` field in
-   package.json is ignored in rc; the gate never re-ran `prepare` in probes), so
-   a working git install would additionally require committing `lib/` to the repo.
-   **npm is not part of the official flow**: `dsh plugin` is a pnpm forwarder by
-   design (runs `pnpm <args>` in the profile dir, then reconciles bundles); npm
-   would work manually (file:/git deps, no rc bugs) but abandons the reconcile step.
-
-## Useful reference paths
-
-- pi-vision source: `~/workspace/pi-vision` (extensions/ + lib/)
-- reference DSH plugin: `~/workspace/dsh-vision-toolkit-ref` (src/ + cordis.patch.yml,
-  client build + web.ts patterns)
-- DSH API docs: `/data/data/com.termux/files/home/dsh-global/node_modules/@deepseek-ai/<pkg>/README.md`
-- SPEC (this project's design + KV-cache rules): `SPEC.md`
+- **LESSONS.md** — session history (commits), debugging deep-dives, tooling
+  pitfalls, environment facts, host-specific vision config.
+- **SPEC.md** — full design + KV-cache rules (§18).
+- pi-vision source: `~/workspace/pi-vision`; reference DSH plugin:
+  `~/workspace/dsh-vision-toolkit-ref`; DSH API docs:
+  `/data/data/com.termux/files/home/dsh-global/node_modules/@deepseek-ai/<pkg>/README.md`.
 
 ## Resume checklist
 
-1. `cd ~/workspace/dsh-vision && npm install && npm run build && npm test` — expect all
-   green (typecheck + 95 tests).
-2. Restart `dsh web` (user action) to load the path-translation build; then
-   describe_image works via delegation=http (already configured live; the
-   translated path now appears in details/audit/sub-agent message).
-3. Sub-agent e2e + auto-detect need a store-capable host.
+1. `cd ~/workspace/dsh-vision && npm install && npm run build && npm test` —
+   expect all green (typecheck + 95 tests).
+2. Restart `dsh web` (user action) to load the latest build.
+3. Sub-agent e2e + auto-detect need a store-capable host; on this host
+   delegation=http is configured and describe_image works.
 4. M4 polish; commit + push each milestone.
 
