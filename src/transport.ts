@@ -140,15 +140,49 @@ export interface NativeCallOptions {
   signal?: AbortSignal
 }
 
+/** Filesystem error codes that mean the attachment store cannot persist the
+ *  image on this host (permission denied, read-only filesystem, quota/space),
+ *  across platforms. Store VALIDATION errors (ImageTooLarge etc.) have no
+ *  errno code and pass through untouched. */
+const ATTACHMENT_STORE_FS_CODES = new Set(['EACCES', 'EPERM', 'EROFS', 'ENOSPC', 'EDQUOT'])
+
+/** Walk the cause chain (bounded) looking for an errno code. */
+export function fsErrorCode(error: unknown, depth = 3): string | undefined {
+  let current: unknown = error
+  for (let i = 0; i < depth && current instanceof Error; i++) {
+    const code = (current as NodeJS.ErrnoException).code
+    if (typeof code === 'string' && code.length > 0) return code
+    current = (current as Error).cause
+  }
+  return undefined
+}
+
 /** Native transport: save bytes as a durable attachment, send an ImageBlock
  *  through ctx.llm.stream, assemble the text reply. */
 export async function callNativeVision(opts: NativeCallOptions, image: LoadedImage, prompt: string): Promise<string> {
   const mediaType = image.mimeType as ImageMediaType
-  const ref = await opts.attachments.saveImage({
-    data: Buffer.from(image.data, 'base64'),
-    mediaType,
-    name: 'describe_image',
-  })
+  let ref
+  try {
+    ref = await opts.attachments.saveImage({
+      data: Buffer.from(image.data, 'base64'),
+      mediaType,
+      name: 'describe_image',
+    })
+  } catch (error) {
+    // The attachment store could not persist the image (permission/filesystem
+    // limitation on this host — e.g. the durability sync cannot open a
+    // protected ancestor on Android). Give the user the working alternative
+    // instead of a bare errno, but pass validation errors through unchanged.
+    const code = fsErrorCode(error)
+    if (code !== undefined && ATTACHMENT_STORE_FS_CODES.has(code)) {
+      throw new Error(
+        'The native vision transport could not persist the image in the harness attachment store (filesystem error '
+        + code
+        + ' on this host). Use http delegation instead: Settings → Vision → Delegation → http, with http.baseUrl, a credential, and http.model configured.',
+      )
+    }
+    throw error
+  }
   const message = createUserMessage({
     content: [
       { type: 'image', attachment: ref },
