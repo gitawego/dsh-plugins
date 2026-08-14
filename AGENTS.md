@@ -73,7 +73,7 @@ Cache/retry/fallback/audit layers are unchanged (orthogonal).
   then the subagent-delegation rewrite (see Session history §11).
 - **Status:** `npm run typecheck` clean (server + client tsconfigs) · `npm run
   build` works (lib/ incl. the client bundle `lib/client.js`) · `npm test`
-  green (**94 tests**: smoke 18, paste 18, web 9, paths 9, delegate 12,
+  green (**95 tests**: smoke 18, paste 18, web 9, paths 9, delegate 13,
   subagent 8, transport 10, client-controller 10).
   TDD is required for further work: write the failing test first, then implement.
 - **`node_modules/` and `lib/` are gitignored** — a fresh checkout needs
@@ -290,6 +290,24 @@ Cache/retry/fallback/audit layers are unchanged (orthogonal).
       for auto and http (auto can use it). Tests/delegate.spec.ts +4 (auto
       http fallback with mocked fetch, auto not_configured guidance, native
       refusal, auto native preference) — 94 tests green.
+13. **Termux path translation at the delegation choke point (user directive:
+    "describe_image should be able to translate the path adapted to termux")**:
+    `resolveInputPath` already translated for LOADING, but the RAW
+    /storage/emulated/0 spelling was what reached the sub-agent message, the
+    details, and the audit log. `delegateToVisionModel` now normalizes ONCE at
+    the top (`normalizeImagePath` = `resolveInputPath`; `normalized` params
+    threaded through loadImage/cache-key/audits/callTransport/runFallback/
+    details), so the app-accessible path is what every consumer sees. TDD:
+    `tests/delegate.spec.ts` +1 platform-gated (`describe.runIf(isTermux(
+    process.env, homedir()))`) asserting the sub-agent message carries
+    `~/storage/dcim/...` and never `/storage/emulated/0/` — 95 tests green.
+14. **describe_image VERIFIED WORKING on this host via delegation=http**:
+    applied `delegation=http, http.baseUrl=https://opencode.ai/zen/go/v1,
+    http.credential=OPENCODE_GO_API_KEY (resolves from ~/.dsh/.credentials.yaml,
+    no new credential needed), http.model=minimax-m3` through the plugin's own
+    /_dsh/vision/settings route (live). describe_image with the raw
+    /storage/emulated/0/... path returned a full screenshot description
+    (transport http, model https://opencode.ai/zen/go/v1/minimax-m3).
 
 ## What is NOT done (next milestones)
 
@@ -298,17 +316,11 @@ Cache/retry/fallback/audit layers are unchanged (orthogonal).
   loads + saves via /_dsh/vision/settings, describe an image (check audit tail
   + cache stats), the describe_image card renders, the /_dsh/vision/models
   catalog + detected default, KV-cache per SPEC §18.9.
-- **On this host (Android/Termux) describe_image must use delegation=http**:
-  the native sub-agent path cannot deliver images (attachment store can never
-  write under /data/data — see Design rule). The provider endpoint is
-  discoverable from DSH's own registry (`opencode-go` -> pi-ai catalog
-  OpenCode Zen Go, `https://opencode.ai/zen/go/v1`, openai-completions API;
-  auth env `OPENCODE_GO_API_KEY`); configure
-  `delegation=http`, `http.baseUrl=https://opencode.ai/zen/go/v1`,
-  `http.model=minimax-m3`, `http.credential=<a DSH credential holding the
-  key>` via /vision or the settings page, then describe_image calls the
-  endpoint directly. Live e2e of the sub-agent loop + auto-detect need a host
-  with a working attachment store. The multimodal-paste attachment path
+- **On this host (Android/Termux) delegation=http is CONFIGURED and
+  describe_image works** (verified live; see §14). The native sub-agent path
+  cannot deliver images here (attachment store can never write under
+  /data/data — see Design rule); the sub-agent loop's live e2e + auto-detect
+  still need a store-capable host. The multimodal-paste attachment path
   (ctx.attachments.saveImage for the primary's OWN ImageBlocks) is broken on
   this host for the same reason (any user paste into a multimodal session
   silently degrades to markers).
@@ -385,9 +397,10 @@ Cache/retry/fallback/audit layers are unchanged (orthogonal).
 ## Resume checklist
 
 1. `cd ~/workspace/dsh-vision && npm install && npm run build && npm test` — expect all
-   green (typecheck + 94 tests).
-2. Restart `dsh web` (user action) and verify the plugin end-to-end (list above).
-3. On Termux: set delegation=http + the http block (see What is NOT done) and
-   verify describe_image; sub-agent e2e + auto-detect need a store-capable host.
+   green (typecheck + 95 tests).
+2. Restart `dsh web` (user action) to load the path-translation build; then
+   describe_image works via delegation=http (already configured live; the
+   translated path now appears in details/audit/sub-agent message).
+3. Sub-agent e2e + auto-detect need a store-capable host.
 4. M4 polish; commit + push each milestone.
 

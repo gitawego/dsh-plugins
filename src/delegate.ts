@@ -16,6 +16,7 @@ import {
   appendAuditEntry, resolveAuditPath, truncateImagePathForLog, type AuditEntry,
 } from './audit.ts'
 import { callHttpVision, maxTokensFor, type HttpProtocol } from './transport.ts'
+import { resolveInputPath } from './paths.ts'
 import { VisionError } from './errors.ts'
 
 export interface DelegateParams {
@@ -87,6 +88,14 @@ export interface DelegateFailure {
 }
 
 export type DelegateResult = DelegateSuccess | DelegateFailure
+
+/** Termux: normalize one input path to the app-accessible spelling ONCE, so
+ *  the translated path is what loading, the sub-agent message, the details,
+ *  and the audit log all carry. Non-storage and non-Termux inputs pass
+ *  through unchanged (pure: resolves against the live env/home). */
+export function normalizeImagePath(input: string): string {
+  return resolveInputPath(input)
+}
 
 export type RetryableClass = 'retryable' | 'auth' | 'terminal' | 'abort'
 
@@ -340,6 +349,11 @@ export async function delegateToVisionModel(deps: DelegateDeps, params: Delegate
     return { ok: false, error: { code: 'not_configured', message: NOT_CONFIGURED_MSG } }
   }
 
+  // Termux: translate Android shared-storage spellings (/storage/emulated/0,
+  // /sdcard) to the app-accessible path ONCE — loading, the sub-agent
+  // message, the details, and the audit log all carry the translated path.
+  const normalized = { ...params, image_path: normalizeImagePath(params.image_path) }
+
   let transport: ResolvedTransport
   try {
     transport = await resolveTransport(deps)
@@ -348,23 +362,23 @@ export async function delegateToVisionModel(deps: DelegateDeps, params: Delegate
     return { ok: false, error: { code, message: err instanceof Error ? err.message : String(err) } }
   }
 
-  const loaded = await loadImage(params.image_path, { cwd: deps.workspace })
+  const loaded = await loadImage(normalized.image_path, { cwd: deps.workspace })
   if (!loaded.ok) {
-    return { ok: false, error: { code: loaded.error.code, message: formatImageError(loaded.error, params.image_path) } }
+    return { ok: false, error: { code: loaded.error.code, message: formatImageError(loaded.error, normalized.image_path) } }
   }
 
   const baseDetails = {
     model: transport.label,
-    image_path: params.image_path,
-    prompt: params.prompt,
-    compressed: params.compress,
-    reasoning: params.reasoning,
+    image_path: normalized.image_path,
+    prompt: normalized.prompt,
+    compressed: normalized.compress,
+    reasoning: normalized.reasoning,
   }
 
   const useCache = !!(deps.cache && deps.config.cacheEnabled)
   const modelId = transport.label
   const key = useCache
-    ? cacheKey(loaded.sourceHash, params.compress, deps.config.maxDimension, deps.config.jpegQuality, params.prompt, modelId, params.reasoning, deps.config.systemPrompt, transport.kind)
+    ? cacheKey(loaded.sourceHash, normalized.compress, deps.config.maxDimension, deps.config.jpegQuality, normalized.prompt, modelId, normalized.reasoning, deps.config.systemPrompt, transport.kind)
     : undefined
 
   // Cache hit (local-only safe — the cache is local; 0 network calls).
@@ -375,7 +389,7 @@ export async function delegateToVisionModel(deps: DelegateDeps, params: Delegate
         ts: new Date().toISOString(),
         provider: deps.config.provider ?? '(unset)',
         model: modelId,
-        image_path: truncateImagePathForLog(params.image_path),
+        image_path: truncateImagePathForLog(normalized.image_path),
         source_hash: loaded.sourceHash,
         cached: true, fallback: false, fallback_model: undefined,
         ok: true, error_code: undefined, latency_ms: 0, local_only: deps.config.localOnly,
@@ -394,7 +408,7 @@ export async function delegateToVisionModel(deps: DelegateDeps, params: Delegate
       ts: new Date().toISOString(),
       provider: deps.config.provider ?? '(unset)',
       model: modelId,
-      image_path: truncateImagePathForLog(params.image_path),
+      image_path: truncateImagePathForLog(normalized.image_path),
       source_hash: loaded.sourceHash,
       cached: false, fallback: false, fallback_model: undefined,
       ok: false, error_code: 'local_only', latency_ms: 0, local_only: true,
@@ -405,7 +419,7 @@ export async function delegateToVisionModel(deps: DelegateDeps, params: Delegate
 
   // Compress on miss (only when requested).
   let networkImage: LoadedImage = loaded.image
-  if (params.compress) {
+  if (normalized.compress) {
     const compressed = await compressImage(loaded.image, { maxDimension: deps.config.maxDimension, jpegQuality: deps.config.jpegQuality })
     networkImage = { data: compressed.data, mimeType: compressed.mimeType, bytes: Buffer.from(compressed.data, 'base64').byteLength }
   }
@@ -415,7 +429,7 @@ export async function delegateToVisionModel(deps: DelegateDeps, params: Delegate
   let result: { ok: boolean; text: string; model: string; fallback: boolean }
   try {
     const called = await withRetry(
-      () => callTransport(deps, transport, networkImage, params, maxTokens),
+      () => callTransport(deps, transport, networkImage, normalized, maxTokens),
       { attempts: deps.config.retryAttempts + 1, backoffMs: deps.config.retryBackoffMs, signal: deps.signal },
     )
     result = { ok: true, text: called.text, model: called.model, fallback: false }
@@ -423,7 +437,7 @@ export async function delegateToVisionModel(deps: DelegateDeps, params: Delegate
     if (classifyError(err) === 'abort') {
       await audit(deps, {
         ts: new Date().toISOString(), provider: deps.config.provider ?? '(unset)', model: modelId,
-        image_path: truncateImagePathForLog(params.image_path), source_hash: loaded.sourceHash,
+        image_path: truncateImagePathForLog(normalized.image_path), source_hash: loaded.sourceHash,
         cached: false, fallback: false, fallback_model: undefined, ok: false, error_code: 'aborted', latency_ms: Math.round(performance.now() - t0), local_only: false, transport: transport.kind,
       })
       return { ok: false, error: { code: 'aborted', message: 'Vision tool aborted.' } }
@@ -431,18 +445,18 @@ export async function delegateToVisionModel(deps: DelegateDeps, params: Delegate
     if (classifyError(err) === 'auth' && !deps.config.fallbackProvider) {
       await audit(deps, {
         ts: new Date().toISOString(), provider: deps.config.provider ?? '(unset)', model: modelId,
-        image_path: truncateImagePathForLog(params.image_path), source_hash: loaded.sourceHash,
+        image_path: truncateImagePathForLog(normalized.image_path), source_hash: loaded.sourceHash,
         cached: false, fallback: false, fallback_model: undefined, ok: false, error_code: 'auth_failed', latency_ms: Math.round(performance.now() - t0), local_only: false, transport: transport.kind,
       })
       return { ok: false, error: { code: 'auth_failed', message: `Vision tool error: the vision provider rejected the credentials (${err instanceof Error ? err.message : String(err)}). Check the API key / re-authorize the provider.` } }
     }
-    const fallbackResult = await runFallback(deps, transport, networkImage, params, maxTokens, err)
+    const fallbackResult = await runFallback(deps, transport, networkImage, normalized, maxTokens, err)
     if (fallbackResult.ok) {
       result = { ok: true, text: fallbackResult.text, model: fallbackResult.details.model, fallback: true }
     } else {
       await audit(deps, {
         ts: new Date().toISOString(), provider: deps.config.provider ?? '(unset)', model: modelId,
-        image_path: truncateImagePathForLog(params.image_path), source_hash: loaded.sourceHash,
+        image_path: truncateImagePathForLog(normalized.image_path), source_hash: loaded.sourceHash,
         cached: false, fallback: false, fallback_model: undefined, ok: false, error_code: 'vision_call_error', latency_ms: Math.round(performance.now() - t0), local_only: false, transport: transport.kind,
       })
       return fallbackResult
@@ -459,7 +473,7 @@ export async function delegateToVisionModel(deps: DelegateDeps, params: Delegate
     ts: new Date().toISOString(),
     provider: deps.config.provider ?? '(unset)',
     model: result.model,
-    image_path: truncateImagePathForLog(params.image_path),
+    image_path: truncateImagePathForLog(normalized.image_path),
     source_hash: loaded.sourceHash,
     cached: false,
     fallback: result.fallback,

@@ -4,8 +4,9 @@
  *  Config-driven; edge cases covered. */
 import { afterAll, afterEach, describe, expect, it, vi } from 'vitest'
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
-import { tmpdir } from 'node:os'
+import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { isTermux } from '../src/paths.ts'
 import type { UserMessage } from '@deepseek-ai/dsh-llm'
 import { createUserMessage } from '@deepseek-ai/dsh-llm'
 import { mergeConfig, resolveConfig } from '../src/config.ts'
@@ -206,6 +207,29 @@ describe('subagent delegation (DESIGN RULE)', () => {
     expect(result.ok).toBe(true)
     if (result.ok) expect(result.details.transport).toBe('subagent')
     expect(deps.calls).toHaveLength(1)
+  })
+
+  // Termux translation (runs only on Termux hosts, where the real
+  // /storage/emulated/0 file exists under ~/storage): describe_image must
+  // translate the Android shared-storage spelling to the app-accessible path
+  // and send THAT to the sub-agent (and report it in details/audit).
+  describe.runIf(isTermux(process.env, homedir()))('Termux path translation', () => {
+    it('sends the translated app-accessible path (not /storage/emulated/0) in the subagent message', async () => {
+      let sent: UserMessage | undefined
+      const deps = makeDeps({
+        createSubagent: async () => ({
+          send: (message) => { sent = message },
+          whenIdle: async () => {}, replyText: () => 'ok', dispose: async () => {},
+        } as SubagentHandle),
+      })
+      const raw = '/storage/emulated/0/DCIM/Screenshots/Screenshot_2026-08-14-14-34-50-245_com.microsoft.emmx.jpg'
+      const result = await delegateToVisionModel(deps, { image_path: raw, prompt: 'translate me', compress: true, reasoning: 'off' })
+      expect(result.ok).toBe(true)
+      if (result.ok) expect(result.details.image_path).toContain(homedir() + '/storage/dcim/')
+      const text = sent?.content.find((b) => b.type === 'text')?.text ?? ''
+      expect(text).toContain(homedir() + '/storage/dcim/')
+      expect(text).not.toContain('/storage/emulated/0/')
+    })
   })
 })
 
