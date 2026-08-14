@@ -90,3 +90,48 @@ describe('SettingsController (/_dsh/vision/settings)', () => {
   })
 })
 
+
+import { providerOptions, modelOptions } from '../src/client/index.tsx'
+
+describe('settings dropdown option building (data-driven)', () => {
+  const catalog = {
+    providers: [{ id: 'deepseek-official', name: 'DeepSeek' }, { id: 'opencode-go', name: 'opencode-go' }],
+    visionModels: [
+      { provider: 'opencode-go', model: 'minimax-m3', name: 'MiniMax-M3' },
+      { provider: 'opencode-go', model: 'qwen3.7-plus', name: 'Qwen3.7 Plus' },
+      { provider: 'deepseek-official', model: 'vl-model', name: 'VL' },
+    ],
+    configured: { provider: 'opencode-go', model: 'minimax-m3' },
+    detected: { provider: 'opencode-go', model: 'minimax-m3', name: 'MiniMax-M3', default: true },
+    available: true,
+  } as never
+
+  it('lists all registered providers (auto-populated from dsh config)', () => {
+    const options = providerOptions(catalog, '', 'opencode-go')
+    expect(options).toContain('deepseek-official')
+    expect(options).toContain('opencode-go')
+  })
+
+  it('keeps a configured provider that left the catalog', () => {
+    const options = providerOptions(catalog, 'legacy-provider', 'opencode-go')
+    expect(options).toContain('legacy-provider')
+  })
+
+  it('lists only the selected provider\'s vision models and marks the detected default', () => {
+    const options = modelOptions(catalog, 'opencode-go', 'minimax-m3', 'minimax-m3')
+    expect(options.map((o) => o.value)).toEqual(expect.arrayContaining(['minimax-m3', 'qwen3.7-plus']))
+    expect(options.map((o) => o.value)).not.toContain('vl-model')
+    const detected = options.find((o) => o.value === 'minimax-m3')
+    expect(detected?.detected).toBe(true)
+  })
+
+  it('keeps a configured model that is not in the catalog', () => {
+    const options = modelOptions(catalog, 'opencode-go', 'retired-model', undefined)
+    expect(options.some((o) => o.value === 'retired-model' && o.retained)).toBe(true)
+  })
+
+  it('returns no models when the provider is unset', () => {
+    expect(modelOptions(catalog, '', '', undefined).length).toBe(0)
+  })
+})
+

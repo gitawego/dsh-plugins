@@ -370,6 +370,55 @@ function DescribeImageView({ block, openFile, cwd, t = enFallback }: ToolViewPro
   )
 }
 
+/** Dropdown options for the provider select: every registered provider from
+ *  the live catalog (data-driven), the detected default, and a configured
+ *  provider that left the catalog (retained so the current config is never
+ *  invisible or unselectable). */
+export function providerOptions(
+  snapshot: VisionModelsSnapshot | undefined,
+  configured: string,
+  detected: string | undefined,
+): string[] {
+  const out: string[] = []
+  for (const p of snapshot?.providers ?? []) out.push(p.id)
+  if (detected !== undefined && !out.includes(detected)) out.push(detected)
+  const configuredTrimmed = configured.trim()
+  if (configuredTrimmed.length > 0 && !out.includes(configuredTrimmed)) out.push(configuredTrimmed)
+  return out
+}
+
+export interface ModelOption {
+  value: string
+  /** True when this is the catalog-scan preferred default. */
+  detected: boolean
+  /** True when the current config names a model absent from the catalog. */
+  retained: boolean
+}
+
+/** Dropdown options for the model select: vision models of the selected
+ *  provider (data-driven), the detected default marked, and a configured
+ *  model that left the catalog retained. No provider selected → none. */
+export function modelOptions(
+  snapshot: VisionModelsSnapshot | undefined,
+  provider: string,
+  configured: string,
+  detected: string | undefined,
+): ModelOption[] {
+  const providerTrimmed = provider.trim()
+  if (providerTrimmed.length === 0) return []
+  const out: ModelOption[] = []
+  for (const m of snapshot?.visionModels ?? []) {
+    if (m.provider === providerTrimmed) {
+      out.push({ value: m.model, detected: detected === m.model, retained: false })
+    }
+  }
+  const configuredTrimmed = configured.trim()
+  if (configuredTrimmed.length > 0 && !out.some((o) => o.value === configuredTrimmed)) {
+    out.push({ value: configuredTrimmed, detected: detected === configuredTrimmed, retained: true })
+  }
+  return out
+}
+
 // ── Vision Settings section ────────────────────────────────────────────────
 
 type SettingsViewProps = PropsRuntime<'settings.section'> & { t?: VisionTranslate; settings?: SettingsController; catalog?: CatalogController }
@@ -520,15 +569,6 @@ function LoadedSettings({ settings, catalog, t }: { settings: SettingsController
 
   const snapshot = catalogState.snapshot
   const detected = snapshot?.detected
-  const providerOptions: string[] = []
-  for (const p of snapshot?.providers ?? []) providerOptions.push(p.id)
-  if (detected !== undefined && !providerOptions.includes(detected.provider)) providerOptions.push(detected.provider)
-  if (draft.provider.trim().length > 0 && !providerOptions.includes(draft.provider.trim())) providerOptions.push(draft.provider.trim())
-
-  const modelOptions: string[] = []
-  for (const m of snapshot?.visionModels ?? []) modelOptions.push(m.model)
-  if (detected !== undefined && !modelOptions.includes(detected.model)) modelOptions.push(detected.model)
-  if (draft.model.trim().length > 0 && !modelOptions.includes(draft.model.trim())) modelOptions.push(draft.model.trim())
 
   return (
     <div className="dvs-settings">
@@ -546,12 +586,20 @@ function LoadedSettings({ settings, catalog, t }: { settings: SettingsController
 
       <section className="dvs-panel"><h3>{t('provider')} / {t('model')}</h3><div className="dvs-grid">
         <label className="dvs-field"><span>{t('provider')}</span>
-          <input list="dvs-providers" value={draft.provider} onChange={(event) => { update('provider', event.target.value) }} placeholder="provider" />
-          <datalist id="dvs-providers">{providerOptions.map((id) => <option key={id} value={id} />)}</datalist>
+          <select value={draft.provider} onChange={(event) => { update('provider', event.target.value); update('model', '') }}>
+            <option value="">{t('unset')}</option>
+            {providerOptions(snapshot, draft.provider, detected?.provider).map((id) => <option key={id} value={id}>{id}</option>)}
+          </select>
         </label>
-        <label className="dvs-field"><span>{t('model')}{detected !== undefined && draft.model === detected.model ? ` (${t('detectedBadge')})` : ''}</span>
-          <input list="dvs-models" value={draft.model} onChange={(event) => { update('model', event.target.value) }} placeholder="model" />
-          <datalist id="dvs-models">{modelOptions.map((id) => <option key={id} value={id} />)}</datalist>
+        <label className="dvs-field"><span>{t('model')}</span>
+          <select value={draft.model} onChange={(event) => { update('model', event.target.value) }}>
+            <option value="">{t('unset')}</option>
+            {modelOptions(snapshot, draft.provider, draft.model, detected?.model).map((option) => (
+              <option key={option.value} value={option.value}>
+                {option.value}{option.detected ? ` (${t('detectedBadge')})` : option.retained ? ' (configured)' : ''}
+              </option>
+            ))}
+          </select>
         </label>
       </div></section>
 
@@ -635,7 +683,7 @@ const CSS = `
 .dvs-paths button{border:0;background:none;padding:2px 0;color:#6659c7;font-size:11px;text-align:left;cursor:pointer;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:100%}
 .dvs-meta{display:flex;gap:6px}
 .dvs-tag{font-size:10px;padding:2px 7px;border-radius:999px;background:rgba(92,108,213,.12);color:#5149a6}
-.dvs-muted{margin:0;color:var(--dsw-alias-fg-muted,#77736d);font-size:12px}
+.dvs-muted{margin:0;color:var(--dsw-alias-fg-muted,#a5a19a);font-size:12px}
 .dvs-settings{display:grid;gap:14px;max-width:900px;padding:8px 2px 32px;color:var(--dsw-alias-fg-primary,#26231f)}
 .dvs-settings-header h2{font-size:22px;letter-spacing:-.025em;margin:0 0 6px}
 .dvs-settings-header p{margin:0;color:var(--dsw-alias-fg-muted,#77736d);font-size:13px;line-height:1.55;max-width:640px}
@@ -648,8 +696,8 @@ const CSS = `
 .dvs-panel h3{font-size:13px;margin:0}
 .dvs-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}
 .dvs-field{display:grid;gap:5px;align-content:start}
-.dvs-field span{font-size:11px;color:var(--dsw-alias-fg-muted,#77736d)}
-.dvs-field input,.dvs-field select{height:32px;padding:0 9px;border:1px solid var(--dsw-alias-border-subtle,#dedbd5);border-radius:8px;background:var(--dsw-alias-bg-layer-1,#fff);color:inherit;font:inherit;font-size:12px}
+.dvs-field span{font-size:12px;font-weight:550;color:var(--dsw-alias-fg-muted,#a5a19a)}
+.dvs-field input,.dvs-field select{height:34px;padding:0 9px;border:1px solid var(--dsw-alias-border-subtle,#3a3835);border-radius:8px;background:var(--dsw-alias-bg-input,var(--dsw-alias-bg-layer-1,#fff));color:var(--dsw-alias-fg-primary,inherit);font:inherit;font-size:13px}
 .dvs-check{display:flex;align-items:center;gap:7px;font-size:12px}
 .dvs-save-row{display:flex;gap:9px}
 .dvs-primary,.dvs-outline{height:32px;padding:0 15px;border-radius:999px;border:0;font-size:12px;font-weight:600;cursor:pointer}

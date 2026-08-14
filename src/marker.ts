@@ -111,13 +111,13 @@ export function buildPasteHintLine(images: readonly { token: string; index: numb
   if (n === 0) return '0 images referenced.'
   const noun = n === 1 ? 'image' : 'images'
   const verb = n === 1 ? 'analyze it' : 'analyze them'
-  const clause = n >= 2 ? ' (single, or pass all paths to image_paths for batch analysis)' : ''
+  const clause = n >= 2 ? ' with image_paths (pass all paths in one batch)' : ''
+  const header = `[${n} ${noun} referenced — the active model can't process images; call describe_image to ${verb}${clause}]`
+  if (n === 1) {
+    return `${header}\nImage path: ${images[0]!.token}`
+  }
   const pathLines = images.map((img) => `  ${img.token}`).join('\n')
-  return [
-    `${n} ${noun} referenced. The active model cannot process images natively — use the describe_image tool to ${verb}${clause}.`,
-    'Image paths:',
-    pathLines,
-  ].join('\n')
+  return `${header}\nImage paths:\n${pathLines}`
 }
 
 /** Descriptions block appended in text-only paste mode "auto": one labeled
