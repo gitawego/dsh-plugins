@@ -46,8 +46,8 @@ jobs:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
           echo "whoami: $(npm whoami 2>&1 || true)"
-          echo "--- token list (masked) ---"
-          npm token list 2>&1 | head -24 || true
+          echo "--- token list json (token values masked by GH) ---"
+          npm token list --json 2>&1 | head -120 || true
 
       - name: Skip if already published
         id: check
