@@ -28,9 +28,7 @@ const en = {
   provider: 'Provider',
   model: 'Model',
   delegation: 'Delegation',
-  delegationAuto: 'auto (native: sub-agent with the vision model, image by filepath; falls back to the direct http endpoint when the harness cannot deliver images natively)',
-  delegationNative: 'native (sub-agent — same as auto but never falls back to http; kept for compatibility)',
-  delegationHttp: 'http (plugin-owned direct endpoint call with the image as base64 — used when native delivery is unavailable)',
+  delegationHint: 'auto — native sub-agent with the vision model (falls back to the direct http endpoint when the harness cannot deliver images natively); native — same as auto but never falls back; http — plugin-owned direct endpoint call (base64 image).',
   http: 'HTTP endpoint',
   baseUrl: 'Base URL',
   credential: 'Credential reference',
@@ -82,9 +80,7 @@ const zh: Record<LocaleKey, string> = {
   provider: 'Provider',
   model: 'Model',
   delegation: '委派方式',
-  delegationAuto: 'auto（原生优先：以视觉模型启动 DSH 子代理，图片按文件路径发送；宿主无法原生投递图片时回退到 http 直连）',
-  delegationNative: 'native（子代理——与 auto 相同，但不回退到 http；保留兼容）',
-  delegationHttp: 'http（插件自有端点直连，图片以 base64 发送——原生投递不可用时的回退）',
+  delegationHint: 'auto——以视觉模型启动原生子代理（宿主无法原生投递图片时回退到 http 直连）；native——与 auto 相同但不回退；http——插件自有端点直连（base64 图片）。',
   http: 'HTTP 端点',
   baseUrl: '服务地址',
   credential: 'Credential 引用',
@@ -603,18 +599,23 @@ function LoadedSettings({ settings, catalog, t }: { settings: SettingsController
         </label>
       </div></section>
 
-      <section className="dvs-panel"><h3>{t('behavior')}</h3><div className="dvs-grid">
-        <label className="dvs-field"><span>{t('delegation')}</span>
-          <select value={draft.delegation} onChange={(event) => { update('delegation', event.target.value) }}>
-            <option value="auto">{t('delegationAuto')}</option>
-            <option value="native">{t('delegationNative')}</option>
-            <option value="http">{t('delegationHttp')}</option>
-          </select>
-        </label>
-        <label className="dvs-check"><input type="checkbox" checked={draft.enabled} onChange={(event) => { update('enabled', event.target.checked) }} />{t('enabled')}</label>
-        <label className="dvs-check"><input type="checkbox" checked={draft.autoDetectVisionModel} onChange={(event) => { update('autoDetectVisionModel', event.target.checked) }} />{t('autoDetectVisionModel')}</label>
-        <label className="dvs-check"><input type="checkbox" checked={draft.localOnly} onChange={(event) => { update('localOnly', event.target.checked) }} />{t('localOnly')}</label>
-      </div></section>
+      <section className="dvs-panel"><h3>{t('behavior')}</h3>
+        <div className="dvs-grid">
+          <label className="dvs-field dvs-span2"><span>{t('delegation')}</span>
+            <select value={draft.delegation} onChange={(event) => { update('delegation', event.target.value) }}>
+              <option value="auto">auto</option>
+              <option value="native">native</option>
+              <option value="http">http</option>
+            </select>
+            <small className="dvs-hint">{t('delegationHint')}</small>
+          </label>
+        </div>
+        <div className="dvs-grid">
+          <label className="dvs-check"><input type="checkbox" checked={draft.enabled} onChange={(event) => { update('enabled', event.target.checked) }} />{t('enabled')}</label>
+          <label className="dvs-check"><input type="checkbox" checked={draft.autoDetectVisionModel} onChange={(event) => { update('autoDetectVisionModel', event.target.checked) }} />{t('autoDetectVisionModel')}</label>
+          <label className="dvs-check"><input type="checkbox" checked={draft.localOnly} onChange={(event) => { update('localOnly', event.target.checked) }} />{t('localOnly')}</label>
+        </div>
+      </section>
 
       {draft.delegation === 'native' ? null : (
         <section className="dvs-panel"><h3>{t('http')}</h3><div className="dvs-grid">
@@ -664,47 +665,56 @@ function LoadedSettings({ settings, catalog, t }: { settings: SettingsController
 // ── styles ─────────────────────────────────────────────────────────────────
 
 const CSS = `
-.dvs-tool{margin:4px 0;border:1px solid var(--dsw-alias-border-subtle,#dedbd5);border-radius:10px;background:var(--dsw-alias-bg-layer-1,#fff);overflow:hidden}
-.dvs-tool-head{width:100%;min-height:36px;display:flex;align-items:center;gap:7px;padding:7px 9px;border:0;background:transparent;color:inherit;text-align:left;cursor:pointer;font:inherit}
-.dvs-tool-head:focus-visible{outline:2px solid #7c6ff0;outline-offset:-2px}
-.dvs-tool-icon{width:20px;height:20px;display:grid;place-items:center;border-radius:6px;color:#6659c7;background:rgba(111,94,219,.1);flex:none}
-.dvs-tool-title{font-size:12px;font-weight:650;white-space:nowrap}
-.dvs-tool-summary{font-size:12px;color:var(--dsw-alias-fg-muted,#77736d)}
-.dvs-tool-status{margin-left:auto;font-size:11px;color:var(--dsw-alias-fg-muted,#77736d);max-width:45%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.dvs-tool[data-state=error] .dvs-tool-status{color:#c34f4f}
-.dvs-chevron{transition:transform .16s ease;opacity:.55}.dvs-chevron[data-open=true]{transform:rotate(180deg)}
-.dvs-tool-body{padding:0 10px 10px}
-.dvs-stack{display:grid;gap:10px}
-.dvs-block{display:grid;gap:4px}
-.dvs-label{font-size:10px;text-transform:uppercase;letter-spacing:.06em;color:var(--dsw-alias-fg-muted,#77736d)}
-.dvs-block p{margin:0;font-size:12px;line-height:1.5;white-space:pre-wrap}
-.dvs-result{margin:0;font-size:11px;line-height:1.55;white-space:pre-wrap;padding:8px;border-radius:8px;background:var(--dsw-alias-bg-layer-2,#f7f5f1);max-height:220px;overflow:auto}
+.dvs-tool{margin:4px 0;border:1px solid var(--dsw-alias-border-l1,rgba(255,255,255,.06));border-radius:12px;background:var(--dsw-alias-bg-layer-1,#191920);overflow:hidden;font-family:var(--dsw-font-family,-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif)}
+.dvs-tool-head{width:100%;min-height:38px;display:flex;align-items:center;gap:8px;padding:8px 10px;border:0;background:transparent;color:var(--dsw-alias-label-primary,#f5f5f7);text-align:left;cursor:pointer;font:inherit}
+.dvs-tool-head:focus-visible{outline:2px solid var(--dsw-alias-brand-primary,#4d7ef7);outline-offset:-2px}
+.dvs-tool-icon{width:22px;height:22px;display:grid;place-items:center;border-radius:7px;color:var(--dsw-alias-brand-text,#fff);background:color-mix(in srgb, var(--dsw-alias-brand-primary,#4d7ef7) 18%, transparent);flex:none}
+.dvs-tool-title{font-size:13px;font-weight:600;white-space:nowrap}
+.dvs-tool-summary{font-size:12px;color:var(--dsw-alias-label-tertiary,#9a9aa3)}
+.dvs-tool-status{margin-left:auto;font-size:11.5px;color:var(--dsw-alias-label-secondary,#c8c8cf);max-width:45%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.dvs-tool[data-state=error] .dvs-tool-status{color:var(--dsw-alias-state-error-primary,#f2666e)}
+.dvs-chevron{transition:transform .16s var(--ds-ease-in-out,cubic-bezier(.4,0,.2,1));opacity:.55}.dvs-chevron[data-open=true]{transform:rotate(180deg)}
+.dvs-tool-body{padding:2px 12px 12px}
+.dvs-stack{display:grid;gap:12px}
+.dvs-block{display:grid;gap:5px}
+.dvs-label{font-size:10.5px;text-transform:uppercase;letter-spacing:.07em;color:var(--dsw-alias-label-tertiary,#9a9aa3)}
+.dvs-block p{margin:0;font-size:13px;line-height:1.55;color:var(--dsw-alias-label-primary,#f5f5f7);white-space:pre-wrap}
+.dvs-result{margin:0;font-size:12px;line-height:1.6;white-space:pre-wrap;padding:10px;border-radius:9px;background:var(--dsw-alias-bg-layer-2,#14141a);color:var(--dsw-alias-label-primary,#f5f5f7);max-height:240px;overflow:auto}
 .dvs-paths{list-style:none;margin:0;padding:0;display:grid;gap:3px}
-.dvs-paths button{border:0;background:none;padding:2px 0;color:#6659c7;font-size:11px;text-align:left;cursor:pointer;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:100%}
+.dvs-paths button{border:0;background:none;padding:2px 0;color:var(--dsw-alias-brand-primary,#4d7ef7);font-size:12px;text-align:left;cursor:pointer;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:100%}
 .dvs-meta{display:flex;gap:6px}
-.dvs-tag{font-size:10px;padding:2px 7px;border-radius:999px;background:rgba(92,108,213,.12);color:#5149a6}
-.dvs-muted{margin:0;color:var(--dsw-alias-fg-muted,#a5a19a);font-size:12px}
-.dvs-settings{display:grid;gap:14px;max-width:900px;padding:8px 2px 32px;color:var(--dsw-alias-fg-primary,#26231f)}
-.dvs-settings-header h2{font-size:22px;letter-spacing:-.025em;margin:0 0 6px}
-.dvs-settings-header p{margin:0;color:var(--dsw-alias-fg-muted,#77736d);font-size:13px;line-height:1.55;max-width:640px}
-.dvs-alert{padding:9px 11px;border-radius:10px;font-size:12px;line-height:1.5}
-.dvs-alert.notice{background:rgba(92,108,213,.09);color:#5149a6}
-.dvs-alert.warning{background:rgba(224,162,55,.12);color:#986818}
-.dvs-alert.success{background:rgba(48,154,100,.1);color:#267d52}
-.dvs-badge{font-size:10px;padding:2px 7px;border-radius:999px;background:rgba(48,154,100,.14);color:#267d52;margin-left:6px}
-.dvs-panel{display:grid;gap:12px;padding:14px;border:1px solid var(--dsw-alias-border-subtle,#dedbd5);border-radius:13px;background:var(--dsw-alias-bg-layer-1,#fff)}
-.dvs-panel h3{font-size:13px;margin:0}
-.dvs-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}
-.dvs-field{display:grid;gap:5px;align-content:start}
-.dvs-field span{font-size:12px;font-weight:550;color:var(--dsw-alias-fg-muted,#a5a19a)}
-.dvs-field input,.dvs-field select{height:34px;padding:0 9px;border:1px solid var(--dsw-alias-border-subtle,#3a3835);border-radius:8px;background:var(--dsw-alias-bg-input,var(--dsw-alias-bg-layer-1,#fff));color:var(--dsw-alias-fg-primary,inherit);font:inherit;font-size:13px}
-.dvs-check{display:flex;align-items:center;gap:7px;font-size:12px}
-.dvs-save-row{display:flex;gap:9px}
-.dvs-primary,.dvs-outline{height:32px;padding:0 15px;border-radius:999px;border:0;font-size:12px;font-weight:600;cursor:pointer}
-.dvs-primary{background:#6758d4;color:#fff}
-.dvs-primary:disabled,.dvs-outline:disabled{opacity:.5;cursor:default}
-.dvs-outline{border:1px solid var(--dsw-alias-border-subtle,#dedbd5);background:transparent;color:inherit}
-.dvs-loading{padding:24px;border-radius:12px;background:var(--dsw-alias-bg-layer-2,#f7f5f1);font-size:12px;color:var(--dsw-alias-fg-muted,#77736d)}
+.dvs-tag{font-size:10.5px;padding:2px 8px;border-radius:999px;background:color-mix(in srgb, var(--dsw-alias-state-business-primary,#4d7ef7) 14%, transparent);color:var(--dsw-alias-state-business-primary,#6d94f7)}
+.dvs-muted{margin:0;color:var(--dsw-alias-label-tertiary,#9a9aa3);font-size:13px}
+.dvs-settings{display:grid;gap:18px;max-width:920px;padding:10px 2px 44px;color:var(--dsw-alias-label-primary,#f5f5f7);font-family:var(--dsw-font-family,-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif)}
+.dvs-settings-header h2{font-size:24px;font-weight:650;letter-spacing:-.02em;margin:0 0 6px}
+.dvs-settings-header p{margin:0;color:var(--dsw-alias-label-secondary,#c8c8cf);font-size:13.5px;line-height:1.6;max-width:680px}
+.dvs-alert{padding:10px 13px;border-radius:10px;font-size:13px;line-height:1.55;display:flex;align-items:center;gap:8px;flex-wrap:wrap;border:1px solid var(--dsw-alias-border-l1,rgba(255,255,255,.06))}
+.dvs-alert.notice{background:rgba(77,126,247,.12);background:color-mix(in srgb, var(--dsw-alias-state-business-primary,#4d7ef7) 12%, transparent);color:var(--dsw-alias-state-business-primary,#6d94f7)}
+.dvs-alert.warning{background:rgba(224,162,55,.12);background:color-mix(in srgb, var(--dsw-alias-state-warn-primary,#e0a237) 12%, transparent);color:var(--dsw-alias-state-warn-primary,#e0a237)}
+.dvs-alert.success{background:rgba(48,154,100,.12);background:color-mix(in srgb, var(--dsw-alias-state-success-primary,#309a64) 12%, transparent);color:var(--dsw-alias-state-success-primary,#309a64)}
+.dvs-alert.error{background:rgba(224,76,90,.12);background:color-mix(in srgb, var(--dsw-alias-state-error-primary,#e04c5a) 12%, transparent);color:var(--dsw-alias-state-error-primary,#e04c5a)}
+.dvs-alert strong{font-weight:600}
+.dvs-badge{font-size:10.5px;font-weight:600;padding:2px 8px;border-radius:999px;background:color-mix(in srgb, var(--dsw-alias-state-success-primary,#309a64) 16%, transparent);color:var(--dsw-alias-state-success-primary,#309a64);margin-left:2px}
+.dvs-panel{display:grid;gap:14px;padding:16px;border:1px solid var(--dsw-alias-border-l1,rgba(255,255,255,.06));border-radius:12px;background:var(--dsw-alias-bg-layer-1,#191920)}
+.dvs-panel h3{font-size:14px;font-weight:600;margin:0}
+.dvs-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px 16px}
+.dvs-grid .dvs-span2{grid-column:1/-1}
+.dvs-field{display:grid;gap:6px;align-content:start;min-width:0}
+.dvs-field span{font-size:12.5px;font-weight:550;color:var(--dsw-alias-label-secondary,#c8c8cf)}
+.dvs-field .dvs-hint{font-size:11.5px;line-height:1.5;color:var(--dsw-alias-label-tertiary,#9a9aa3)}
+.dvs-field input,.dvs-field select{width:100%;height:36px;padding:0 10px;border:1px solid var(--dsw-alias-border-l2,rgba(255,255,255,.12));border-radius:8px;background:var(--dsw-alias-bg-layer-2,#14141a);color:var(--dsw-alias-label-primary,#f5f5f7);font:inherit;font-size:13px;outline:none;transition:border-color .12s var(--ds-ease-in-out,cubic-bezier(.4,0,.2,1)),box-shadow .12s var(--ds-ease-in-out,cubic-bezier(.4,0,.2,1))}
+.dvs-field input:focus,.dvs-field select:focus{border-color:var(--dsw-alias-brand-primary,#4d7ef7);box-shadow:0 0 0 2px color-mix(in srgb, var(--dsw-alias-brand-primary,#4d7ef7) 25%, transparent)}
+.dvs-field input::placeholder{color:var(--dsw-alias-label-dimmed,#6f6f78)}
+.dvs-check{display:flex;align-items:center;gap:9px;font-size:13px;color:var(--dsw-alias-label-primary,#f5f5f7);min-height:22px;cursor:pointer}
+.dvs-check input{accent-color:var(--dsw-alias-brand-primary,#4d7ef7);width:15px;height:15px;flex:none;margin:0}
+.dvs-save-row{display:flex;gap:10px;align-items:center}
+.dvs-primary,.dvs-outline{height:34px;padding:0 18px;border-radius:9px;font-size:13px;font-weight:600;cursor:pointer;transition:background-color .12s var(--ds-ease-in-out,cubic-bezier(.4,0,.2,1))}
+.dvs-primary{background:var(--dsw-alias-button-primary-fill,#4d7ef7);color:var(--dsw-alias-brand-text,#fff);border:0}
+.dvs-primary:hover:not(:disabled){background:var(--dsw-alias-button-primary-hover,#3f66d9)}
+.dvs-primary:disabled,.dvs-outline:disabled{opacity:.45;cursor:default}
+.dvs-outline{background:transparent;border:1px solid var(--dsw-alias-border-l2,rgba(255,255,255,.12));color:var(--dsw-alias-label-primary,#f5f5f7)}
+.dvs-outline:hover:not(:disabled){background:var(--dsw-alias-interactive-bg-hover,rgba(255,255,255,.08))}
+.dvs-loading{padding:26px;border-radius:12px;background:var(--dsw-alias-bg-layer-2,#14141a);font-size:13px;color:var(--dsw-alias-label-tertiary,#9a9aa3)}
 @media(max-width:720px){.dvs-grid{grid-template-columns:1fr}}
 `
 
