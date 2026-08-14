@@ -3,7 +3,8 @@
  *  resilience pipeline, per-agent capability gating, /vision command, and
  *  data-driven auto-detect. M2: paste UX via agent/pre-step (markers,
  *  ImageBlock attach for multimodal primaries, hint / auto-delegate for
- *  text-only primaries). */
+ *  text-only primaries). M3: Web client plugin (describe_image tool card,
+ *  data-driven Vision settings section, /_dsh/vision/models catalog route). */
 import type { Context } from '@deepseek-ai/cordis'
 import type {} from '@deepseek-ai/dsh-agent'
 import type {} from '@deepseek-ai/dsh-attachment'
@@ -21,6 +22,7 @@ import { delegateToVisionModel, type DelegateDeps } from './delegate.ts'
 import { detectVisionModel } from './defaults.ts'
 import { VisionGate } from './exposure.ts'
 import { createPasteHook } from './paste.ts'
+import { installVisionWeb } from './web.ts'
 import { createDescribeImageTool } from './tool.ts'
 
 export const name = 'dsh-vision'
@@ -114,6 +116,8 @@ export function apply(ctx: Context, config: Partial<VisionConfig> = {}) {
     delegateFor: (workspace) => (params, signal) => delegateToVisionModel(delegateDepsFor(workspace, signal), params),
     logger: ctx.logger,
   }))
+
+  installVisionWeb(ctx, () => resolved)
 
   // Live re-resolution on settings changes; cache shape + mask re-sync.
   const settingsWatch = settings.watch(async (next: unknown) => {
