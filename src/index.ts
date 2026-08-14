@@ -22,6 +22,7 @@ import { delegateToVisionModel, type DelegateDeps } from './delegate.ts'
 import { detectVisionModel } from './defaults.ts'
 import { VisionGate } from './exposure.ts'
 import { createPasteHook } from './paste.ts'
+import type { SettingsLike } from './commands.ts'
 import { installVisionWeb } from './web.ts'
 import { createDescribeImageTool } from './tool.ts'
 
@@ -88,24 +89,27 @@ export function apply(ctx: Context, config: Partial<VisionConfig> = {}) {
     llm: ctx.llm,
     attachments: ctx.attachments,
   })
-  ctx.tools.register(tool)
+  const toolDisposer = ctx.tools.register(tool)
+
+  // Shared settings write surface (commands + the Web settings route).
+  const visionSettings: SettingsLike = {
+    get: () => settings.get() as VisionConfig,
+    update: (patch) => settings.update(patch),
+    mutate: (ops) => ctx.settings.mutate(VISION_SETTINGS_NAMESPACE, ops.map((o) => o.op === 'set'
+      ? { op: 'set' as const, path: [o.path], value: o.value as never }
+      : { op: 'unset' as const, path: [o.path] })),
+    replace: (section) => settings.replace(section),
+  }
 
   const command = createVisionCommand({
-    settings: {
-      get: () => settings.get() as VisionConfig,
-      update: (patch) => settings.update(patch),
-      mutate: (ops) => ctx.settings.mutate(VISION_SETTINGS_NAMESPACE, ops.map((o) => o.op === 'set'
-        ? { op: 'set' as const, path: [o.path], value: o.value as never }
-        : { op: 'unset' as const, path: [o.path] })),
-      replace: (section) => settings.replace(section),
-    },
+    settings: visionSettings,
     config: () => resolved,
     gate,
     cache: () => cache,
     home,
     detect: () => detectVisionModel(ctx.llm),
   })
-  ctx.commands.register(command)
+  const commandDisposer = ctx.commands.register(command)
 
   // M2: paste UX — rewrite user messages carrying image path tokens before
   // they enter a step (markers, native attachment, hint/auto-delegate).
@@ -117,7 +121,7 @@ export function apply(ctx: Context, config: Partial<VisionConfig> = {}) {
     logger: ctx.logger,
   }))
 
-  installVisionWeb(ctx, () => resolved)
+  installVisionWeb(ctx, () => resolved, visionSettings)
 
   // Live re-resolution on settings changes; cache shape + mask re-sync.
   const settingsWatch = settings.watch(async (next: unknown) => {
@@ -151,11 +155,16 @@ export function apply(ctx: Context, config: Partial<VisionConfig> = {}) {
     resolved.provider && resolved.model ? `, provider/model=${resolved.provider}/${resolved.model}` : '',
   )
 
+  // Full lifecycle teardown (LIFO over registration order). Fiber-scoped
+  // registrations (settings namespace, web routes) are also auto-disposed by
+  // the loader; these explicit disposers cover every runtime seam we own.
   return () => {
-    gateDisposer()
-    pasteDisposer()
+    gateDisposer() // release per-agent tool masks + gate listeners
     autoDetect()
     settingsWatch()
+    pasteDisposer() // agent/pre-step hook
+    commandDisposer() // /vision command
+    toolDisposer() // describe_image tool
   }
 }
 

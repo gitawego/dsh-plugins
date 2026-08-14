@@ -2,10 +2,12 @@
  *  Settings section. Everything is DATA-DRIVEN: the provider/model selectors
  *  are populated from the live host LLM catalog (/_dsh/vision/models) and the
  *  detected image-capable default is the catalog scan's preference — no
- *  provider or model id is hardcoded anywhere. Settings writes go through the
- *  durable 'vision' namespace scope (ctx.settingsScope). */
+ *  provider or model id is hardcoded anywhere. Settings reads/writes go through
+ *  the plugin's own same-origin route (/_dsh/vision/settings) over the settings
+ *  seam — the harness settings proxy does not expose plugin namespaces by
+ *  default, so the form must not depend on ctx.settingsScope. */
 import { useEffect, useRef, useState, useSyncExternalStore } from 'react'
-import type { ClientContext, SettingsScope, ToolCallBlock } from '@deepseek-ai/dsh-client-runtime/client'
+import type { ClientContext, ToolCallBlock } from '@deepseek-ai/dsh-client-runtime/client'
 import type {} from '@deepseek-ai/dsh-client-ui-settings/client'
 import type {} from '@deepseek-ai/dsh-client-locale/client'
 import type {} from '@deepseek-ai/dsh-client-ui-tool/client'
@@ -13,6 +15,7 @@ import type { PropsRuntime, TranslateNS } from '@deepseek-ai/dsh-client-ui-slots
 
 const NS = 'vision'
 const MODELS_ROUTE = '/_dsh/vision/models'
+const SETTINGS_ROUTE = '/_dsh/vision/settings'
 
 type VisionTranslate = TranslateNS<'vision'>
 
@@ -198,6 +201,79 @@ export class CatalogController {
   }
 }
 
+/** Wire mirror of the host /_dsh/vision/settings route. */
+export interface VisionSettingsSnapshot {
+  writable: boolean
+  value: Record<string, unknown>
+}
+
+interface SettingsState {
+  status: 'idle' | 'loading' | 'ready' | 'error'
+  snapshot?: VisionSettingsSnapshot
+  error?: string
+}
+
+/** External store over the plugin's own settings route (the harness settings
+ *  proxy does not expose plugin namespaces by default). */
+export class SettingsController {
+  private state: SettingsState = { status: 'idle' }
+  private readonly listeners = new Set<() => void>()
+  private generation = 0
+
+  subscribe = (listener: () => void): (() => void) => {
+    this.listeners.add(listener)
+    return () => { this.listeners.delete(listener) }
+  }
+
+  getSnapshot = (): SettingsState => this.state
+
+  private set(next: SettingsState): void {
+    this.state = next
+    for (const listener of this.listeners) listener()
+  }
+
+  async load(): Promise<void> {
+    const generation = ++this.generation
+    this.set({ ...this.state, status: 'loading', error: undefined })
+    try {
+      const response = await fetch(SETTINGS_ROUTE, { credentials: 'same-origin' })
+      const body = await response.json() as ApiEnvelope<VisionSettingsSnapshot>
+      if (generation !== this.generation) return
+      if (!response.ok || !body.ok || body.value === undefined) {
+        throw new Error(body.error?.message ?? `Vision settings request failed with HTTP ${response.status}`)
+      }
+      this.set({ status: 'ready', snapshot: body.value })
+    } catch (error) {
+      if (generation !== this.generation) return
+      this.set({ ...this.state, status: 'error', error: error instanceof Error ? error.message : String(error) })
+    }
+  }
+
+  /** POST one form submission; throws with the server message on failure. */
+  async save(patch: Record<string, unknown>): Promise<void> {
+    const generation = ++this.generation
+    this.set({ ...this.state, status: 'loading', error: undefined })
+    try {
+      const response = await fetch(SETTINGS_ROUTE, {
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(patch),
+      })
+      const body = await response.json() as ApiEnvelope<VisionSettingsSnapshot>
+      if (generation !== this.generation) return
+      if (!response.ok || !body.ok || body.value === undefined) {
+        throw new Error(body.error?.message ?? `Vision settings save failed with HTTP ${response.status}`)
+      }
+      this.set({ status: 'ready', snapshot: body.value })
+    } catch (error) {
+      if (generation !== this.generation) return
+      this.set({ ...this.state, status: 'error', error: error instanceof Error ? error.message : String(error) })
+      throw error
+    }
+  }
+}
+
 // ── describe_image Tool card ───────────────────────────────────────────────
 
 type ToolViewProps = PropsRuntime<'tool.call.toolview'> & { t?: VisionTranslate }
@@ -296,7 +372,7 @@ function DescribeImageView({ block, openFile, cwd, t = enFallback }: ToolViewPro
 
 // ── Vision Settings section ────────────────────────────────────────────────
 
-type SettingsViewProps = PropsRuntime<'settings.section'> & { t?: VisionTranslate; scope?: SettingsScope<unknown>; catalog?: CatalogController }
+type SettingsViewProps = PropsRuntime<'settings.section'> & { t?: VisionTranslate; settings?: SettingsController; catalog?: CatalogController }
 
 interface Draft {
   provider: string
@@ -362,13 +438,13 @@ function draftOf(raw: Record<string, unknown> | undefined): Draft {
   }
 }
 
-function SettingsSection({ scope, catalog, t = enFallback }: SettingsViewProps) {
-  if (scope === undefined || catalog === undefined) return <div className="dvs-settings"><div className="dvs-loading">{t('running')}</div></div>
-  return <LoadedSettings scope={scope} catalog={catalog} t={t} />
+function SettingsSection({ settings, catalog, t = enFallback }: SettingsViewProps) {
+  if (settings === undefined || catalog === undefined) return <div className="dvs-settings"><div className="dvs-loading">{t('running')}</div></div>
+  return <LoadedSettings settings={settings} catalog={catalog} t={t} />
 }
 
-function LoadedSettings({ scope, catalog, t }: { scope: SettingsScope<unknown>; catalog: CatalogController; t: VisionTranslate }) {
-  const state = useSyncExternalStore(scope.subscribe, scope.getSnapshot)
+function LoadedSettings({ settings, catalog, t }: { settings: SettingsController; catalog: CatalogController; t: VisionTranslate }) {
+  const settingsState = useSyncExternalStore(settings.subscribe, settings.getSnapshot)
   const catalogState = useSyncExternalStore(catalog.subscribe, catalog.getSnapshot)
   const [draft, setDraft] = useState<Draft | undefined>(undefined)
   const [busy, setBusy] = useState(false)
@@ -376,9 +452,10 @@ function LoadedSettings({ scope, catalog, t }: { scope: SettingsScope<unknown>; 
   const seededRef = useRef(false)
 
   useEffect(() => { void catalog.load() }, [catalog])
+  useEffect(() => { void settings.load() }, [settings])
   useEffect(() => {
-    if (state.value !== undefined) setDraft(draftOf(state.value as Record<string, unknown> | undefined))
-  }, [state.value])
+    if (settingsState.snapshot !== undefined) setDraft(draftOf(settingsState.snapshot.value))
+  }, [settingsState.snapshot])
 
   // Offer the detected vision-capable default once, only when fields are unset.
   useEffect(() => {
@@ -408,34 +485,30 @@ function LoadedSettings({ scope, catalog, t }: { scope: SettingsScope<unknown>; 
     setBusy(true)
     setMessage(undefined)
     try {
-      const writes: Array<Promise<void>> = []
-      const setOrUnset = (field: string, raw: string): void => {
-        const trimmed = raw.trim()
-        writes.push(trimmed.length === 0 ? scope.unset(field) : scope.set(field, trimmed))
-      }
-      setOrUnset('provider', draft.provider)
-      setOrUnset('model', draft.model)
-      writes.push(scope.set('enabled', draft.enabled))
-      writes.push(scope.set('delegation', draft.delegation))
-      writes.push(scope.set('textOnlyPasteMode', draft.textOnlyPasteMode))
-      writes.push(scope.set('markerStyle', draft.markerStyle))
-      writes.push(scope.set('maxDimension', Number(draft.maxDimension) || 1568))
-      writes.push(scope.set('jpegQuality', Number(draft.jpegQuality) || 85))
-      writes.push(scope.set('cacheEnabled', draft.cacheEnabled))
-      writes.push(scope.set('cachePersist', draft.cachePersist))
-      writes.push(scope.set('cacheMaxEntries', Number(draft.cacheMaxEntries) || 256))
-      writes.push(scope.set('retryAttempts', Number(draft.retryAttempts) || 2))
-      writes.push(scope.set('autoDelegateTimeoutMs', Number(draft.autoDelegateTimeoutMs) || 30000))
-      writes.push(scope.set('localOnly', draft.localOnly))
-      writes.push(scope.set('auditLog', draft.auditLog))
-      writes.push(scope.set('autoDetectVisionModel', draft.autoDetectVisionModel))
-      writes.push(scope.set('http', {
-        ...(draft.baseUrl.trim().length === 0 ? {} : { baseUrl: draft.baseUrl.trim() }),
-        ...(draft.credential.trim().length === 0 ? {} : { credential: draft.credential.trim() }),
-        ...(draft.httpModel.trim().length === 0 ? {} : { model: draft.httpModel.trim() }),
-        protocol: draft.protocol,
-      }))
-      await Promise.all(writes)
+      await settings.save({
+        provider: draft.provider.trim(),
+        model: draft.model.trim(),
+        enabled: draft.enabled,
+        delegation: draft.delegation,
+        textOnlyPasteMode: draft.textOnlyPasteMode,
+        markerStyle: draft.markerStyle,
+        maxDimension: Number(draft.maxDimension) || 1568,
+        jpegQuality: Number(draft.jpegQuality) || 85,
+        cacheEnabled: draft.cacheEnabled,
+        cachePersist: draft.cachePersist,
+        cacheMaxEntries: Number(draft.cacheMaxEntries) || 256,
+        retryAttempts: Number(draft.retryAttempts) || 2,
+        autoDelegateTimeoutMs: Number(draft.autoDelegateTimeoutMs) || 30000,
+        localOnly: draft.localOnly,
+        auditLog: draft.auditLog,
+        autoDetectVisionModel: draft.autoDetectVisionModel,
+        http: {
+          ...(draft.baseUrl.trim().length === 0 ? {} : { baseUrl: draft.baseUrl.trim() }),
+          ...(draft.credential.trim().length === 0 ? {} : { credential: draft.credential.trim() }),
+          ...(draft.httpModel.trim().length === 0 ? {} : { model: draft.httpModel.trim() }),
+          protocol: draft.protocol,
+        },
+      })
       setMessage(t('saved'))
       void catalog.load()
     } catch (error) {
@@ -467,7 +540,8 @@ function LoadedSettings({ scope, catalog, t }: { scope: SettingsScope<unknown>; 
       {detected === undefined ? null : (
         <div className="dvs-alert notice">{t('detectedDefault')}: <strong>{detected.provider}/{detected.model}</strong> <span className="dvs-badge">{t('detectedBadge')}</span></div>
       )}
-      {state.writable === false ? <div className="dvs-alert warning">{t('readOnly')}</div> : null}
+      {settingsState.snapshot?.writable === false ? <div className="dvs-alert warning">{t('readOnly')}</div> : null}
+      {settingsState.error === undefined ? null : <div className="dvs-alert error">{settingsState.error}</div>}
       {message === undefined ? null : <div className="dvs-alert success">{message}</div>}
 
       <section className="dvs-panel"><h3>{t('provider')} / {t('model')}</h3><div className="dvs-grid">
@@ -532,7 +606,7 @@ function LoadedSettings({ scope, catalog, t }: { scope: SettingsScope<unknown>; 
       </div></section>
 
       <div className="dvs-save-row">
-        <button type="button" className="dvs-primary" disabled={!state.writable || busy} onClick={() => { void save() }}>{busy ? t('saving') : t('save')}</button>
+        <button type="button" className="dvs-primary" disabled={settingsState.snapshot?.writable === false || busy} onClick={() => { void save() }}>{busy ? t('saving') : t('save')}</button>
         <button type="button" className="dvs-outline" disabled={busy} onClick={() => { void catalog.load() }}>{t('reload')}</button>
       </div>
     </div>
@@ -599,14 +673,14 @@ function installStyles(): () => void {
 }
 
 /** Required client services. */
-export const inject = ['slots', 'locale', 'settingsScope']
+export const inject = ['slots', 'locale']
 
 /** Register the describe_image Tool card and the Vision Settings section. */
 export function apply(ctx: ClientContext): void {
   ctx.effect(installStyles, 'dsh-vision: styles')
   ctx.effect(() => ctx.locale.register(NS, { en, zh }), 'dsh-vision: locale')
   const t = ctx.locale.bind(NS)
-  const scope = ctx.settingsScope.bind({ namespace: 'vision' })
+  const settings = new SettingsController()
   const catalog = new CatalogController()
 
   ctx.slots.inject('tool.call.toolview', function* () {
@@ -618,7 +692,7 @@ export function apply(ctx: ClientContext): void {
     id: 'vision',
     order: 30,
     label: () => t('nav'),
-    inject: () => ({ t, scope, catalog }),
+    inject: () => ({ t, settings, catalog }),
   }, SettingsSection))
 }
 
