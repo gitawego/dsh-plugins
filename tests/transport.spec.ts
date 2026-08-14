@@ -2,6 +2,7 @@
  *  http-delegation guidance GENERICALLY — any permission/filesystem-class store
  *  failure (EACCES/EPERM/EROFS/ENOSPC/EDQUOT, possibly wrapped in a cause),
  *  cross-platform, while unrelated errors pass through untouched. */
+import type { ImageAttachmentRef } from '@deepseek-ai/dsh-attachment'
 import { describe, expect, it } from 'vitest'
 import { callNativeVision } from '../src/transport.ts'
 
@@ -32,7 +33,7 @@ function streamingLlm() {
   }
 }
 
-const VALID_REF = { attachmentId: 'a1', mediaType: 'image/png' as const, bytes: 1, width: 1, height: 1 }
+const VALID_REF: ImageAttachmentRef = { attachmentId: 'a1', mediaType: 'image/png', bytes: 1, width: 1, height: 1 }
 
 describe('callNativeVision attachment-store failures (generic, cross-platform)', () => {
   it.each(['EACCES', 'EPERM', 'EROFS', 'ENOSPC', 'EDQUOT'])(
