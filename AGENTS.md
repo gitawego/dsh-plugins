@@ -24,7 +24,8 @@ delegation is structurally impossible); text-only primaries get a visible
   build` works (lib/ incl. the client bundle `lib/client.js`) · `npm test`
   green (35 vitest tests: 17 in `tests/smoke.spec.ts`, 18 in `tests/paste.spec.ts`).
 - **`node_modules/` and `lib/` are gitignored** — a fresh checkout needs
-  `npm install` + `npm run build`.
+  `npm install` + `npm run build`. `package.json` has a `prepare` script
+  (`npm run build`) so git-URL installs of the package can build `lib/`.
 - Dev deps installed from npm (`@deepseek-ai/*@0.1.0-rc.6` published; client
   packages `dsh-client-runtime/ui-slots/ui-tool/ui-settings/locale` +
   `dsh-host-webserver` added for M3). Runtime deps: `sharp` +
@@ -209,6 +210,16 @@ delegation is structurally impossible); text-only primaries get a visible
    would have written), then run `dsh plugin --profile web install` — pnpm install
    materializes it as a proper store link and the dsh reconcile step adds it to
    `dsh.profile.bundles`. file: deps stay live-linked to the source dir.
+   **Git-URL installs** were probed and are NOT used (decision recorded): pnpm 12 rc
+   rewrites every github git-spec to an https fetch (this host has ssh-only github
+   auth — the fix is a global `url."git@github.com:".insteadOf "https://github.com/"`
+   git config, verified working), AND it blocks dependency build scripts via an
+   `allowBuilds` allowlist in `pnpm-workspace.yaml` (the `pnpm` field in
+   package.json is ignored in rc; the gate never re-ran `prepare` in probes), so
+   a working git install would additionally require committing `lib/` to the repo.
+   **npm is not part of the official flow**: `dsh plugin` is a pnpm forwarder by
+   design (runs `pnpm <args>` in the profile dir, then reconciles bundles); npm
+   would work manually (file:/git deps, no rc bugs) but abandons the reconcile step.
 
 ## Useful reference paths
 
