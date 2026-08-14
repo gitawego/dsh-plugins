@@ -27,6 +27,7 @@ import { isConfiguredForDelegation, type PasteMode, type ResolvedVisionConfig } 
 import type { DelegateParams, DelegateResult } from './delegate.ts'
 import { loadImage, type SupportedMime } from './image.ts'
 import { buildDescriptionsBlock, buildPasteHintLine, renderMarkersResolved } from './marker.ts'
+import { resolveInputPath } from './paths.ts'
 
 // Path-like tokens ending in a known image extension (pi-vision F8 port):
 //   POSIX: absolute /…, home ~/…, relative ./…/…/
@@ -55,7 +56,9 @@ export function findImagePathTokens(text: string): string[] {
 function resolveImageFile(token: string, cwd: string): string | undefined {
   const unescaped = token.replace(/\\ /g, ' ')
   const expanded = unescaped.startsWith('~/') ? resolvePath(cwd, unescaped) : unescaped
-  const abs = isAbsolute(expanded) ? expanded : resolvePath(cwd, expanded)
+  const abs0 = isAbsolute(expanded) ? expanded : resolvePath(cwd, expanded)
+  // Android/Termux: translate shared-storage spellings to the accessible path.
+  const abs = resolveInputPath(abs0)
   if (!existsSync(abs)) return undefined
   try {
     if (!statSync(abs).isFile()) return undefined
