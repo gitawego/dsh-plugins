@@ -4,7 +4,8 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { DEFAULT_CONFIG, MARKER_STYLES, PASTE_MODES, REASONING_LEVELS, mergeConfig, resolveConfig } from '../src/config.ts'
 import { isImageCapable } from '../src/capability.ts'
-import { buildBatchToolResult, buildHintLine, renderMarker, renderMarkers } from '../src/marker.ts'
+import { MarkerRegistry, asImageMarker, buildBatchToolResult, buildHintLine, renderMarker, renderMarkers, resolveMarkerPaths } from '../src/marker.ts'
+import type { Agent } from '@deepseek-ai/dsh-agent'
 import { mapWithConcurrency } from '../src/batch.ts'
 import { VisionCache, cacheKey } from '../src/cache.ts'
 import { appendAuditEntry, countAuditLog, resolveAuditPath, tailAuditLog, truncateImagePathForLog } from '../src/audit.ts'
@@ -75,6 +76,42 @@ describe('marker', () => {
     expect(block).toContain('(cached)')
     expect(block).toContain('[Image 2] /b.png')
     expect(block).toContain('[error: not_found — image not found at /b.png]')
+  })
+})
+
+describe('marker resolution (model passes [Image-#N] instead of the real path)', () => {
+  const agent = { id: 's1' } as unknown as Agent
+
+  it('asImageMarker normalizes decorated marker spellings', () => {
+    expect(asImageMarker('Image-#1')).toBe('Image-#1')
+    expect(asImageMarker('[Image-#2]')).toBe('Image-#2')
+    expect(asImageMarker('[**Image-#3**]')).toBe('Image-#3')
+    expect(asImageMarker(`[${String.fromCharCode(96)}Image-#4${String.fromCharCode(96)}]`)).toBe('Image-#4')
+    expect(asImageMarker('/tmp/Image-#1.png')).toBeUndefined() // real paths untouched
+    expect(asImageMarker('screenshot.png')).toBeUndefined()
+    expect(asImageMarker('')).toBeUndefined()
+  })
+
+  it('MarkerRegistry records and resolves per agent; detach clears', () => {
+    const reg = new MarkerRegistry()
+    const other = { id: 's2' } as unknown as Agent
+    reg.record(agent, 'Image-#1', '/tmp/a.png')
+    reg.record(agent, 'Image-#2', '/tmp/b.png')
+    reg.record(other, 'Image-#1', '/tmp/other.png')
+    expect(reg.resolve(agent, 'Image-#1')).toBe('/tmp/a.png')
+    expect(reg.resolve(agent, 'Image-#2')).toBe('/tmp/b.png')
+    expect(reg.resolve(other, 'Image-#1')).toBe('/tmp/other.png')
+    expect(reg.resolve(agent, 'Image-#9')).toBeUndefined()
+    reg.detach(agent)
+    expect(reg.resolve(agent, 'Image-#1')).toBeUndefined()
+  })
+
+  it('resolveMarkerPaths substitutes recorded paths; unknown markers pass through', () => {
+    const reg = new MarkerRegistry()
+    reg.record(agent, 'Image-#1', '/tmp/a.png')
+    expect(resolveMarkerPaths(['Image-#1', '/tmp/b.png'], reg, agent)).toEqual(['/tmp/a.png', '/tmp/b.png'])
+    expect(resolveMarkerPaths(['[Image-#1]', 'Image-#7'], reg, agent)).toEqual(['/tmp/a.png', 'Image-#7'])
+    expect(resolveMarkerPaths(['Image-#2'], reg, agent)).toEqual(['Image-#2'])
   })
 })
 

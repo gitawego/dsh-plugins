@@ -32,7 +32,7 @@ import { mapWithConcurrency } from './batch.ts'
 import { isConfiguredForDelegation, type PasteMode, type ResolvedVisionConfig } from './config.ts'
 import type { DelegateParams, DelegateResult } from './delegate.ts'
 import { loadImage, type SupportedMime } from './image.ts'
-import { buildDescriptionsBlock, buildPasteHintLine, renderMarker, renderMarkersResolved } from './marker.ts'
+import { buildDescriptionsBlock, buildPasteHintLine, renderMarker, renderMarkersResolved, type MarkerRegistry } from './marker.ts'
 import { resolveInputPath } from './paths.ts'
 
 // Path-like tokens ending in a known image extension (pi-vision F8 port):
@@ -162,6 +162,9 @@ export interface PasteDeps {
   readImage: ReadImage
   /** Plugin-owned temp dir for materialized image blocks (join(home,'tmp','dsh-vision')). */
   tmpDir: string
+  /** Per-agent marker → real-path registry, so describe_image can resolve the
+   *  [Image-#N] markers the model sees back to the paths this hook replaced. */
+  markers: MarkerRegistry
   /** Build the delegation entry point for one agent's workspace. */
   delegateFor: (workspace: string) => PasteDelegate
   logger?: { warn: (message: string, ...args: unknown[]) => void }
@@ -252,6 +255,7 @@ async function materializeImageBlocks(
  *  text-only model's request boundary. Returns undefined when untouched. */
 async function transformMessage(
   deps: PasteDeps,
+  agent: Agent,
   config: ResolvedVisionConfig,
   msg: UserMessage,
   workspace: string,
@@ -278,6 +282,12 @@ async function transformMessage(
   const loaded = await loadAndDedup(tokens, workspace)
   if (loaded.length === 0 && blockMaterializations.length === 0) return undefined
   const resolved = buildResolvedMap(tokens, loaded, existingImageCount, multimodal)
+  // Bridge to describe_image: remember marker → real path per agent so the
+  // model can pass the [Image-#N] it sees instead of the path.
+  for (const img of loaded) {
+    const idx = resolved.get(img.token)?.index
+    if (idx !== undefined) deps.markers.record(agent, `Image-#${idx + 1}`, img.token)
+  }
   const rewritten = renderMarkersResolved(text, pathTokens, resolved, config.markerStyle)
   const nonText = msg.content.filter((b) => b.type !== 'text')
 
@@ -382,7 +392,7 @@ async function transformBatch(
       out.push(msg)
       continue
     }
-    const transformed = await transformMessage(deps, config, msg, workspace, signal, multimodal, mode)
+    const transformed = await transformMessage(deps, agent, config, msg, workspace, signal, multimodal, mode)
     if (transformed === undefined) out.push(msg)
     else {
       out.push(transformed)

@@ -7,7 +7,7 @@ import type { ResolvedVisionConfig, ReasoningLevel } from './config.ts'
 import { MAX_BATCH_IMAGES, REASONING_LEVELS } from './config.ts'
 import { delegateToVisionModel, type CreateSubagent, type DelegateDeps } from './delegate.ts'
 import { mapWithConcurrency } from './batch.ts'
-import { buildBatchToolResult, type BatchImageOutcome } from './marker.ts'
+import { buildBatchToolResult, resolveMarkerPaths, type BatchImageOutcome, type MarkerRegistry } from './marker.ts'
 import type { VisionCache } from './cache.ts'
 
 /** Tool dependencies wired by index.ts (live config + harness services). */
@@ -21,6 +21,9 @@ export interface DescribeImageDeps {
   createSubagent: CreateSubagent
   /** Native-delivery probe (attachment store liveness) — memoized in index.ts. */
   canDeliverImage: () => Promise<boolean>
+  /** Per-agent marker → real-path registry (see marker.ts) so [Image-#N]
+   *  tokens the model passes resolve back to the paste-replaced paths. */
+  markers: MarkerRegistry
   lifecycleSignal?: AbortSignal
 }
 
@@ -116,7 +119,9 @@ export function createDescribeImageTool(deps: DescribeImageDeps) {
         }
       }
 
-      const paths = normalizeImagePaths(args)
+      // Resolve [Image-#N] markers the model passes back to the real paths
+      // the paste hook recorded; unknown markers pass through (not_found).
+      const paths = resolveMarkerPaths(normalizeImagePaths(args), deps.markers, exec.agent)
       if (paths.length === 0) {
         throw new Error('describe_image requires image_path or image_paths (got neither).')
       }

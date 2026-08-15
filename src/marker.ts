@@ -1,5 +1,12 @@
 /** [Image-#N] marker rendering, hint lines, and the structured batch result
- *  block — ports of pi-vision's lib/marker.ts surfaces. */
+ *  block — ports of pi-vision's lib/marker.ts surfaces.
+ *
+ *  MARKER RESOLUTION: models frequently pass the marker they SEE in the
+ *  conversation ("Image-#1") as describe_image's image_path instead of the
+ *  real path the paste hook replaced. MarkerRegistry bridges the two: the
+ *  paste hook records marker -> real path per agent when it renders markers,
+ *  and describe_image resolves [Image-#N] tokens back to the recorded path. */
+import type { Agent } from '@deepseek-ai/dsh-agent'
 import type { MarkerStyle } from './config.ts'
 
 export function renderMarker(n: number, style: MarkerStyle): string {
@@ -136,4 +143,54 @@ export function buildDescriptionsBlock(
   const footer = `[${descriptions.length} image(s) auto-described via ${visionModel}. Set textOnlyPasteMode to "hint" to delegate on-demand instead.]`
   return `\n\n${lines.join('\n')}\n${footer}`
 }
+/** Per-agent map from canonical [Image-#N] markers to the real image paths
+ *  the paste hook replaced (latest wins per marker name — the model usually
+ *  refers to the most recently rendered markers). */
+export class MarkerRegistry {
+  private readonly agents = new Map<Agent, Map<string, string>>()
 
+  /** Record marker → real path for one agent. */
+  record(agent: Agent, marker: string, path: string): void {
+    let map = this.agents.get(agent)
+    if (map === undefined) {
+      map = new Map()
+      this.agents.set(agent, map)
+    }
+    map.set(marker, path)
+  }
+
+  /** Resolve a canonical marker name to the recorded real path. */
+  resolve(agent: Agent, marker: string): string | undefined {
+    return this.agents.get(agent)?.get(marker)
+  }
+
+  /** Drop one agent's mappings (agent/disposed). */
+  detach(agent: Agent): void {
+    this.agents.delete(agent)
+  }
+}
+
+const MARKER_RE = /^Image-#(\d+)$/i
+
+/** Normalize a model-passed token to a canonical marker name: strips bracket /
+ *  backtick / bold decoration around [Image-#N]. Returns undefined when the
+ *  token is not a marker — real paths pass through untouched. */
+export function asImageMarker(token: string): string | undefined {
+  const clean = token.trim().replace(/^\[|\]$/g, '').replace(/[*`]/g, '')
+  const m = MARKER_RE.exec(clean)
+  return m ? `Image-#${m[1]}` : undefined
+}
+
+/** Resolve [Image-#N] markers in a path list to the recorded real paths.
+ *  Unknown markers pass through unchanged (the delegate then reports
+ *  not_found, which is informative for a genuinely missing file). */
+export function resolveMarkerPaths(
+  paths: readonly string[],
+  markers: MarkerRegistry,
+  agent: Agent,
+): string[] {
+  return paths.map((p) => {
+    const marker = asImageMarker(p)
+    return marker === undefined ? p : (markers.resolve(agent, marker) ?? p)
+  })
+}
