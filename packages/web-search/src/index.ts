@@ -44,7 +44,7 @@ export function apply(ctx: Context, config: Partial<WebSearchConfig> = {}): () =
     () => resolved,
     {
       resolveGoApiKey: async () => {
-        const ref = resolved.go.credential
+        const ref = resolved.llm.credential
         if (!ref) return undefined
         try {
           const resolvedCred = await ctx.credentials.resolve(credentialRef(ref))

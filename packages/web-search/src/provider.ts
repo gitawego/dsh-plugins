@@ -10,7 +10,7 @@ import type { WebSearchConfig } from './config.ts'
 import { dedupeAndCap, type RawSource } from './normalize.ts'
 import { parallelSearch } from './backends/parallel.ts'
 import { exaSearch } from './backends/exa.ts'
-import { goSearch, type GoBackendOptions } from './backends/go.ts'
+import { llmSearch, type LlmBackendOptions } from './backends/llm.ts'
 
 export const PROVIDER_ID = 'opencode-enhanced'
 
@@ -32,23 +32,23 @@ export function createSearchProvider(getConfig: () => WebSearchConfig, runtime: 
     fetchImpl: runtime.fetchImpl,
   })
 
-  const goOpts = (cfg: WebSearchConfig, apiKey: string): GoBackendOptions => ({
-    protocol: cfg.go.protocol,
-    baseUrl: cfg.go.baseUrl!,
-    model: cfg.go.model!,
+  const llmOpts = (cfg: WebSearchConfig, apiKey: string): LlmBackendOptions => ({
+    protocol: cfg.llm.protocol,
+    baseUrl: cfg.llm.baseUrl!,
+    model: cfg.llm.model!,
     apiKey,
-    timeoutMs: cfg.go.timeoutMs,
+    timeoutMs: cfg.llm.timeoutMs,
     fetchImpl: runtime.fetchImpl,
   })
 
   return {
     id: PROVIDER_ID,
-    // Cheap, no network: true if any backend is configured. Go is usable only
+    // Cheap, no network: true if any backend is configured. The LLM backend is usable only
     // when baseUrl is set (credential presence is resolved per-search); the
     // free backends are usable whenever a URL is configured.
     available() {
       const cfg = getConfig()
-      const goUsable = cfg.go.enabled === true && cfg.go.baseUrl !== undefined && cfg.go.baseUrl.length > 0
+      const goUsable = cfg.llm.enabled === true && cfg.llm.baseUrl !== undefined && cfg.llm.baseUrl.length > 0
       const freeUsable = cfg.free.parallelUrl.length > 0 || cfg.free.exaUrl.length > 0
       return goUsable || freeUsable
     },
@@ -59,12 +59,12 @@ export function createSearchProvider(getConfig: () => WebSearchConfig, runtime: 
 
       const candidates: Array<() => Promise<RawSource[]>> = []
 
-      if (cfg.go.enabled === true && cfg.go.baseUrl && cfg.go.baseUrl.length > 0) {
+      if (cfg.llm.enabled === true && cfg.llm.baseUrl && cfg.llm.baseUrl.length > 0) {
         candidates.push(async () => {
           const apiKey = await runtime.resolveGoApiKey()
-          if (!apiKey) throw new Error('opencode Go: no credential')
-          const raw = await goSearch(request.query, goOpts(cfg, apiKey), signal)
-          if (raw.length === 0) throw new Error('opencode Go: empty results')
+          if (!apiKey) throw new Error('LLM backend: no credential')
+          const raw = await llmSearch(request.query, llmOpts(cfg, apiKey), signal)
+          if (raw.length === 0) throw new Error('LLM backend: empty results')
           return raw
         })
       }

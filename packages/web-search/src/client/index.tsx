@@ -19,12 +19,12 @@ const en = {
   intro: 'Configures the enhanced web search provider (opencode-enhanced) — the currently active provider. Free backends (Parallel / Exa) need no API key; the optional opencode Go backend runs first when a base URL and credential are set.',
   whereTitle: 'What this page configures',
   whereActive: 'ACTIVE provider is opencode-enhanced (switched via profile config web.searchProvider)',
-  whereUrl: 'opencode Go endpoint + credential — OPTIONAL for this plugin; leave empty to use free backends',
+  whereUrl: 'Any compatible LLM web-search endpoint + credential (Anthropic or OpenAI protocol) — optional; leave empty to use the free backends',
   whereFree: 'Free Parallel / Exa endpoints — no key needed, always available',
   builtinTitle: 'About the built-in DeepSeek web search',
   builtinHint: 'DSH also ships its own DeepSeek web search (provider id deepseek-official), configured separately under DeepSeek settings / Models — not here. This page only tunes opencode-enhanced.',
   credentialHint: 'Name of a credential in the harness store (e.g. OPENCODE_GO_API_KEY). Not the built-in DEEPSEEK_API_KEY used by DSH built-in search.',
-  goTitle: 'LLM-backed web search (opencode Go / DeepSeek / any compatible)',
+  llmTitle: 'LLM-backed web search (opencode Go / DeepSeek / any compatible)',
   enableGo: 'Enable the LLM-backed web search (uses a credential; otherwise the free backends run)',
   protocol: 'Protocol',
   goHint: 'Used first when a base URL is set and the credential resolves. Leave base URL empty to skip it and use the free backends directly.',
@@ -59,12 +59,12 @@ const zh: Record<LocaleKey, string> = {
   intro: '配置增强搜索提供方（opencode-enhanced）——当前生效的提供方。免费后端（Parallel / Exa）无需 API key；可选的开源 Go 后端在配置 base URL 与凭据后优先使用。',
   whereTitle: '本页面配置了什么',
   whereActive: '生效提供方为 opencode-enhanced（通过 profile 配置 web.searchProvider 切换）',
-  whereUrl: '本插件的 Go 端点与凭据——可选；留空则走免费后端',
+  whereUrl: '任意兼容的 LLM 网页搜索端点与凭据（Anthropic / OpenAI 协议）——可选；留空则走免费后端',
   whereFree: '免费 Parallel / Exa 端点——无需 key，始终可用',
   builtinTitle: '关于内置的 DeepSeek 网页搜索',
   builtinHint: 'DSH 还内置独立的 DeepSeek 网页搜索（提供方 id deepseek-official），在 DeepSeek 设置 / Models 中单独配置，并非本页面。本页面仅调节 opencode-enhanced。',
   credentialHint: '凭据库中的凭据名称（如 OPENCODE_GO_API_KEY）。非内置搜索使用的 DEEPSEEK_API_KEY。',
-  goTitle: 'LLM 支撑的网页搜索（opencode Go / DeepSeek / 任意兼容）',
+  llmTitle: 'LLM 支撑的网页搜索（opencode Go / DeepSeek / 任意兼容）',
   enableGo: '启用此 LLM 支撑的网页搜索（需要凭据；否则使用免费后端）',
   protocol: '协议',
   goHint: '配置了 base URL 且凭据可解析时优先使用。留空 base URL 则跳过并直接使用免费后端。',
@@ -178,12 +178,12 @@ function numField(raw: Record<string, unknown> | undefined, key: string, fallbac
 }
 
 interface Draft {
-  goEnabled: boolean
-  goProtocol: string
-  goBaseUrl: string
-  goCredential: string
-  goModel: string
-  goTimeoutMs: string
+  llmEnabled: boolean
+  llmProtocol: string
+  llmBaseUrl: string
+  llmCredential: string
+  llmModel: string
+  llmTimeoutMs: string
   parallelUrl: string
   exaUrl: string
   freeTimeoutMs: string
@@ -192,15 +192,15 @@ interface Draft {
 }
 
 function draftOf(raw: Record<string, unknown> | undefined): Draft {
-  const go = isRecord(raw?.go) ? raw.go : undefined
+  const llm = isRecord(raw?.llm) ? raw.llm : undefined
   const free = isRecord(raw?.free) ? raw.free : undefined
   return {
-    goEnabled: go?.enabled === true,
-    goProtocol: typeof go?.protocol === 'string' ? go.protocol : 'anthropic',
-    goBaseUrl: strField(go, 'baseUrl'),
-    goCredential: strField(go, 'credential'),
-    goModel: strField(go, 'model'),
-    goTimeoutMs: numField(go, 'timeoutMs', 20000),
+    llmEnabled: llm?.enabled === true,
+    llmProtocol: typeof llm?.protocol === 'string' ? llm.protocol : 'anthropic',
+    llmBaseUrl: strField(llm, 'baseUrl'),
+    llmCredential: strField(llm, 'credential'),
+    llmModel: strField(llm, 'model'),
+    llmTimeoutMs: numField(llm, 'timeoutMs', 20000),
     parallelUrl: strField(free, 'parallelUrl'),
     exaUrl: strField(free, 'exaUrl'),
     freeTimeoutMs: numField(free, 'timeoutMs', 15000),
@@ -240,13 +240,13 @@ function LoadedSettings({ settings, t }: { settings: SettingsController; t: WebS
     setBusy(true); setMessage(undefined)
     try {
       await settings.save({
-        go: {
-          enabled: draft.goEnabled,
-          protocol: draft.goProtocol === 'openai' ? 'openai' : 'anthropic',
-          ...(draft.goBaseUrl.trim().length === 0 ? {} : { baseUrl: draft.goBaseUrl.trim() }),
-          ...(draft.goCredential.trim().length === 0 ? {} : { credential: draft.goCredential.trim() }),
-          ...(draft.goModel.trim().length === 0 ? {} : { model: draft.goModel.trim() }),
-          timeoutMs: Number(draft.goTimeoutMs) || 20000,
+        llm: {
+          enabled: draft.llmEnabled,
+          protocol: draft.llmProtocol === 'openai' ? 'openai' : 'anthropic',
+          ...(draft.llmBaseUrl.trim().length === 0 ? {} : { baseUrl: draft.llmBaseUrl.trim() }),
+          ...(draft.llmCredential.trim().length === 0 ? {} : { credential: draft.llmCredential.trim() }),
+          ...(draft.llmModel.trim().length === 0 ? {} : { model: draft.llmModel.trim() }),
+          timeoutMs: Number(draft.llmTimeoutMs) || 20000,
         },
         free: {
           parallelUrl: draft.parallelUrl.trim(),
@@ -288,16 +288,16 @@ function LoadedSettings({ settings, t }: { settings: SettingsController; t: WebS
         </div>
       </section>
 
-      <section className="wss-panel"><h3>{t('goTitle')}</h3>
-        <label className="wss-check"><input type="checkbox" checked={draft.goEnabled} onChange={(e) => update('goEnabled', e.target.checked)} />{t('enableGo')}</label>
-        {!draft.goEnabled ? null : <label className="wss-field"><span>{t('protocol')}</span><select value={draft.goProtocol} onChange={(e) => update('goProtocol', e.target.value)}><option value="anthropic">anthropic (/v1/messages)</option><option value="openai">openai (/chat/completions)</option></select></label>}
-        <div className={draft.goEnabled ? 'wss-grid' : 'wss-grid wss-inactive'} data-off={draft.goEnabled ? undefined : true}>
-          <label className="wss-field"><span>{t('baseUrl')}</span><input value={draft.goBaseUrl} onChange={(e) => update('goBaseUrl', e.target.value)} placeholder="https://opencode.ai/zen/go/v1" /></label>
-          <label className="wss-field"><span>{t('credential')}</span><input value={draft.goCredential} onChange={(e) => update('goCredential', e.target.value)} placeholder="OPENCODE_GO_API_KEY" />
+      <section className="wss-panel"><h3>{t('llmTitle')}</h3>
+        <label className="wss-check"><input type="checkbox" checked={draft.llmEnabled} onChange={(e) => update('llmEnabled', e.target.checked)} />{t('enableGo')}</label>
+        {!draft.llmEnabled ? null : <label className="wss-field"><span>{t('protocol')}</span><select value={draft.llmProtocol} onChange={(e) => update('llmProtocol', e.target.value)}><option value="anthropic">anthropic (/v1/messages)</option><option value="openai">openai (/chat/completions)</option></select></label>}
+        <div className={draft.llmEnabled ? 'wss-grid' : 'wss-grid wss-inactive'} data-off={draft.llmEnabled ? undefined : true}>
+          <label className="wss-field"><span>{t('baseUrl')}</span><input value={draft.llmBaseUrl} onChange={(e) => update('llmBaseUrl', e.target.value)} placeholder="https://opencode.ai/zen/go/v1" /></label>
+          <label className="wss-field"><span>{t('credential')}</span><input value={draft.llmCredential} onChange={(e) => update('llmCredential', e.target.value)} placeholder="OPENCODE_GO_API_KEY" />
             <small className="wss-hint">{t('credentialHint')}</small>
           </label>
-          <label className="wss-field"><span>{t('model')}</span><input value={draft.goModel} onChange={(e) => update('goModel', e.target.value)} placeholder="deepseek-v4-flash" /></label>
-          <label className="wss-field"><span>{t('timeoutMs')}</span><input inputMode="numeric" value={draft.goTimeoutMs} onChange={(e) => update('goTimeoutMs', e.target.value)} /></label>
+          <label className="wss-field"><span>{t('model')}</span><input value={draft.llmModel} onChange={(e) => update('llmModel', e.target.value)} placeholder="deepseek-v4-flash" /></label>
+          <label className="wss-field"><span>{t('timeoutMs')}</span><input inputMode="numeric" value={draft.llmTimeoutMs} onChange={(e) => update('llmTimeoutMs', e.target.value)} /></label>
         </div>
         <small className="wss-hint">{t('goHint')}</small>
       </section>

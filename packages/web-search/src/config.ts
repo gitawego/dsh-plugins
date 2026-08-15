@@ -1,7 +1,7 @@
 /**
  * Configuration for the enhanced web search provider. Persisted in the DSH
  * Settings document under the `web-search-enhanced` namespace via ctx.settings.
- * `go.credential` is a DSH credential-ref NAME (never a literal secret).
+ * `llm.credential` is a DSH credential-ref NAME (never a literal secret).
  */
 import z from '@deepseek-ai/schemastery'
 import { settingsNamespace } from '@deepseek-ai/dsh-settings'
@@ -11,7 +11,7 @@ export const WEB_SEARCH_SETTINGS_NAMESPACE = settingsNamespace('web-search-enhan
 export const LLM_PROTOCOLS = ['anthropic', 'openai'] as const
 export type LlmProtocol = (typeof LLM_PROTOCOLS)[number]
 
-export interface GoBackendConfig {
+export interface LlmBackendConfig {
   enabled: boolean
   protocol: LlmProtocol
   baseUrl: string | undefined
@@ -29,12 +29,12 @@ export interface FreeBackendConfig {
 }
 
 export interface WebSearchConfig {
-  go: GoBackendConfig
+  llm: LlmBackendConfig
   free: FreeBackendConfig
 }
 
 export const DEFAULT_CONFIG: WebSearchConfig = {
-  go: { enabled: false, protocol: 'anthropic', baseUrl: undefined, credential: undefined, model: 'deepseek-v4-flash', timeoutMs: 20_000 },
+  llm: { enabled: false, protocol: 'anthropic', baseUrl: undefined, credential: undefined, model: 'deepseek-v4-flash', timeoutMs: 20_000 },
   free: {
     parallelUrl: 'https://search.parallel.ai/mcp',
     exaUrl: 'https://mcp.exa.ai/mcp',
@@ -45,13 +45,13 @@ export const DEFAULT_CONFIG: WebSearchConfig = {
 }
 
 export const Config = z.object({
-  go: z.object({
+  llm: z.object({
     enabled: z.boolean().default(false),
     protocol: z.union([...LLM_PROTOCOLS] as const).default('anthropic'),
     baseUrl: z.string().default(''),
     credential: z.string().default(''),
-    model: z.string().default(DEFAULT_CONFIG.go.model!),
-    timeoutMs: z.number().default(DEFAULT_CONFIG.go.timeoutMs),
+    model: z.string().default(DEFAULT_CONFIG.llm.model!),
+    timeoutMs: z.number().default(DEFAULT_CONFIG.llm.timeoutMs),
   }),
   free: z.object({
     parallelUrl: z.string().default(DEFAULT_CONFIG.free.parallelUrl),
@@ -62,20 +62,20 @@ export const Config = z.object({
   }),
 })
 
-/** "" -> undefined for the optional go fields, so empty strings disable the backend. */
+/** "" -> undefined for the optional llm fields, so empty strings disable the backend. */
 function normOpt(v: string | undefined): string | undefined {
   return v === undefined || v.trim().length === 0 ? undefined : v
 }
 
 export function createResolvedConfig(input: Partial<WebSearchConfig> = {}): WebSearchConfig {
-  const go = { ...DEFAULT_CONFIG.go, ...(input.go ?? {}) }
+  const llm = { ...DEFAULT_CONFIG.llm, ...(input.llm ?? {}) }
   const free = { ...DEFAULT_CONFIG.free, ...(input.free ?? {}) }
   return {
-    go: {
-      ...go,
-      baseUrl: normOpt(go.baseUrl),
-      credential: normOpt(go.credential),
-      model: normOpt(go.model) ?? DEFAULT_CONFIG.go.model!,
+    llm: {
+      ...llm,
+      baseUrl: normOpt(llm.baseUrl),
+      credential: normOpt(llm.credential),
+      model: normOpt(llm.model) ?? DEFAULT_CONFIG.llm.model!,
     },
     free: {
       ...free,

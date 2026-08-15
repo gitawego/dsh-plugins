@@ -88,7 +88,7 @@ export function parseExaText(text: string): RawSource[] {
  * `web_search_tool_result` blocks; each `web_search_result` item becomes a
  * source (url + title). `encrypted_content` is opaque and ignored.
  */
-export function parseGoResponse(body: any): RawSource[] {
+export function parseLlmResponse(body: any): RawSource[] {
   const blocks = Array.isArray(body?.content) ? body.content : []
   const out: RawSource[] = []
   for (const block of blocks) {

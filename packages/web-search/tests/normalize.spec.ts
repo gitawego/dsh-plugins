@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { dedupeAndCap, parseParallelText, parseExaText, parseGoResponse, parseOpenAiResponse } from '../src/normalize.ts'
+import { dedupeAndCap, parseParallelText, parseExaText, parseLlmResponse, parseOpenAiResponse } from '../src/normalize.ts'
 
 describe('normalize', () => {
   it('maps Parallel inner text to sources with url/title/snippet/publishedAt', () => {
@@ -40,7 +40,7 @@ describe('normalize', () => {
         },
       ],
     }
-    const out = parseGoResponse(body)
+    const out = parseLlmResponse(body)
     expect(out).toEqual([
       { url: 'https://x.com', title: 'T1' },
       { url: 'https://y.com', title: 'T2' },
@@ -52,13 +52,13 @@ describe('normalize', () => {
       type: 'web_search_tool_result',
       content: [{ type: 'web_search_result', title: 'T', url: 'https://x.com', content: 'plaintext snippet here', page_age: '2026-01-01' }],
     }] }
-    expect(parseGoResponse(body)).toEqual([
+    expect(parseLlmResponse(body)).toEqual([
       { url: 'https://x.com', title: 'T', snippet: 'plaintext snippet here', publishedAt: '2026-01-01' },
     ])
   })
 
   it('returns [] when Go returns no web_search_tool_result block', () => {
-    expect(parseGoResponse({ type: 'message', content: [{ type: 'text', text: 'hi' }] })).toEqual([])
+    expect(parseLlmResponse({ type: 'message', content: [{ type: 'text', text: 'hi' }] })).toEqual([])
   })
 
   it('dedupes by URL and caps to maxResults, setting truncated only when capped', () => {

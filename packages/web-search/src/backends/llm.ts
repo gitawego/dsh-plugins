@@ -8,10 +8,10 @@
  * Requires a credential (api key). Provider-agnostic — baseUrl/model/protocol
  * are configured by the user.
  */
-import { parseGoResponse, parseOpenAiResponse, type RawSource } from '../normalize.ts'
+import { parseLlmResponse, parseOpenAiResponse, type RawSource } from '../normalize.ts'
 import type { LlmProtocol } from '../config.ts'
 
-export interface GoBackendOptions {
+export interface LlmBackendOptions {
   baseUrl: string
   model: string
   apiKey: string
@@ -39,7 +39,7 @@ function buildOpenAiBody(query: string, model: string): string {
   })
 }
 
-export async function goSearch(query: string, opts: GoBackendOptions, signal?: AbortSignal): Promise<RawSource[]> {
+export async function llmSearch(query: string, opts: LlmBackendOptions, signal?: AbortSignal): Promise<RawSource[]> {
   const runFetch = opts.fetchImpl ?? fetch
   const isAnthropic = opts.protocol === 'anthropic'
   const base = opts.baseUrl.endsWith('/') ? opts.baseUrl.slice(0, -1) : opts.baseUrl
@@ -73,7 +73,7 @@ export async function goSearch(query: string, opts: GoBackendOptions, signal?: A
       cleanup()
       cleanupTimer()
       const parsed = await res.json()
-      return isAnthropic ? parseGoResponse(parsed) : parseOpenAiResponse(parsed)
+      return isAnthropic ? parseLlmResponse(parsed) : parseOpenAiResponse(parsed)
     } catch (e) {
       cleanup()
       cleanupTimer()
@@ -84,7 +84,7 @@ export async function goSearch(query: string, opts: GoBackendOptions, signal?: A
       const res = await doFetch()
       cleanupTimer()
       const parsed = await res.json()
-      return isAnthropic ? parseGoResponse(parsed) : parseOpenAiResponse(parsed)
+      return isAnthropic ? parseLlmResponse(parsed) : parseOpenAiResponse(parsed)
     } catch (e) {
       cleanupTimer()
       throw e

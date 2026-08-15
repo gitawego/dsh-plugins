@@ -20,7 +20,7 @@ function textResponse(body: string): Response {
 }
 
 const cfg = () => createResolvedConfig({
-  go: { enabled: true, protocol: 'anthropic' as const, baseUrl: 'https://opencode.ai/zen/go/v1', credential: 'OPENCODE_GO_API_KEY', model: 'deepseek-v4-flash', timeoutMs: 2000 },
+  llm: { enabled: true, protocol: 'anthropic' as const, baseUrl: 'https://opencode.ai/zen/go/v1', credential: 'OPENCODE_GO_API_KEY', model: 'deepseek-v4-flash', timeoutMs: 2000 },
   free: { parallelUrl: 'https://search.parallel.ai/mcp', exaUrl: 'https://mcp.exa.ai/mcp', timeoutMs: 1500, snippetMaxChars: 300, maxResults: 5 },
 })
 
@@ -86,7 +86,7 @@ describe('provider (chained fallback)', () => {
   })
 
   it('available() is false when no free url and no go credential', async () => {
-    const p = createSearchProvider(() => createResolvedConfig({ go: { baseUrl: undefined, credential: undefined }, free: { parallelUrl: '', exaUrl: '', timeoutMs: 0, snippetMaxChars: 0, maxResults: 0 } } as Partial<WebSearchConfig>), {} as any)
+    const p = createSearchProvider(() => createResolvedConfig({ llm: { baseUrl: undefined, credential: undefined }, free: { parallelUrl: '', exaUrl: '', timeoutMs: 0, snippetMaxChars: 0, maxResults: 0 } } as Partial<WebSearchConfig>), {} as any)
     expect(p.available()).toBe(false)
   })
 })
