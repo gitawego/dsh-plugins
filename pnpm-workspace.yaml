@@ -1,12 +1,15 @@
 packages:
   - "packages/*"
+# Build-script approvals (pnpm 12). Packages listed here may run their
+# postinstall during `pnpm install`; everything else is ignored and pnpm will
+# NOT fail on ignored scripts once these are the approved set. As new packages
+# bring native deps (sharp, esbuild, rollup, platform binaries of either), add
+# them here rather than pinning in individual package.json files.
 allowBuilds:
-  esbuild: set this to true or false
-onlyBuiltDependencies:
-  - esbuild
-  - sharp
-  - "@img/sharp-wasm32"
-  - rollup
-  - "@esbuild/linux-arm64"
-  - "@esbuild/android-arm64"
-  - "@rollup/rollup-android-arm64"
+  esbuild: true
+  sharp: true
+  "@img/sharp-wasm32": true
+  "@esbuild/linux-arm64": true
+  "@esbuild/android-arm64": true
+  "@rollup/rollup-android-arm64": true
+  rollup: true
