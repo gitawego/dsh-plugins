@@ -47,7 +47,7 @@ export function createSearchProvider(getConfig: () => WebSearchConfig, runtime: 
     // free backends are usable whenever a URL is configured.
     available() {
       const cfg = getConfig()
-      const goUsable = cfg.go.baseUrl !== undefined && cfg.go.baseUrl.length > 0
+      const goUsable = cfg.go.enabled === true && cfg.go.baseUrl !== undefined && cfg.go.baseUrl.length > 0
       const freeUsable = cfg.free.parallelUrl.length > 0 || cfg.free.exaUrl.length > 0
       return goUsable || freeUsable
     },
@@ -58,7 +58,7 @@ export function createSearchProvider(getConfig: () => WebSearchConfig, runtime: 
 
       const candidates: Array<() => Promise<RawSource[]>> = []
 
-      if (cfg.go.baseUrl && cfg.go.baseUrl.length > 0) {
+      if (cfg.go.enabled === true && cfg.go.baseUrl && cfg.go.baseUrl.length > 0) {
         candidates.push(async () => {
           const apiKey = await runtime.resolveGoApiKey()
           if (!apiKey) throw new Error('opencode Go: no credential')

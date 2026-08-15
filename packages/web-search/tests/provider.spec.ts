@@ -20,7 +20,7 @@ function textResponse(body: string): Response {
 }
 
 const cfg = () => createResolvedConfig({
-  go: { baseUrl: 'https://opencode.ai/zen/go/v1', credential: 'OPENCODE_GO_API_KEY', model: 'deepseek-v4-flash', timeoutMs: 2000 },
+  go: { enabled: true, baseUrl: 'https://opencode.ai/zen/go/v1', credential: 'OPENCODE_GO_API_KEY', model: 'deepseek-v4-flash', timeoutMs: 2000 },
   free: { parallelUrl: 'https://search.parallel.ai/mcp', exaUrl: 'https://mcp.exa.ai/mcp', timeoutMs: 1500, snippetMaxChars: 300, maxResults: 5 },
 })
 

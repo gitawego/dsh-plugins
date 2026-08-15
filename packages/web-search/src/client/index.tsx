@@ -25,6 +25,7 @@ const en = {
   builtinHint: 'DSH also ships its own DeepSeek web search (provider id deepseek-official), configured separately under DeepSeek settings / Models — not here. This page only tunes opencode-enhanced.',
   credentialHint: 'Name of a credential in the harness store (e.g. OPENCODE_GO_API_KEY). Not the built-in DEEPSEEK_API_KEY used by DSH built-in search.',
   goTitle: 'opencode Go backend',
+  enableGo: 'Enable the opencode Go backend (needs a credential; otherwise the free backends run)',
   goHint: 'Used first when a base URL is set and the credential resolves. Leave base URL empty to skip it and use the free backends directly.',
   baseUrl: 'Base URL',
   credential: 'Credential reference',
@@ -63,6 +64,7 @@ const zh: Record<LocaleKey, string> = {
   builtinHint: 'DSH 还内置独立的 DeepSeek 网页搜索（提供方 id deepseek-official），在 DeepSeek 设置 / Models 中单独配置，并非本页面。本页面仅调节 opencode-enhanced。',
   credentialHint: '凭据库中的凭据名称（如 OPENCODE_GO_API_KEY）。非内置搜索使用的 DEEPSEEK_API_KEY。',
   goTitle: 'opencode Go 后端',
+  enableGo: '启用 opencode Go 后端（需要凭据；否则使用免费后端）',
   goHint: '配置了 base URL 且凭据可解析时优先使用。留空 base URL 则跳过并直接使用免费后端。',
   baseUrl: '服务地址',
   credential: 'Credential 引用',
@@ -174,6 +176,7 @@ function numField(raw: Record<string, unknown> | undefined, key: string, fallbac
 }
 
 interface Draft {
+  goEnabled: boolean
   goBaseUrl: string
   goCredential: string
   goModel: string
@@ -189,6 +192,7 @@ function draftOf(raw: Record<string, unknown> | undefined): Draft {
   const go = isRecord(raw?.go) ? raw.go : undefined
   const free = isRecord(raw?.free) ? raw.free : undefined
   return {
+    goEnabled: go?.enabled === true,
     goBaseUrl: strField(go, 'baseUrl'),
     goCredential: strField(go, 'credential'),
     goModel: strField(go, 'model'),
@@ -233,6 +237,7 @@ function LoadedSettings({ settings, t }: { settings: SettingsController; t: WebS
     try {
       await settings.save({
         go: {
+          enabled: draft.goEnabled,
           ...(draft.goBaseUrl.trim().length === 0 ? {} : { baseUrl: draft.goBaseUrl.trim() }),
           ...(draft.goCredential.trim().length === 0 ? {} : { credential: draft.goCredential.trim() }),
           ...(draft.goModel.trim().length === 0 ? {} : { model: draft.goModel.trim() }),
@@ -279,7 +284,8 @@ function LoadedSettings({ settings, t }: { settings: SettingsController; t: WebS
       </section>
 
       <section className="wss-panel"><h3>{t('goTitle')}</h3>
-        <div className="wss-grid">
+        <label className="wss-check"><input type="checkbox" checked={draft.goEnabled} onChange={(e) => update('goEnabled', e.target.checked)} />{t('enableGo')}</label>
+        <div className={draft.goEnabled ? 'wss-grid' : 'wss-grid wss-inactive'} data-off={draft.goEnabled ? undefined : true}>
           <label className="wss-field"><span>{t('baseUrl')}</span><input value={draft.goBaseUrl} onChange={(e) => update('goBaseUrl', e.target.value)} placeholder="https://opencode.ai/zen/go/v1" /></label>
           <label className="wss-field"><span>{t('credential')}</span><input value={draft.goCredential} onChange={(e) => update('goCredential', e.target.value)} placeholder="OPENCODE_GO_API_KEY" />
             <small className="wss-hint">{t('credentialHint')}</small>
@@ -345,6 +351,9 @@ const CSS = `
 .wss-outline{background:transparent;border:1px solid var(--dsw-alias-border-l2,rgba(255,255,255,.12));color:var(--dsw-alias-label-primary,#f5f5f7)}
 .wss-outline:hover:not(:disabled){background:var(--dsw-alias-interactive-bg-hover,rgba(255,255,255,.08))}
 .wss-loading{padding:26px;border-radius:12px;background:var(--dsw-alias-bg-layer-2,#14141a);font-size:13px;color:var(--dsw-alias-label-tertiary,#9a9aa3)}
+.wss-check{display:flex;align-items:center;gap:9px;font-size:13px;font-weight:550;color:var(--dsw-alias-label-primary,#f5f5f7);min-height:22px;cursor:pointer}
+.wss-check input{accent-color:var(--dsw-alias-brand-primary,#4d7ef7);width:15px;height:15px;flex:none;margin:0}
+.wss-inactive{opacity:.5;pointer-events:none;filter:saturate(.6)}
 @media(max-width:720px){.wss-grid{grid-template-columns:1fr}}
 `
 
