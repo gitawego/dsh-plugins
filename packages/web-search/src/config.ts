@@ -8,8 +8,12 @@ import { settingsNamespace } from '@deepseek-ai/dsh-settings'
 
 export const WEB_SEARCH_SETTINGS_NAMESPACE = settingsNamespace('web-search-enhanced')
 
+export const LLM_PROTOCOLS = ['anthropic', 'openai'] as const
+export type LlmProtocol = (typeof LLM_PROTOCOLS)[number]
+
 export interface GoBackendConfig {
   enabled: boolean
+  protocol: LlmProtocol
   baseUrl: string | undefined
   credential: string | undefined
   model: string | undefined
@@ -30,7 +34,7 @@ export interface WebSearchConfig {
 }
 
 export const DEFAULT_CONFIG: WebSearchConfig = {
-  go: { enabled: false, baseUrl: undefined, credential: undefined, model: 'deepseek-v4-flash', timeoutMs: 20_000 },
+  go: { enabled: false, protocol: 'anthropic', baseUrl: undefined, credential: undefined, model: 'deepseek-v4-flash', timeoutMs: 20_000 },
   free: {
     parallelUrl: 'https://search.parallel.ai/mcp',
     exaUrl: 'https://mcp.exa.ai/mcp',
@@ -43,6 +47,7 @@ export const DEFAULT_CONFIG: WebSearchConfig = {
 export const Config = z.object({
   go: z.object({
     enabled: z.boolean().default(false),
+    protocol: z.union([...LLM_PROTOCOLS] as const).default('anthropic'),
     baseUrl: z.string().default(''),
     credential: z.string().default(''),
     model: z.string().default(DEFAULT_CONFIG.go.model!),

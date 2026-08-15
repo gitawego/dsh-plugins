@@ -24,8 +24,9 @@ const en = {
   builtinTitle: 'About the built-in DeepSeek web search',
   builtinHint: 'DSH also ships its own DeepSeek web search (provider id deepseek-official), configured separately under DeepSeek settings / Models — not here. This page only tunes opencode-enhanced.',
   credentialHint: 'Name of a credential in the harness store (e.g. OPENCODE_GO_API_KEY). Not the built-in DEEPSEEK_API_KEY used by DSH built-in search.',
-  goTitle: 'opencode Go backend',
-  enableGo: 'Enable the opencode Go backend (needs a credential; otherwise the free backends run)',
+  goTitle: 'LLM-backed web search (opencode Go / DeepSeek / any compatible)',
+  enableGo: 'Enable the LLM-backed web search (uses a credential; otherwise the free backends run)',
+  protocol: 'Protocol',
   goHint: 'Used first when a base URL is set and the credential resolves. Leave base URL empty to skip it and use the free backends directly.',
   baseUrl: 'Base URL',
   credential: 'Credential reference',
@@ -63,8 +64,9 @@ const zh: Record<LocaleKey, string> = {
   builtinTitle: '关于内置的 DeepSeek 网页搜索',
   builtinHint: 'DSH 还内置独立的 DeepSeek 网页搜索（提供方 id deepseek-official），在 DeepSeek 设置 / Models 中单独配置，并非本页面。本页面仅调节 opencode-enhanced。',
   credentialHint: '凭据库中的凭据名称（如 OPENCODE_GO_API_KEY）。非内置搜索使用的 DEEPSEEK_API_KEY。',
-  goTitle: 'opencode Go 后端',
-  enableGo: '启用 opencode Go 后端（需要凭据；否则使用免费后端）',
+  goTitle: 'LLM 支撑的网页搜索（opencode Go / DeepSeek / 任意兼容）',
+  enableGo: '启用此 LLM 支撑的网页搜索（需要凭据；否则使用免费后端）',
+  protocol: '协议',
   goHint: '配置了 base URL 且凭据可解析时优先使用。留空 base URL 则跳过并直接使用免费后端。',
   baseUrl: '服务地址',
   credential: 'Credential 引用',
@@ -177,6 +179,7 @@ function numField(raw: Record<string, unknown> | undefined, key: string, fallbac
 
 interface Draft {
   goEnabled: boolean
+  goProtocol: string
   goBaseUrl: string
   goCredential: string
   goModel: string
@@ -193,6 +196,7 @@ function draftOf(raw: Record<string, unknown> | undefined): Draft {
   const free = isRecord(raw?.free) ? raw.free : undefined
   return {
     goEnabled: go?.enabled === true,
+    goProtocol: typeof go?.protocol === 'string' ? go.protocol : 'anthropic',
     goBaseUrl: strField(go, 'baseUrl'),
     goCredential: strField(go, 'credential'),
     goModel: strField(go, 'model'),
@@ -238,6 +242,7 @@ function LoadedSettings({ settings, t }: { settings: SettingsController; t: WebS
       await settings.save({
         go: {
           enabled: draft.goEnabled,
+          protocol: draft.goProtocol === 'openai' ? 'openai' : 'anthropic',
           ...(draft.goBaseUrl.trim().length === 0 ? {} : { baseUrl: draft.goBaseUrl.trim() }),
           ...(draft.goCredential.trim().length === 0 ? {} : { credential: draft.goCredential.trim() }),
           ...(draft.goModel.trim().length === 0 ? {} : { model: draft.goModel.trim() }),
@@ -285,6 +290,7 @@ function LoadedSettings({ settings, t }: { settings: SettingsController; t: WebS
 
       <section className="wss-panel"><h3>{t('goTitle')}</h3>
         <label className="wss-check"><input type="checkbox" checked={draft.goEnabled} onChange={(e) => update('goEnabled', e.target.checked)} />{t('enableGo')}</label>
+        {!draft.goEnabled ? null : <label className="wss-field"><span>{t('protocol')}</span><select value={draft.goProtocol} onChange={(e) => update('goProtocol', e.target.value)}><option value="anthropic">anthropic (/v1/messages)</option><option value="openai">openai (/chat/completions)</option></select></label>}
         <div className={draft.goEnabled ? 'wss-grid' : 'wss-grid wss-inactive'} data-off={draft.goEnabled ? undefined : true}>
           <label className="wss-field"><span>{t('baseUrl')}</span><input value={draft.goBaseUrl} onChange={(e) => update('goBaseUrl', e.target.value)} placeholder="https://opencode.ai/zen/go/v1" /></label>
           <label className="wss-field"><span>{t('credential')}</span><input value={draft.goCredential} onChange={(e) => update('goCredential', e.target.value)} placeholder="OPENCODE_GO_API_KEY" />

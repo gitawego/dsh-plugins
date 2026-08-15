@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { dedupeAndCap, parseParallelText, parseExaText, parseGoResponse } from '../src/normalize.ts'
+import { dedupeAndCap, parseParallelText, parseExaText, parseGoResponse, parseOpenAiResponse } from '../src/normalize.ts'
 
 describe('normalize', () => {
   it('maps Parallel inner text to sources with url/title/snippet/publishedAt', () => {
@@ -59,6 +59,19 @@ describe('normalize', () => {
     // when under cap, not truncated
     const under = dedupeAndCap(raw, 10, 300)
     expect(under.truncated).toBe(false)
+  })
+
+  it('parses OpenAI web_search.results into sources', () => {
+    const body = {
+      choices: [{ message: { web_search: { results: [
+        { url: 'https://a.com', title: 'A', snippet: 'sa' },
+        { url: 'https://b.com', title: 'B' },
+      ] } } }],
+    }
+    expect(parseOpenAiResponse(body)).toEqual([
+      { url: 'https://a.com', title: 'A', snippet: 'sa' },
+      { url: 'https://b.com', title: 'B' },
+    ])
   })
 
   it('caps snippet length', () => {

@@ -33,6 +33,7 @@ export function createSearchProvider(getConfig: () => WebSearchConfig, runtime: 
   })
 
   const goOpts = (cfg: WebSearchConfig, apiKey: string): GoBackendOptions => ({
+    protocol: cfg.go.protocol,
     baseUrl: cfg.go.baseUrl!,
     model: cfg.go.model!,
     apiKey,

@@ -130,3 +130,49 @@ export function dedupeAndCap(raw: RawSource[], maxResults: number, snippetMaxCha
     truncated,
   }
 }
+
+/**
+ * Parse an OpenAI-compatible /chat/completions response into sources. Native
+ * web-search providers vary: some return results in `message.tool_calls` /
+ * `message.web_search`, others as a `search_context`/cited JSON string in
+ * content. We extract any array of {url,title,snippet} items we can find.
+ */
+export function parseOpenAiResponse(body: any): RawSource[] {
+  const out: RawSource[] = []
+  const choice = Array.isArray(body?.choices) ? body.choices[0] : undefined
+  const message = choice?.message
+  // 1) message.web_search (OpenAI-style structured results)
+  const ws = message?.web_search
+  if (ws && Array.isArray(ws.results)) {
+    for (const item of ws.results) {
+      if (!item || typeof item.url !== 'string' || item.url.length === 0) continue
+      const source: RawSource = { url: item.url }
+      if (typeof item.title === 'string' && item.title.length > 0) source.title = item.title
+      if (typeof item.snippet === 'string' && item.snippet.length > 0) source.snippet = item.snippet
+      out.push(source)
+    }
+  }
+  // 2) cited JSON string in content (some compatible servers)
+  if (out.length === 0 && typeof message?.content === 'string' && message.content.includes('"url"')) {
+    try {
+      const first = message.content.match(/{[^}]*}"?url"?\s*:/s)
+      const parsed = JSON.parse(message.content.slice(message.content.indexOf('['), message.content.lastIndexOf(']') + 1))
+      if (Array.isArray(parsed)) {
+        for (const item of parsed) builder(out, item)
+      } else if (parsed && Array.isArray(parsed.results)) {
+        for (const item of parsed.results) builder(out, item)
+      }
+    } catch {
+      /* ignore unparseable */
+    }
+  }
+  return out
+}
+
+function builder(out: RawSource[], item: any): void {
+  if (!item || typeof item.url !== 'string' || item.url.length === 0) return
+  const source: RawSource = { url: item.url }
+  if (typeof item.title === 'string' && item.title.length > 0) source.title = item.title
+  if (typeof item.snippet === 'string' && item.snippet.length > 0) source.snippet = item.snippet
+  out.push(source)
+}
