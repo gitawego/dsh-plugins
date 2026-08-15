@@ -69,6 +69,12 @@ jobs:
         if: steps.check.outputs.skip != 'true'
         run: npm publish --provenance --access public
 
+
+      - name: Dump npm oidc debug log (temporary diagnostic)
+        if: always()
+        run: |
+          ls -t /home/runner/.npm/_logs/*.log 2>/dev/null | head -1 | xargs -r cat | grep -iE "oidc|exchange|token" | head -40
+
       # Keep GitHub Releases in sync with npm: create a release for the tag
       # (auto-generated notes). Idempotent — skips if the release already exists.
       - name: Create GitHub Release
