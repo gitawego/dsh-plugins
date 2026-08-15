@@ -1,5 +1,9 @@
-name: Release
+name: release.yml
 
+# NOTE: the workflow NAME must equal the filename ("release.yml") because
+# npm's trusted publishing matches workflow_filename against GitHub's OIDC
+# "workflow" claim, which is the workflow name (not the file path).
+#
 # Publishes @gitawego/dsh-vision to npm on tag push (v*) via OIDC TRUSTED
 # PUBLISHING (no NPM_TOKEN — npm deprecated bypass-2FA granular access tokens
 # for org/package management in early August 2026; see
@@ -59,23 +63,6 @@ jobs:
             echo "Publishing $pkg@$ver"
             echo "skip=false" >> "$GITHUB_OUTPUT"
           fi
-
-      - name: Debug OIDC claims (temporary)
-        if: always()
-        run: |
-          set -u
-          curl -sS -H "Authorization: bearer ${ACTIONS_ID_TOKEN_REQUEST_TOKEN}" "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=sigstore" > /tmp/oidc.jwt
-          python3 - <<'PY'
-          import json, base64, sys
-          with open('/tmp/oidc.jwt') as f:
-              token = f.read().strip()
-          payload = token.split('.')[1]
-          payload += '=' * (-len(payload) % 4)
-          claims = json.loads(base64.urlsafe_b64decode(payload))
-          for k in ('workflow', 'workflow_ref', 'repository', 'repository_owner', 'ref', 'ref_type', 'actor', 'run_number', 'environment'):
-              print(f'claim {k} = {claims.get(k)}')
-          PY
-
       # OIDC trusted publishing: no NODE_AUTH_TOKEN. npm exchanges the GitHub
       # OIDC token for a Sigstore certificate and the registry accepts the
       # publish because this repo+workflow is a registered trusted publisher.
