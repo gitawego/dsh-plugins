@@ -155,8 +155,12 @@ export type PasteDelegate = (params: DelegateParams, signal: AbortSignal) => Pro
 
 export interface PasteDeps {
   config: () => ResolvedVisionConfig
-  /** Whether the given agent's primary model processes images natively. */
+  /** Whether the given agent's primary model processes images natively
+   *  (EFFECTIVE: model capability AND native delivery — drives routing). */
   isMultimodal: (agent: Agent) => boolean
+  /** Whether the given agent's primary model is image-capable by itself
+   *  (RAW, independent of host delivery — drives hint wording). */
+  isImageCapable: (agent: Agent) => boolean
   saveAttachment: SaveAttachment
   /** Read stored bytes for an image block (text-only conversion). */
   readImage: ReadImage
@@ -399,15 +403,19 @@ async function transformBatch(
 ): Promise<UserMessage[] | undefined> {
   const config = deps.config()
   const multimodal = deps.isMultimodal(agent)
+  const imageCapable = deps.isImageCapable(agent)
   const workspace = agent.session.header.cwd ?? process.cwd()
   // Native delivery may be impossible (Termux attachment-store EACCES). The
   // gate already reports such multimodal primaries as effectively text-only
   // (describe_image visible; user's textOnlyPasteMode governs). This probe
   // additionally (a) drives the forced-auto safety net below in case the gate
   // ever reports multimodal=true on an undeliverable host, and (b) makes the
-  // hint name the real reason (host delivery, not model capability).
+  // hint name the real reason — and ONLY for models that are image-capable by
+  // themselves: a text-only model gets the capability wording regardless of
+  // host delivery.
   const nativeDelivery = await deps.canDeliverImage()
   const undeliverable = multimodal && !nativeDelivery
+  const deliveryUnavailable = imageCapable && !nativeDelivery
   const mode: PasteMode = !config.enabled
     ? 'off'
     : undeliverable
@@ -423,7 +431,7 @@ async function transformBatch(
       out.push(msg)
       continue
     }
-    const transformed = await transformMessage(deps, agent, config, msg, workspace, signal, multimodal && nativeDelivery, mode, note, !nativeDelivery)
+    const transformed = await transformMessage(deps, agent, config, msg, workspace, signal, multimodal && nativeDelivery, mode, note, deliveryUnavailable)
     if (transformed === undefined) out.push(msg)
     else {
       out.push(transformed)

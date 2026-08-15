@@ -95,13 +95,13 @@ export function apply(ctx: Context, config: Partial<VisionConfig> = {}) {
   const gate = new VisionGate(
     ctx,
     async (provider, model) => {
-      if (provider === undefined || model === undefined) return false
+      if (provider === undefined || model === undefined) return { multimodal: false, imageCapable: false }
       try {
         const info = await ctx.llm.resolveModelInfo(provider, model)
         const imageCapable = info.inputModalities?.includes('image') ?? false
-        return imageCapable && (await canDeliverImage())
+        return { imageCapable, multimodal: imageCapable && (await canDeliverImage()) }
       } catch {
-        return false // unknown → text-only (safe default)
+        return { multimodal: false, imageCapable: false } // unknown → text-only (safe default)
       }
     },
     () => resolved.enabled,
@@ -158,6 +158,11 @@ export function apply(ctx: Context, config: Partial<VisionConfig> = {}) {
   const pasteDisposer = ctx.on('agent/pre-step', createPasteHook({
     config: () => resolved,
     isMultimodal: (agent) => gate.current(agent)?.multimodal ?? false,
+    // RAW model capability (independent of host delivery): the hint wording
+    // only blames native delivery when the MODEL can process images but the
+    // host cannot deliver them; text-only models always get the capability
+    // reason.
+    isImageCapable: (agent) => gate.current(agent)?.imageCapable ?? false,
     saveAttachment: (input) => ctx.attachments.saveImage(input),
     // Text-only primaries: image BLOCKS are materialized under the DSH home
     // tmp dir (Termux: the OS tmpdir may be unwritable; home is always) and

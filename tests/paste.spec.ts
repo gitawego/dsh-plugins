@@ -64,6 +64,7 @@ function makeDeps(overrides: Partial<PasteDeps> = {}): PasteDeps & { saveCalls: 
     tmpDir: '/tmp/dsh-vision-paste-test',
     markers: new MarkerRegistry(),
     canDeliverImage: async () => true,
+    isImageCapable: () => false, // default: text-only model
     delegateFor: () => async (params) => {
       delegateCalls.push({ image_path: params.image_path, prompt: params.prompt })
       return okResult(params.image_path)
@@ -534,9 +535,10 @@ describe('paste hook — hint wording when native delivery is unavailable', () =
     await rm(dir, { recursive: true, force: true })
   })
 
-  it('text-only primary + undeliverable host: hint names native delivery, no auto delegate', async () => {
+  it('text-only primary on Termux: hint names model capability, not delivery', async () => {
     const deps = makeDeps({
-      isMultimodal: () => false, // effective text-only (Termux: model is multimodal but host cannot deliver)
+      isMultimodal: () => false,
+      isImageCapable: () => false, // truly text-only model
       canDeliverImage: async () => false,
       config: () => resolveConfig(mergeConfig({ textOnlyPasteMode: 'hint', markerStyle: 'plain', provider: 'p', model: 'm' })),
     })
@@ -547,8 +549,27 @@ describe('paste hook — hint wording when native delivery is unavailable', () =
     if (decision.kind === 'enter') {
       const text = allTextOf(decision.messages[0]!)
       expect(text).toContain('[Image-#1]')
+      expect(text).toContain("can't process images") // the MODEL is the reason
+      expect(text).not.toContain('native image delivery')
+      expect(text).toContain(aPath)
+    }
+  })
+
+  it('vision-capable model on Termux: hint names native delivery', async () => {
+    const deps = makeDeps({
+      isMultimodal: () => false, // effective text-only (gate: host cannot deliver)
+      isImageCapable: () => true, // the MODEL can process images natively
+      canDeliverImage: async () => false,
+      config: () => resolveConfig(mergeConfig({ textOnlyPasteMode: 'hint', markerStyle: 'plain', provider: 'p', model: 'm' })),
+    })
+    const agent = makeAgent(dir)
+    const msg = userMessage(`look at ${aPath}`)
+    const decision = await runHook(deps, agent, [msg])
+    expect(deps.delegateCalls).toHaveLength(0)
+    if (decision.kind === 'enter') {
+      const text = allTextOf(decision.messages[0]!)
+      expect(text).toContain('[Image-#1]')
       expect(text).toContain('native image delivery is unavailable')
-      expect(text).toContain(aPath) // path nameable for describe_image
       expect(text).not.toContain("can't process images")
     }
   })

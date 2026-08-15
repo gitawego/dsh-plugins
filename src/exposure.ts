@@ -23,7 +23,13 @@ import { TOOL_NAME, isImageCapable } from './capability.ts'
 export interface PrimaryModelInfo {
   provider: string | undefined
   model: string | undefined
+  /** Effective modality: the model can process images AND the host can
+   *  deliver them natively (Termux: always false). Drives routing. */
   multimodal: boolean
+  /** Raw model capability (independent of host delivery). Drives messaging:
+   *  a vision-capable model on an undeliverable host gets the delivery reason
+   *  in hints; a text-only model always gets the capability reason. */
+  imageCapable: boolean
 }
 
 interface AgentGate {
@@ -31,12 +37,20 @@ interface AgentGate {
   info: PrimaryModelInfo
 }
 
+/** Resolved modality facts for one agent's current primary model. */
+export interface ModalityInfo {
+  /** Effective: model image capability AND native delivery (routing). */
+  multimodal: boolean
+  /** Raw: the model's own image capability (messaging). */
+  imageCapable: boolean
+}
+
 /** Resolve the current primary model's modality for one agent. */
 export type ModalityResolver = (
   provider: string | undefined,
   model: string | undefined,
   agent: Agent,
-) => Promise<boolean>
+) => Promise<ModalityInfo>
 
 export class VisionGate {
   private readonly states = new Map<Agent, AgentGate>()
@@ -104,7 +118,7 @@ export class VisionGate {
     if (this.states.has(agent)) return
     const options = agent.options
     this.states.set(agent, {
-      info: { provider: options?.provider, model: options?.model, multimodal: false },
+      info: { provider: options?.provider, model: options?.model, multimodal: false, imageCapable: false },
     })
     await this.update(agent, options?.provider, options?.model)
   }
@@ -112,16 +126,17 @@ export class VisionGate {
   private async update(agent: Agent, provider: string | undefined, model: string | undefined): Promise<void> {
     const state = this.states.get(agent)
     if (state === undefined) return
-    let multimodal = false
+    let info: ModalityInfo = { multimodal: false, imageCapable: false }
     if (provider !== undefined && model !== undefined) {
       try {
-        multimodal = await this.resolveModalities(provider, model, agent)
+        info = await this.resolveModalities(provider, model, agent)
       } catch {
-        multimodal = false // unknown → text-only (safe default)
+        info = { multimodal: false, imageCapable: false } // unknown → text-only (safe default)
       }
     }
-    const next: PrimaryModelInfo = { provider, model, multimodal }
-    if (state.info.provider === next.provider && state.info.model === next.model && state.info.multimodal === next.multimodal) {
+    const next: PrimaryModelInfo = { provider, model, ...info }
+    if (state.info.provider === next.provider && state.info.model === next.model
+      && state.info.multimodal === next.multimodal && state.info.imageCapable === next.imageCapable) {
       return // idempotent: no change → no mask churn
     }
     state.info = next
