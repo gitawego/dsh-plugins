@@ -116,6 +116,17 @@ describe('findImagePathTokens', () => {
     expect(findImagePathTokens('my screenshot name.png')).toEqual([])
     expect(findImagePathTokens('one /a.png two /a.png')).toEqual(['/a.png'])
   })
+
+  it('matches Termux-style paths with spaces and parentheses', () => {
+    const spaced = '/storage/emulated/0/Download/TokensMonitor/preview-atlas-minimax-cn-graph-346x187 (1).png'
+    expect(findImagePathTokens(`read ${spaced} now`)).toEqual([spaced])
+    expect(findImagePathTokens('open /my folder/img (2).jpeg')).toEqual(['/my folder/img (2).jpeg'])
+  })
+
+  it('does not swallow prose between two paths (non-greedy to first extension)', () => {
+    expect(findImagePathTokens('compare /tmp/a.png and /tmp/b.png')).toEqual(['/tmp/a.png', '/tmp/b.png'])
+    expect(findImagePathTokens('see "/tmp/a.png" here')).toEqual(['/tmp/a.png'])
+  })
 })
 
 describe('renderMarkersResolved', () => {
@@ -552,5 +563,37 @@ describe('paste hook — hint wording when native delivery is unavailable', () =
     const decision = await runHook(deps, makeAgent(dir), [msg])
     expect(deps.delegateCalls).toHaveLength(1)
     if (decision.kind === 'enter') expect(allTextOf(decision.messages[0]!)).toContain('a cat on a mat')
+  })
+})
+
+describe('paste hook — surfaces present the resolved absolute path (abs)', () => {
+  let dir: string
+
+  beforeEach(async () => {
+    dir = await mkdtemp(join(tmpdir(), 'dsh-vision-abspath-'))
+  })
+
+  afterEach(async () => {
+    await rm(dir, { recursive: true, force: true })
+  })
+
+  it('hint + registry use the resolved absolute path even for a relative token', async () => {
+    const aPath = join(dir, 'a.png')
+    await writeFile(aPath, PNG_1x1)
+    const deps = makeDeps({
+      isMultimodal: () => false,
+      config: () => resolveConfig(mergeConfig({ textOnlyPasteMode: 'hint', markerStyle: 'plain', provider: 'p', model: 'm' })),
+    })
+    const agent = makeAgent(dir)
+    // Relative token: PATH_TOKEN_RE matches "./a.png" relative to the workspace.
+    const msg = userMessage(`look at ./a.png`)
+    const decision = await runHook(deps, agent, [msg])
+    if (decision.kind === 'enter') {
+      const text = allTextOf(decision.messages[0]!)
+      expect(text).toContain(aPath) // absolute resolved path, not the raw "./a.png"
+      expect(text).not.toContain('./a.png')
+    }
+    // Registry resolves Image-#1 to the absolute path (delegation input).
+    expect(deps.markers.resolve(agent as never, 'Image-#1')).toBe(aPath)
   })
 })

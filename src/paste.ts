@@ -35,14 +35,14 @@ import { loadImage, type SupportedMime } from './image.ts'
 import { buildDescriptionsBlock, buildPasteHintLine, renderMarker, renderMarkersResolved, type MarkerRegistry } from './marker.ts'
 import { resolveInputPath } from './paths.ts'
 
-// Path-like tokens ending in a known image extension (pi-vision F8 port):
-//   POSIX: absolute /…, home ~/…, relative ./…/…/
-//   Windows: drive paths C:\…, C:/…, D:\…, D:/…
-// Allows \ (escaped space) — what terminal drag-and-drop produces for paths
-// with spaces. Bare filenames without a path separator are deliberately not
-// matched (no false positives on ordinary words). URLs can match but are
-// filtered later by the existsSync check.
-const PATH_TOKEN_RE = /(?:[A-Za-z]:[\\/]|\/|~\/|\.{1,2}\/)(?:\\ |[^\s)"'<>])+\.(?:png|jpe?g|gif|webp|bmp)/gi
+// Path-like tokens ending in a known image extension. Non-greedy to the
+// FIRST image extension, so tokens may contain spaces/parentheses (Termux
+// Downloads produce "name (1).png") without swallowing following prose
+// ("/tmp/a.png and /tmp/b.png" stays two tokens). POSIX absolute /…, home
+// ~/…, relative ./…/…/, Windows drive paths C:\…, C:/…. Bare filenames
+// without a path separator are deliberately not matched; URLs can match but
+// are filtered later by the existsSync check.
+const PATH_TOKEN_RE = /(?:[A-Za-z]:[\\/]|\/|~\/|\.{1,2}\/)[^\n]*?\.(?:png|jpe?g|gif|webp|bmp)/gi
 
 /** Extract candidate image file-path tokens from free text (deduped, order
  *  preserved). Port of pi-vision's findImagePathTokens. */
@@ -294,10 +294,12 @@ async function transformMessage(
   if (loaded.length === 0 && blockMaterializations.length === 0) return undefined
   const resolved = buildResolvedMap(tokens, loaded, existingImageCount, multimodal)
   // Bridge to describe_image: remember marker → real path per agent so the
-  // model can pass the [Image-#N] it sees instead of the path.
+  // model can pass the [Image-#N] it sees instead of the path. Records the
+  // TRANSLATED app-readable path (img.abs — Termux: <home>/storage/...), not
+  // the raw /storage/emulated/0 spelling the model cannot open.
   for (const img of loaded) {
     const idx = resolved.get(img.token)?.index
-    if (idx !== undefined) deps.markers.record(agent, `Image-#${idx + 1}`, img.token)
+    if (idx !== undefined) deps.markers.record(agent, `Image-#${idx + 1}`, img.abs)
   }
   const rewritten = renderMarkersResolved(text, pathTokens, resolved, config.markerStyle)
   const nonText = msg.content.filter((b) => b.type !== 'text')
@@ -313,7 +315,9 @@ async function transformMessage(
   }
 
   // ── TEXT-ONLY: markers + branch on paste mode ──
-  const hintImages = loaded.map((l) => ({ token: l.token, index: resolved.get(l.token)?.index ?? 0 }))
+  // Present the TRANSLATED app-readable path (img.abs), never the raw
+  // /storage/emulated/0 spelling: on Termux the model cannot open the latter.
+  const hintImages = loaded.map((l) => ({ token: l.abs, index: resolved.get(l.token)?.index ?? 0 }))
   const hint = buildPasteHintLine(hintImages, config.markerStyle, { deliveryUnavailable })
 
   // Rebuild content: collapsed rewritten text first, then every non-text
@@ -368,7 +372,7 @@ async function transformMessage(
   for (let i = 0; i < loaded.length; i++) {
     const r = results[i]
     if (r !== undefined) {
-      descriptions.push({ token: loaded[i]!.token, index: resolved.get(loaded[i]!.token)?.index ?? i, text: r.text, cached: r.cached })
+      descriptions.push({ token: loaded[i]!.abs, index: resolved.get(loaded[i]!.token)?.index ?? i, text: r.text, cached: r.cached })
       ok++
     }
   }
