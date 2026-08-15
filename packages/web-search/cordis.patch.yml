@@ -1,0 +1,5 @@
+# @gitawego/dsh-web-search bundle patch: applied as one profile layer when this
+# package joins a profile's `dsh.profile.bundles` (installed via `dsh plugin`).
+- insert:
+    - id: web-search
+      name: '@gitawego/dsh-web-search'
