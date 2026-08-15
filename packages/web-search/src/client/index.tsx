@@ -16,7 +16,14 @@ type WebSearchTranslate = TranslateNS<'web-search'>
 const en = {
   nav: 'Web Search',
   title: 'Web Search',
-  intro: 'Configure the enhanced web search provider (opencode-enhanced). The free backends (Parallel / Exa) need no API key; the opencode Go backend is used first when a base URL and credential are configured.',
+  intro: 'Configures the enhanced web search provider (opencode-enhanced) — the currently active provider. Free backends (Parallel / Exa) need no API key; the optional opencode Go backend runs first when a base URL and credential are set.',
+  whereTitle: 'What this page configures',
+  whereActive: 'ACTIVE provider is opencode-enhanced (switched via profile config web.searchProvider)',
+  whereUrl: 'opencode Go endpoint + credential — OPTIONAL for this plugin; leave empty to use free backends',
+  whereFree: 'Free Parallel / Exa endpoints — no key needed, always available',
+  builtinTitle: 'About the built-in DeepSeek web search',
+  builtinHint: 'DSH also ships its own DeepSeek web search (provider id deepseek-official), configured separately under DeepSeek settings / Models — not here. This page only tunes opencode-enhanced.',
+  credentialHint: 'Name of a credential in the harness store (e.g. OPENCODE_GO_API_KEY). Not the built-in DEEPSEEK_API_KEY used by DSH built-in search.',
   goTitle: 'opencode Go backend',
   goHint: 'Used first when a base URL is set and the credential resolves. Leave base URL empty to skip it and use the free backends directly.',
   baseUrl: 'Base URL',
@@ -47,7 +54,14 @@ type LocaleKey = keyof typeof en
 const zh: Record<LocaleKey, string> = {
   nav: '网页搜索',
   title: '网页搜索',
-  intro: '配置增强搜索提供方（opencode-enhanced）。免费后端（Parallel / Exa）无需 API key；配置了 base URL 与凭据后，优先使用 opencode Go 后端。',
+  intro: '配置增强搜索提供方（opencode-enhanced）——当前生效的提供方。免费后端（Parallel / Exa）无需 API key；可选的开源 Go 后端在配置 base URL 与凭据后优先使用。',
+  whereTitle: '本页面配置了什么',
+  whereActive: '生效提供方为 opencode-enhanced（通过 profile 配置 web.searchProvider 切换）',
+  whereUrl: '本插件的 Go 端点与凭据——可选；留空则走免费后端',
+  whereFree: '免费 Parallel / Exa 端点——无需 key，始终可用',
+  builtinTitle: '关于内置的 DeepSeek 网页搜索',
+  builtinHint: 'DSH 还内置独立的 DeepSeek 网页搜索（提供方 id deepseek-official），在 DeepSeek 设置 / Models 中单独配置，并非本页面。本页面仅调节 opencode-enhanced。',
+  credentialHint: '凭据库中的凭据名称（如 OPENCODE_GO_API_KEY）。非内置搜索使用的 DEEPSEEK_API_KEY。',
   goTitle: 'opencode Go 后端',
   goHint: '配置了 base URL 且凭据可解析时优先使用。留空 base URL 则跳过并直接使用免费后端。',
   baseUrl: '服务地址',
@@ -248,6 +262,15 @@ function LoadedSettings({ settings, t }: { settings: SettingsController; t: WebS
       {state.error === undefined ? null : <div className="wss-alert error">{state.error}</div>}
       {message === undefined ? null : <div className="wss-alert success">{message}</div>}
 
+
+      <section className="wss-panel"><h3>{t('whereTitle')}</h3>
+        <div className="wss-rows">
+          <p className="wss-row"><span className="wss-dot active" />{t('whereActive')}</p>
+          <p className="wss-row"><span className="wss-dot go" />{t('whereUrl')}</p>
+          <p className="wss-row"><span className="wss-dot free" />{t('whereFree')}</p>
+        </div>
+        <div className="wss-builtin"><strong>{t('builtinTitle')}</strong><span>{t('builtinHint')}</span></div>
+      </section>
       <section className="wss-panel"><h3>{t('behavior')}</h3>
         <div className="wss-field wss-span2"><span>{t('activeProvider')}</span>
           <code className="wss-badge">opencode-enhanced</code>
@@ -258,7 +281,9 @@ function LoadedSettings({ settings, t }: { settings: SettingsController; t: WebS
       <section className="wss-panel"><h3>{t('goTitle')}</h3>
         <div className="wss-grid">
           <label className="wss-field"><span>{t('baseUrl')}</span><input value={draft.goBaseUrl} onChange={(e) => update('goBaseUrl', e.target.value)} placeholder="https://opencode.ai/zen/go/v1" /></label>
-          <label className="wss-field"><span>{t('credential')}</span><input value={draft.goCredential} onChange={(e) => update('goCredential', e.target.value)} placeholder="OPENCODE_GO_API_KEY" /></label>
+          <label className="wss-field"><span>{t('credential')}</span><input value={draft.goCredential} onChange={(e) => update('goCredential', e.target.value)} placeholder="OPENCODE_GO_API_KEY" />
+            <small className="wss-hint">{t('credentialHint')}</small>
+          </label>
           <label className="wss-field"><span>{t('model')}</span><input value={draft.goModel} onChange={(e) => update('goModel', e.target.value)} placeholder="deepseek-v4-flash" /></label>
           <label className="wss-field"><span>{t('timeoutMs')}</span><input inputMode="numeric" value={draft.goTimeoutMs} onChange={(e) => update('goTimeoutMs', e.target.value)} /></label>
         </div>
@@ -301,7 +326,16 @@ const CSS = `
 .wss-field .wss-hint,.wss-hint{font-size:11.5px;line-height:1.5;color:var(--dsw-alias-label-tertiary,#9a9aa3)}
 .wss-field input{box-sizing:border-box;width:100%;min-width:0;height:36px;padding:0 10px;border:1px solid var(--dsw-alias-border-l2,rgba(255,255,255,.12));border-radius:8px;background:var(--dsw-alias-bg-layer-2,#14141a);color:var(--dsw-alias-label-primary,#f5f5f7);font:inherit;font-size:13px;outline:none;transition:border-color .12s var(--ds-ease-in-out,cubic-bezier(.4,0,.2,1))}
 .wss-field input:focus{border-color:var(--dsw-alias-brand-primary,#4d7ef7);box-shadow:0 0 0 2px color-mix(in srgb,var(--dsw-alias-brand-primary,#4d7ef7) 25%,transparent)}
-.wss-field input::placeholder{color:var(--dsw-alias-label-dimmed,#6f6f78)}
+.wss-field input{color:#e8e8ee}.wss-field input::placeholder{color:var(--dsw-alias-label-tertiary,#9a9aa3)}
+.wss-rows{display:grid;gap:7px;margin:2px 0 6px}
+.wss-row{display:flex;align-items:baseline;gap:9px;margin:0;font-size:13px;line-height:1.5;color:var(--dsw-alias-label-secondary,#c8c8cf)}
+.wss-dot{flex:none;width:9px;height:9px;border-radius:50%;align-self:center}
+.wss-dot.active{background:var(--dsw-alias-state-success-primary,#309a64)}
+.wss-dot.go{background:var(--dsw-alias-state-warn-primary,#e0a237)}
+.wss-dot.free{background:var(--dsw-alias-state-business-primary,#4d7ef7)}
+.wss-builtin{margin-top:12px;padding:11px 13px;border-radius:10px;background:color-mix(in srgb,var(--dsw-alias-state-warn-primary,#e0a237) 10%,transparent);border:1px solid var(--dsw-alias-border-l1,rgba(255,255,255,.06));display:grid;gap:4px}
+.wss-builtin strong{font-size:12.5px;color:var(--dsw-alias-state-warn-primary,#e0a237)}
+.wss-builtin span{font-size:12px;line-height:1.55;color:var(--dsw-alias-label-secondary,#c8c8cf)}
 .wss-badge{display:inline-block;width:fit-content;font-size:12px;padding:2px 8px;border-radius:999px;background:color-mix(in srgb,var(--dsw-alias-state-business-primary,#4d7ef7) 14%,transparent);color:var(--dsw-alias-state-business-primary,#6d94f7)}
 .wss-save-row{display:flex;gap:10px;align-items:center}
 .wss-primary,.wss-outline{height:34px;padding:0 18px;border-radius:9px;font-size:13px;font-weight:600;cursor:pointer;transition:background-color .12s var(--ds-ease-in-out,cubic-bezier(.4,0,.2,1))}
