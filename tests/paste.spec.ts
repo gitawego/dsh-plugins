@@ -63,6 +63,7 @@ function makeDeps(overrides: Partial<PasteDeps> = {}): PasteDeps & { saveCalls: 
     readImage: async (ref) => ({ ref, data: new Uint8Array(PNG_1x1) }),
     tmpDir: '/tmp/dsh-vision-paste-test',
     markers: new MarkerRegistry(),
+    canDeliverImage: async () => true,
     delegateFor: () => async (params) => {
       delegateCalls.push({ image_path: params.image_path, prompt: params.prompt })
       return okResult(params.image_path)
@@ -428,6 +429,72 @@ describe('paste hook — image BLOCK conversion for text-only primaries', () => 
       expect(text).toContain('[Image-#1]') // path token first
       expect(text).toContain('[Image-#2]') // block second
       expect(text).toContain('a cat on a mat')
+    }
+  })
+})
+
+describe('paste hook — multimodal primary WITHOUT native delivery (Termux)', () => {
+  let dir: string
+  let aPath: string
+
+  beforeEach(async () => {
+    dir = await mkdtemp(join(tmpdir(), 'dsh-vision-nodeliver-'))
+    aPath = join(dir, 'a.png')
+    await writeFile(aPath, PNG_1x1)
+  })
+
+  afterEach(async () => {
+    await rm(dir, { recursive: true, force: true })
+  })
+
+  function nodeliverDeps(overrides: Partial<PasteDeps> = {}) {
+    return makeDeps({
+      isMultimodal: () => true,
+      canDeliverImage: async () => false, // attachment store cannot write (EACCES)
+      config: () => resolveConfig(mergeConfig({ textOnlyPasteMode: 'hint', markerStyle: 'plain', provider: 'p', model: 'm' })),
+      ...overrides,
+    })
+  }
+
+  it('never drops the image: forces auto-delegation instead of a marker-only message', async () => {
+    const deps = nodeliverDeps()
+    const agent = makeAgent(dir)
+    const msg = userMessage(`look at ${aPath}`)
+    const decision = await runHook(deps, agent, [msg])
+    expect(deps.saveCalls).toEqual([]) // native attachment impossible
+    expect(deps.delegateCalls).toHaveLength(1) // auto-delegated anyway
+    expect(deps.delegateCalls[0]!.image_path).toBe(aPath)
+    if (decision.kind === 'enter') {
+      const out = decision.messages[0]!
+      expect(out.content.filter((b) => b.type === 'image')).toHaveLength(0)
+      const text = allTextOf(out)
+      expect(text).toContain('[Image-#1]')
+      expect(text).toContain('a cat on a mat') // the description reached the multimodal primary
+      expect(text).toContain('native image delivery is unavailable')
+    }
+  })
+
+  it('forces auto even when paste mode is off (image must not vanish)', async () => {
+    const deps = nodeliverDeps({
+      config: () => resolveConfig(mergeConfig({ textOnlyPasteMode: 'off', markerStyle: 'plain', provider: 'p', model: 'm' })),
+    })
+    const msg = userMessage(`look at ${aPath}`)
+    const decision = await runHook(deps, makeAgent(dir), [msg])
+    expect(deps.delegateCalls).toHaveLength(1)
+    if (decision.kind === 'enter') expect(allTextOf(decision.messages[0]!)).toContain('a cat on a mat')
+  })
+
+  it('respects a disabled vision feature (off — no delegation)', async () => {
+    const deps = nodeliverDeps({
+      config: () => resolveConfig(mergeConfig({ textOnlyPasteMode: 'hint', markerStyle: 'plain', provider: 'p', model: 'm', enabled: false })),
+    })
+    const msg = userMessage(`look at ${aPath}`)
+    const decision = await runHook(deps, makeAgent(dir), [msg])
+    expect(deps.delegateCalls).toHaveLength(0)
+    if (decision.kind === 'enter') {
+      const text = allTextOf(decision.messages[0]!)
+      expect(text).toContain('[Image-#1]')
+      expect(text).not.toContain('a cat on a mat')
     }
   })
 })
