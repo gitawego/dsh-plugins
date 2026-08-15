@@ -1,0 +1,40 @@
+# Monorepo CI: typecheck + test + build for every package in packages/*.
+# Uses pnpm (the workspace package manager) with a cache on the lockfile.
+name: CI
+
+on:
+  push:
+    branches: [main, "feat/**"]
+  pull_request:
+    branches: [main]
+
+env:
+  COREPACK_ENABLE_DOWNLOAD_PROMPT: "0"
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Enable pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 12
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Typecheck
+        run: pnpm -r --parallel typecheck
+
+      - name: Test
+        run: pnpm -r --parallel test
+
+      - name: Build
+        run: pnpm -r build

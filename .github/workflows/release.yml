@@ -1,0 +1,77 @@
+# Monorepo release: publishes every package in packages/* to npm on a v* tag
+# via OIDC TRUSTED PUBLISHING (no NPM_TOKEN). Each package is skipped if that
+# version is already on npm (idempotent). Creates a GitHub Release on success.
+#
+# Trusted-publisher setup on npmjs.com - for EACH package, register this repo+
+# workflow so the OIDC certificate chain is accepted (one-time, after the first
+# version of each package exists):
+#   { "provider": "github", "owner": "gitawego", "repo": "dsh-plugins",
+#     "workflow_filename": "release.yml" }
+name: release.yml
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  id-token: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Enable pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 12
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Typecheck
+        run: pnpm -r --parallel typecheck
+
+      - name: Test
+        run: pnpm -r --parallel test
+
+      - name: Build
+        run: pnpm -r build
+
+      - name: Publish packages (OIDC, skip if already on npm)
+        run: |
+          set -euo pipefail
+          for d in packages/*/; do
+            [ -f "$d/package.json" ] || continue
+            pkg="$(node -p "require('./$d/package.json').name")"
+            ver="$(node -p "require('./$d/package.json').version")"
+            existing="$(npm view "$pkg@$ver" version 2>/dev/null || true)"
+            if [ "$existing" = "$ver" ]; then
+              echo "::notice::$pkg@$ver already on npm - skipping"
+              continue
+            fi
+            echo "Publishing $pkg@$ver"
+            (cd "$d" && npm publish --provenance --access public)
+            published_any=true
+          done
+          echo "published_any=$published_any" >> "$GITHUB_ENV"
+
+      - name: Create GitHub Release
+        if: startsWith(github.ref, 'refs/tags/')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tag="${GITHUB_REF_NAME}"
+          if gh release view "$tag" >/dev/null 2>&1; then
+            echo "::notice::Release $tag already exists"
+          else
+            gh release create "$tag" --generate-notes
+          fi
