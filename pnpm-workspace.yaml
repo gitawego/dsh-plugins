@@ -2,3 +2,11 @@ packages:
   - "packages/*"
 allowBuilds:
   esbuild: set this to true or false
+onlyBuiltDependencies:
+  - esbuild
+  - sharp
+  - "@img/sharp-wasm32"
+  - rollup
+  - "@esbuild/linux-arm64"
+  - "@esbuild/android-arm64"
+  - "@rollup/rollup-android-arm64"
