@@ -21,6 +21,7 @@ import { Config, VISION_SETTINGS_NAMESPACE, mergeConfig, resolveConfig, type Res
 import { delegateToVisionModel, type DelegateDeps } from './delegate.ts'
 import { detectVisionModel } from './defaults.ts'
 import { VisionGate } from './exposure.ts'
+import { MarkerRegistry } from './marker.ts'
 import { createPasteHook } from './paste.ts'
 import { createVisionSubagent } from './subagent.ts'
 import type { SettingsLike } from './commands.ts'
@@ -59,6 +60,10 @@ export function apply(ctx: Context, config: Partial<VisionConfig> = {}) {
       maxEntries: resolved.cacheMaxEntries,
     })
   }
+
+  // Marker → real-path bridge (paste hook records; describe_image resolves).
+  const markers = new MarkerRegistry()
+  const markersDisposer = ctx.on('agent/disposed', ({ agent }) => { markers.detach(agent) })
 
   const gate = new VisionGate(
     ctx,
@@ -117,6 +122,7 @@ export function apply(ctx: Context, config: Partial<VisionConfig> = {}) {
     resolveCredential: (ref) => ctx.credentials.resolve(ref),
     createSubagent: (opts) => createVisionSubagent(ctx.agents, opts),
     canDeliverImage,
+    markers,
   })
   const toolDisposer = ctx.tools.register(tool)
 
@@ -151,6 +157,7 @@ export function apply(ctx: Context, config: Partial<VisionConfig> = {}) {
     // converted through the shared pipeline.
     readImage: (ref, signal) => ctx.attachments.readImage(ref, signal),
     tmpDir: join(home, 'tmp', 'dsh-vision'),
+    markers,
     delegateFor: (workspace) => (params, signal) => delegateToVisionModel(delegateDepsFor(workspace, signal), params),
     logger: ctx.logger,
   }))
@@ -194,6 +201,7 @@ export function apply(ctx: Context, config: Partial<VisionConfig> = {}) {
   // the loader; these explicit disposers cover every runtime seam we own.
   return () => {
     gateDisposer() // release per-agent tool masks + gate listeners
+    markersDisposer() // marker registry cleanup on agent disposal
     autoDetect()
     settingsWatch()
     pasteDisposer() // agent/pre-step hook

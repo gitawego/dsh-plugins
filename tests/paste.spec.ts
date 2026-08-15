@@ -11,7 +11,7 @@ import type { UserMessage } from '@deepseek-ai/dsh-llm'
 import { createUserMessage } from '@deepseek-ai/dsh-llm'
 import { mergeConfig, resolveConfig } from '../src/config.ts'
 import type { DelegateResult } from '../src/delegate.ts'
-import { buildDescriptionsBlock, buildPasteHintLine, renderMarkersResolved } from '../src/marker.ts'
+import { MarkerRegistry, buildDescriptionsBlock, buildPasteHintLine, renderMarkersResolved } from '../src/marker.ts'
 import { createPasteHook, findImagePathTokens, type PasteDeps } from '../src/paste.ts'
 
 const PNG_1x1 = Buffer.from(
@@ -62,6 +62,7 @@ function makeDeps(overrides: Partial<PasteDeps> = {}): PasteDeps & { saveCalls: 
     },
     readImage: async (ref) => ({ ref, data: new Uint8Array(PNG_1x1) }),
     tmpDir: '/tmp/dsh-vision-paste-test',
+    markers: new MarkerRegistry(),
     delegateFor: () => async (params) => {
       delegateCalls.push({ image_path: params.image_path, prompt: params.prompt })
       return okResult(params.image_path)
@@ -225,10 +226,14 @@ describe('paste hook (pre-step transform)', () => {
     const deps = makeDeps({
       config: () => resolveConfig(mergeConfig({ textOnlyPasteMode: 'auto', markerStyle: 'plain', provider: 'p', model: 'm' })),
     })
+    const agent = makeAgent(dir)
     const msg = userMessage(`compare ${aPath} and ${bPath}`)
-    const decision = await runHook(deps, makeAgent(dir), [msg])
+    const decision = await runHook(deps, agent, [msg])
     expect(deps.delegateCalls).toHaveLength(2)
     expect(deps.delegateCalls.map((c) => c.image_path).sort()).toEqual([aPath, bPath].sort())
+    // marker → real-path bridge: the model can pass [Image-#N] to describe_image
+    expect(deps.markers.resolve(agent as never, 'Image-#1')).toBe(aPath)
+    expect(deps.markers.resolve(agent as never, 'Image-#2')).toBe(bPath)
     if (decision.kind === 'enter') {
       const text = textOf(decision.messages[0]!)
       expect(text).toContain('[Image-#1]')
