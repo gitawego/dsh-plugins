@@ -70,6 +70,8 @@ jobs:
         run: npm publish --provenance --access public
 
       # Keep GitHub Releases in sync with npm: create a release for the tag
+      # (auto-generated notes). Idempotent — skips if the release already exists.
+      - name: Create GitHub Release
         if: success() && startsWith(github.ref, 'refs/tags/')
         env:
           GH_TOKEN: ${{ github.token }}
