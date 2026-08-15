@@ -12,9 +12,11 @@ import type { Context } from '@deepseek-ai/cordis'
 import type {} from '@deepseek-ai/dsh-web'
 import type {} from '@deepseek-ai/dsh-credentials'
 import type {} from '@deepseek-ai/dsh-settings'
+import type {} from '@deepseek-ai/dsh-host-webserver'
 import { credentialRef } from '@deepseek-ai/dsh-credentials'
 import { Config, WEB_SEARCH_SETTINGS_NAMESPACE, createResolvedConfig, type WebSearchConfig } from './config.ts'
 import { createSearchProvider, PROVIDER_ID } from './provider.ts'
+import { installWebSearchWeb } from './web.ts'
 
 export const name = '@gitawego/dsh-web-search'
 
@@ -55,6 +57,12 @@ export function apply(ctx: Context, config: Partial<WebSearchConfig> = {}): () =
   )
 
   const disposeProvider = ctx.web.registerSearchProvider(provider)
+
+  const webSettingsLike = {
+    get: () => resolved,
+    update: (patch: Record<string, unknown>) => settings.update(patch as never),
+  }
+  installWebSearchWeb(ctx, webSettingsLike)
 
   return () => {
     disposeProvider()
