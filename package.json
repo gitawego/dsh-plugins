@@ -1,6 +1,6 @@
 {
   "name": "@gitawego/dsh-vision",
-  "version": "0.1.1",
+  "version": "0.2.0",
   "description": "Capability-aware vision + paste extension for DeepSeek Harness: describe_image tool, cache/retry/fallback delegation, paste markers, audit, local-only, /vision config, Web client (data-driven settings + tool cards).",
   "type": "module",
   "main": "lib/index.js",
