@@ -23,6 +23,7 @@ import { detectVisionModel } from './defaults.ts'
 import { VisionGate } from './exposure.ts'
 import { MarkerRegistry } from './marker.ts'
 import { createPasteHook } from './paste.ts'
+import { createStreamImageConverter } from './stream.ts'
 import { createVisionSubagent } from './subagent.ts'
 import type { SettingsLike } from './commands.ts'
 import { installVisionWeb } from './web.ts'
@@ -177,6 +178,29 @@ export function apply(ctx: Context, config: Partial<VisionConfig> = {}) {
     logger: ctx.logger,
   }))
 
+  // Request-boundary routing: hand-built llm/stream calls (compaction,
+  // session-title) targeting a KNOWN text-only model get image blocks
+  // converted to cached text descriptions — otherwise compaction of history
+  // containing native ImageBlocks (from an earlier multimodal primary) would
+  // fail. Loop-built agent requests are never touched (read-only contract).
+  const streamDisposer = ctx.on('llm/stream', createStreamImageConverter({
+    resolveModelImageCapable: async (provider, model) => {
+      try {
+        const info = await ctx.llm.resolveModelInfo(provider, model)
+        return info.inputModalities?.includes('image') ?? false
+      } catch {
+        return undefined
+      }
+    },
+    readImage: (ref, signal) => ctx.attachments.readImage(ref, signal),
+    tmpDir: join(home, 'tmp', 'dsh-vision'),
+    workspaceFor: (sessionId) => sessionId === undefined ? undefined : ctx.sessions.get(sessionId as never)?.header.cwd,
+    delegateFor: (workspace) => (params, signal) => delegateToVisionModel(delegateDepsFor(workspace, signal), params),
+    prompt: resolved.autoDelegatePrompt,
+    stream: (options) => ctx.llm.stream(options),
+    logger: ctx.logger,
+  }))
+
   installVisionWeb(ctx, () => resolved, visionSettings)
 
   // Live re-resolution on settings changes; cache shape + mask re-sync.
@@ -217,6 +241,7 @@ export function apply(ctx: Context, config: Partial<VisionConfig> = {}) {
   return () => {
     gateDisposer() // release per-agent tool masks + gate listeners
     markersDisposer() // marker registry cleanup on agent disposal
+    streamDisposer() // request-boundary image converter (llm/stream)
     autoDetect()
     settingsWatch()
     pasteDisposer() // agent/pre-step hook
