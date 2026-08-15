@@ -91,10 +91,10 @@ async function runAssemble(
 
 function makeGate(ctx: FakeCtx, modalities: Record<string, boolean>, enabled = true): VisionGate {
   const resolver = vi.fn(async (provider: string | undefined, model: string | undefined) => {
-    if (provider === undefined || model === undefined) return false
+    if (provider === undefined || model === undefined) return { multimodal: false, imageCapable: false }
     const known = modalities[`${provider}/${model}`]
     if (known === undefined) throw new Error('unknown model')
-    return known
+    return { multimodal: known, imageCapable: known }
   })
   return new VisionGate(ctx as never, resolver, () => enabled)
 }
@@ -112,7 +112,7 @@ describe('VisionGate — seed', () => {
     const dispose = gate.install()
     await flush()
     try {
-      expect(currentInfo(gate, luna)).toEqual({ provider: 'p', model: 'luna', multimodal: true })
+      expect(currentInfo(gate, luna)).toEqual({ provider: 'p', model: 'luna', multimodal: true, imageCapable: true })
       expect(luna.ctx.tools.restrictCalls).toEqual([{ deny: [TOOL_NAME] }])
     } finally {
       dispose()
@@ -168,7 +168,7 @@ describe('VisionGate — mid-session model switch detection', () => {
 
       // The gate must already reflect the switch BEFORE pre-step runs:
       // paste hook sees text-only; the deny mask is lifted.
-      expect(currentInfo(gate, agent)).toEqual({ provider: 'p', model: 'glm-5.2', multimodal: false })
+      expect(currentInfo(gate, agent)).toEqual({ provider: 'p', model: 'glm-5.2', multimodal: false, imageCapable: false })
       expect(agent.ctx.tools.disposeCount).toBe(1) // mask removed
     } finally {
       dispose()
@@ -184,7 +184,7 @@ describe('VisionGate — mid-session model switch detection', () => {
     await flush()
     try {
       await runAssemble(ctx, agent, { provider: 'p', model: 'luna' })
-      expect(currentInfo(gate, agent)).toEqual({ provider: 'p', model: 'luna', multimodal: true })
+      expect(currentInfo(gate, agent)).toEqual({ provider: 'p', model: 'luna', multimodal: true, imageCapable: true })
       expect(agent.ctx.tools.restrictCalls).toHaveLength(1)
     } finally {
       dispose()
@@ -247,7 +247,7 @@ describe('VisionGate — mid-session model switch detection', () => {
       const config = { provider: 'p', model: 'glm-5.2' }
       const returned = await requestListener({ agent }, async () => config)
       expect(returned).toEqual(config)
-      expect(currentInfo(gate, agent)).toEqual({ provider: 'p', model: 'glm-5.2', multimodal: false })
+      expect(currentInfo(gate, agent)).toEqual({ provider: 'p', model: 'glm-5.2', multimodal: false, imageCapable: false })
       expect(agent.ctx.tools.disposeCount).toBe(1)
     } finally {
       dispose()
@@ -259,7 +259,7 @@ describe('VisionGate — mid-session model switch detection', () => {
     const agent = makeAgent('a1', { provider: 'p', model: 'glm-5.2' })
     ctx.agentsList = [agent]
     let enabled = true
-    const gate = new VisionGate(ctx as never, vi.fn(async () => false), () => enabled)
+    const gate = new VisionGate(ctx as never, vi.fn(async () => ({ multimodal: false, imageCapable: false })), () => enabled)
     const dispose = gate.install()
     await flush()
     try {
