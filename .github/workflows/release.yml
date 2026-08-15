@@ -70,10 +70,18 @@ jobs:
         run: npm publish --provenance --access public
 
 
-      - name: Dump npm oidc debug log (temporary diagnostic)
+      - name: Probe OIDC exchange (temporary diagnostic)
         if: always()
         run: |
-          ls -t /home/runner/.npm/_logs/*.log 2>/dev/null | head -1 | xargs -r cat | grep -iE "oidc|exchange|token" | head -40
+          set -u
+          AUD="npm:registry.npmjs.org"
+          JWT=$(curl -sS -H "Authorization: bearer ${ACTIONS_ID_TOKEN_REQUEST_TOKEN}" "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=${AUD}")
+          echo "idToken length: ${#JWT}"
+          echo "--- exchange response ---"
+          curl -sS -X POST "https://registry.npmjs.org/-/npm/v1/oidc/token/exchange/package/@gitawego%2fdsh-vision" \
+            -H "Authorization: Bearer ${JWT}" \
+            -H "Content-Type: application/json" -d "{}" | head -c 2000
+          echo
 
       # Keep GitHub Releases in sync with npm: create a release for the tag
       # (auto-generated notes). Idempotent — skips if the release already exists.
