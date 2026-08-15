@@ -282,6 +282,11 @@ async function transformMessage(
   const imageBlockCount = msg.content.filter((b) => b.type === 'image').length
   if (textBlocks.length === 0 && imageBlockCount === 0) return undefined
   const text = textBlocks.map((b) => b.text).join('\n')
+  // Idempotency guard: a previous pass (e.g. a double-registered hook) already
+  // rewrote this message — the hint/descriptions signature is present. Rewriting
+  // again would turn the hint's own path into another marker ("Image path:
+  // [Image-#1]"). Never touch an already-rewritten message.
+  if (/Image path:|images? referenced|auto-described/.test(text)) return undefined
   const pathTokens = findImagePathTokens(text)
 
   // Text-only primaries: materialize image blocks to temp files so markers /
