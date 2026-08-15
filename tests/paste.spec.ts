@@ -618,3 +618,44 @@ describe('paste hook — surfaces present the resolved absolute path (abs)', () 
     expect(deps.markers.resolve(agent as never, 'Image-#1')).toBe(aPath)
   })
 })
+
+describe('paste hook — idempotency (never rewrite an already-rewritten message)', () => {
+  let dir: string
+  let aPath: string
+
+  beforeEach(async () => {
+    dir = await mkdtemp(join(tmpdir(), 'dsh-vision-idem-'))
+    aPath = join(dir, 'a.png')
+    await writeFile(aPath, PNG_1x1)
+  })
+
+  afterEach(async () => {
+    await rm(dir, { recursive: true, force: true })
+  })
+
+  it('leaves a previously-rewritten message (marker + hint with path) untouched', async () => {
+    const deps = makeDeps({
+      isMultimodal: () => false,
+      config: () => resolveConfig(mergeConfig({ textOnlyPasteMode: 'auto', markerStyle: 'plain', provider: 'p', model: 'm' })),
+    })
+    // Simulates the OUTPUT of a first pass: marker + hint whose "Image path:"
+    // line contains a real path — a second pass must NOT re-rewrite it.
+    const rewritten = userMessage(`[Image-#1] look here\n[1 image referenced — the active model can't process images; call describe_image to analyze it]\nImage path: ${aPath}`)
+    const decision = await runHook(deps, makeAgent(dir), [rewritten])
+    expect(deps.delegateCalls).toHaveLength(0)
+    expect(deps.saveCalls).toHaveLength(0)
+    if (decision.kind === 'enter') {
+      expect(decision.messages[0]).toBe(rewritten) // identical, untouched
+    }
+  })
+
+  it('still rewrites a fresh message containing a real path', async () => {
+    const deps = makeDeps({
+      isMultimodal: () => false,
+      config: () => resolveConfig(mergeConfig({ textOnlyPasteMode: 'auto', markerStyle: 'plain', provider: 'p', model: 'm' })),
+    })
+    const msg = userMessage(`look at ${aPath}`)
+    const decision = await runHook(deps, makeAgent(dir), [msg])
+    expect(deps.delegateCalls).toHaveLength(1)
+  })
+})
