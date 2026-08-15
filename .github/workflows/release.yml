@@ -1,12 +1,21 @@
 # Monorepo release: publishes every package in packages/* to npm on a v* tag
-# via OIDC TRUSTED PUBLISHING (no NPM_TOKEN). Each package is skipped if that
-# version is already on npm (idempotent). Creates a GitHub Release on success.
+# via OIDC TRUSTED PUBLISHING (no NPM_TOKEN).
 #
-# Trusted-publisher setup on npmjs.com - for EACH package, register this repo+
-# workflow so the OIDC certificate chain is accepted (one-time, after the first
-# version of each package exists):
+# FUTURE-PROOF CONTRACT (add packages freely):
+#   - The publish loop globs packages/*/ automatically, so a new package
+#     needs ZERO changes to this workflow. It just needs a publishable name
+#     (@gitawego-scoped) and a build that emits lib/ (the package 'files').
+#   - Versioning model: bump the version in each package you want to release,
+#     then push ONE tag (v*) — any package whose version is not yet on npm is
+#     published; already-published versions are skipped (idempotent).
+#   - New packages that bring native deps (esbuild/sharp/rollup platform
+#     binaries) must extend the allowBuilds map in pnpm-workspace.yaml.
+#
+# OIDC trusted publishing on npmjs.com - for EACH package (one-time, after the
+# first version of that package exists):
 #   { "provider": "github", "owner": "gitawego", "repo": "dsh-plugins",
 #     "workflow_filename": "release.yml" }
+
 name: release.yml
 
 on:
@@ -44,9 +53,10 @@ jobs:
       - name: Build
         run: pnpm -r build
 
-      - name: Publish packages (OIDC, skip if already on npm)
+      - name: Publish packages (globpackages, OIDC, skip if already on npm)
         run: |
           set -euo pipefail
+          published_any=false
           for d in packages/*/; do
             [ -f "$d/package.json" ] || continue
             pkg="$(node -p "require('./$d/package.json').name")"
