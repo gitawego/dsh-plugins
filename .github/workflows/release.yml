@@ -39,7 +39,6 @@ jobs:
         with:
           node-version: "20"
           cache: npm
-          registry-url: https://registry.npmjs.org
 
       - run: npm ci
 
@@ -71,12 +70,6 @@ jobs:
         run: npm publish --provenance --access public
 
       # Keep GitHub Releases in sync with npm: create a release for the tag
-      # (auto-generated notes). Idempotent — skips if the release already exists.
-      - name: Dump npm debug log (temporary diagnostic)
-        if: always()
-        run: |
-          ls -t /home/runner/.npm/_logs/*.log 2>/dev/null | head -1 | xargs -r cat | grep -iE "oidc|token|trusted|workflow|404|403|error" | head -80
-      - name: Create GitHub Release
         if: success() && startsWith(github.ref, 'refs/tags/')
         env:
           GH_TOKEN: ${{ github.token }}
