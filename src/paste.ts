@@ -270,6 +270,9 @@ async function transformMessage(
   /** Extra explanatory line prepended to auto-delegated output (e.g. why the
    *  image was described although the primary is multimodal). */
   note?: string,
+  /** Host cannot deliver images natively (Termux) — the hint must name the
+   *  real reason instead of blaming the model's capability. */
+  deliveryUnavailable?: boolean,
 ): Promise<UserMessage | undefined> {
   const textBlocks = msg.content.filter((b): b is { type: 'text'; text: string } => b.type === 'text')
   const imageBlockCount = msg.content.filter((b) => b.type === 'image').length
@@ -311,7 +314,7 @@ async function transformMessage(
 
   // ── TEXT-ONLY: markers + branch on paste mode ──
   const hintImages = loaded.map((l) => ({ token: l.token, index: resolved.get(l.token)?.index ?? 0 }))
-  const hint = buildPasteHintLine(hintImages)
+  const hint = buildPasteHintLine(hintImages, config.markerStyle, { deliveryUnavailable })
 
   // Rebuild content: collapsed rewritten text first, then every non-text
   // block in original order — image blocks become marker text blocks (or a
@@ -393,11 +396,13 @@ async function transformBatch(
   const config = deps.config()
   const multimodal = deps.isMultimodal(agent)
   const workspace = agent.session.header.cwd ?? process.cwd()
-  // Native delivery may be impossible (Termux attachment-store EACCES). A
-  // multimodal primary then has NO way to receive the image natively and
-  // describe_image is hidden for it — hint/off would dead-end. Force auto so
-  // the image is never silently dropped; a note explains why.
-  const nativeDelivery = multimodal ? await deps.canDeliverImage() : false
+  // Native delivery may be impossible (Termux attachment-store EACCES). The
+  // gate already reports such multimodal primaries as effectively text-only
+  // (describe_image visible; user's textOnlyPasteMode governs). This probe
+  // additionally (a) drives the forced-auto safety net below in case the gate
+  // ever reports multimodal=true on an undeliverable host, and (b) makes the
+  // hint name the real reason (host delivery, not model capability).
+  const nativeDelivery = await deps.canDeliverImage()
   const undeliverable = multimodal && !nativeDelivery
   const mode: PasteMode = !config.enabled
     ? 'off'
@@ -414,7 +419,7 @@ async function transformBatch(
       out.push(msg)
       continue
     }
-    const transformed = await transformMessage(deps, agent, config, msg, workspace, signal, multimodal && nativeDelivery, mode, note)
+    const transformed = await transformMessage(deps, agent, config, msg, workspace, signal, multimodal && nativeDelivery, mode, note, !nativeDelivery)
     if (transformed === undefined) out.push(msg)
     else {
       out.push(transformed)

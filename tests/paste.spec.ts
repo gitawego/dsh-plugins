@@ -155,6 +155,16 @@ describe('paste hint + descriptions blocks', () => {
     expect(block).toContain('textOnlyPasteMode')
     expect(buildDescriptionsBlock([], 'p/m')).toBe('')
   })
+
+  it('builds the delivery-unavailable hint (Termux) naming the real reason', () => {
+    const hint = buildPasteHintLine([{ token: '/tmp/a.png', index: 0 }], 'plain', { deliveryUnavailable: true })
+    expect(hint).toContain('native image delivery is unavailable')
+    expect(hint).toContain('describe_image')
+    expect(hint).toContain('/tmp/a.png')
+    expect(hint).not.toContain("can't process images")
+    const normal = buildPasteHintLine([{ token: '/tmp/a.png', index: 0 }], 'plain')
+    expect(normal).toContain("can't process images")
+  })
 })
 
 describe('paste hook (pre-step transform)', () => {
@@ -496,5 +506,51 @@ describe('paste hook — multimodal primary WITHOUT native delivery (Termux)', (
       expect(text).toContain('[Image-#1]')
       expect(text).not.toContain('a cat on a mat')
     }
+  })
+})
+
+describe('paste hook — hint wording when native delivery is unavailable', () => {
+  let dir: string
+  let aPath: string
+
+  beforeEach(async () => {
+    dir = await mkdtemp(join(tmpdir(), 'dsh-vision-hintwording-'))
+    aPath = join(dir, 'a.png')
+    await writeFile(aPath, PNG_1x1)
+  })
+
+  afterEach(async () => {
+    await rm(dir, { recursive: true, force: true })
+  })
+
+  it('text-only primary + undeliverable host: hint names native delivery, no auto delegate', async () => {
+    const deps = makeDeps({
+      isMultimodal: () => false, // effective text-only (Termux: model is multimodal but host cannot deliver)
+      canDeliverImage: async () => false,
+      config: () => resolveConfig(mergeConfig({ textOnlyPasteMode: 'hint', markerStyle: 'plain', provider: 'p', model: 'm' })),
+    })
+    const agent = makeAgent(dir)
+    const msg = userMessage(`look at ${aPath}`)
+    const decision = await runHook(deps, agent, [msg])
+    expect(deps.delegateCalls).toHaveLength(0) // on-demand — no automatic spend
+    if (decision.kind === 'enter') {
+      const text = allTextOf(decision.messages[0]!)
+      expect(text).toContain('[Image-#1]')
+      expect(text).toContain('native image delivery is unavailable')
+      expect(text).toContain(aPath) // path nameable for describe_image
+      expect(text).not.toContain("can't process images")
+    }
+  })
+
+  it('effective text-only + auto mode still auto-delegates (user chose auto)', async () => {
+    const deps = makeDeps({
+      isMultimodal: () => false,
+      canDeliverImage: async () => false,
+      config: () => resolveConfig(mergeConfig({ textOnlyPasteMode: 'auto', markerStyle: 'plain', provider: 'p', model: 'm' })),
+    })
+    const msg = userMessage(`look at ${aPath}`)
+    const decision = await runHook(deps, makeAgent(dir), [msg])
+    expect(deps.delegateCalls).toHaveLength(1)
+    if (decision.kind === 'enter') expect(allTextOf(decision.messages[0]!)).toContain('a cat on a mat')
   })
 })
