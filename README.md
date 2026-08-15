@@ -94,7 +94,10 @@ Example http configuration (any OpenAI-compatible vision endpoint):
 > (its durability walk hits EACCES — a raw Android permission), so the native
 > sub-agent path cannot deliver images there. Use `delegation=http` with the
 > `http` block on Termux; `auto` falls back to http automatically when the store
-> is unavailable.
+> is unavailable. The paste hook has the same guard: a **multimodal** primary on
+> Termux cannot receive native ImageBlocks either, so pasted images are
+> auto-delegated to the configured vision model (with an explanatory note) instead
+> of being silently dropped as a bare `[Image-#N]` marker.
 
 ## Routing & model-switch behavior
 

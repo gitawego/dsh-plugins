@@ -165,6 +165,11 @@ export interface PasteDeps {
   /** Per-agent marker → real-path registry, so describe_image can resolve the
    *  [Image-#N] markers the model sees back to the paths this hook replaced. */
   markers: MarkerRegistry
+  /** Whether the harness can deliver images natively (attachment store can
+   *  write). On Android/Termux it never can (durability walk EACCES at
+   *  /data/data), so even a multimodal primary cannot receive an ImageBlock —
+   *  the hook must fall back to delegation instead of dropping the image. */
+  canDeliverImage: () => Promise<boolean>
   /** Build the delegation entry point for one agent's workspace. */
   delegateFor: (workspace: string) => PasteDelegate
   logger?: { warn: (message: string, ...args: unknown[]) => void }
@@ -262,6 +267,9 @@ async function transformMessage(
   signal: AbortSignal,
   multimodal: boolean,
   mode: PasteMode,
+  /** Extra explanatory line prepended to auto-delegated output (e.g. why the
+   *  image was described although the primary is multimodal). */
+  note?: string,
 ): Promise<UserMessage | undefined> {
   const textBlocks = msg.content.filter((b): b is { type: 'text'; text: string } => b.type === 'text')
   const imageBlockCount = msg.content.filter((b) => b.type === 'image').length
@@ -370,7 +378,8 @@ async function transformMessage(
   cleanupTempFiles(blockTokens)
   const visionModel = config.provider && config.model ? `${config.provider}/${config.model}` : '(unconfigured)'
   const block = buildDescriptionsBlock(descriptions, visionModel, config.markerStyle)
-  return freezeMessage({ ...msg, content: [{ type: 'text', text: rewritten + block }, ...body] })
+  const prefix = note === undefined ? '' : '\n[' + note + ']\n'
+  return freezeMessage({ ...msg, content: [{ type: 'text', text: rewritten + prefix + block }, ...body] })
 }
 
 /** Transform the enter-batch: rewrite user messages, leave everything else
@@ -384,7 +393,20 @@ async function transformBatch(
   const config = deps.config()
   const multimodal = deps.isMultimodal(agent)
   const workspace = agent.session.header.cwd ?? process.cwd()
-  const mode: PasteMode = config.enabled ? config.textOnlyPasteMode : 'off'
+  // Native delivery may be impossible (Termux attachment-store EACCES). A
+  // multimodal primary then has NO way to receive the image natively and
+  // describe_image is hidden for it — hint/off would dead-end. Force auto so
+  // the image is never silently dropped; a note explains why.
+  const nativeDelivery = multimodal ? await deps.canDeliverImage() : false
+  const undeliverable = multimodal && !nativeDelivery
+  const mode: PasteMode = !config.enabled
+    ? 'off'
+    : undeliverable
+      ? 'auto'
+      : config.textOnlyPasteMode
+  const note = undeliverable
+    ? 'native image delivery is unavailable on this host (Termux attachment store cannot write) — image analyzed via the configured vision model'
+    : undefined
   const out: UserMessage[] = []
   let changed = false
   for (const msg of messages) {
@@ -392,7 +414,7 @@ async function transformBatch(
       out.push(msg)
       continue
     }
-    const transformed = await transformMessage(deps, agent, config, msg, workspace, signal, multimodal, mode)
+    const transformed = await transformMessage(deps, agent, config, msg, workspace, signal, multimodal && nativeDelivery, mode, note)
     if (transformed === undefined) out.push(msg)
     else {
       out.push(transformed)

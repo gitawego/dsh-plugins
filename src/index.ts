@@ -158,6 +158,9 @@ export function apply(ctx: Context, config: Partial<VisionConfig> = {}) {
     readImage: (ref, signal) => ctx.attachments.readImage(ref, signal),
     tmpDir: join(home, 'tmp', 'dsh-vision'),
     markers,
+    // Multimodal primaries on Termux cannot receive native ImageBlocks (the
+    // store cannot write) — the hook falls back to auto-delegation.
+    canDeliverImage,
     delegateFor: (workspace) => (params, signal) => delegateToVisionModel(delegateDepsFor(workspace, signal), params),
     logger: ctx.logger,
   }))
