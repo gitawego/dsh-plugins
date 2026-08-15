@@ -94,10 +94,14 @@ Example http configuration (any OpenAI-compatible vision endpoint):
 > (its durability walk hits EACCES — a raw Android permission), so the native
 > sub-agent path cannot deliver images there. Use `delegation=http` with the
 > `http` block on Termux; `auto` falls back to http automatically when the store
-> is unavailable. The paste hook has the same guard: a **multimodal** primary on
-> Termux cannot receive native ImageBlocks either, so pasted images are
-> auto-delegated to the configured vision model (with an explanatory note) instead
-> of being silently dropped as a bare `[Image-#N]` marker.
+> is unavailable. The same rule drives image routing: on Termux even a
+> **multimodal** primary (e.g. MiniMax-M3) is treated as effectively text-only —
+> it cannot receive native ImageBlocks, so `describe_image` becomes visible and
+> your existing `textOnlyPasteMode` governs (`hint` = on-demand delegation via
+> http, `auto` = automatic, `off` = markers only). The hint names native
+> delivery as the reason instead of blaming the model, and pasted images are
+> never silently dropped as a bare `[Image-#N]` marker. On hosts with a working
+> attachment store, multimodal models keep native passthrough.
 
 ## Routing & model-switch behavior
 

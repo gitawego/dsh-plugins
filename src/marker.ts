@@ -112,14 +112,23 @@ export function renderMarkersResolved(
 /** Hint line for text-only primaries (paste mode "hint"): names the image
  *  paths so the model can call describe_image, and the image_paths batch
  *  affordance for N ≥ 2 (pi-vision SPEC-3 §3.4). Plain text — the model reads
- *  it as-is. */
-export function buildPasteHintLine(images: readonly { token: string; index: number }[]): string {
+ *  it as-is. When the HOST cannot deliver images natively (Termux attachment
+ *  store EACCES — the reason is delivery, not model capability), the wording
+ *  says so: describe_image still works there via the http transport. */
+export function buildPasteHintLine(
+  images: readonly { token: string; index: number }[],
+  style: MarkerStyle = 'code',
+  options: { deliveryUnavailable?: boolean } = {},
+): string {
   const n = images.length
   if (n === 0) return '0 images referenced.'
+  const reason = options.deliveryUnavailable
+    ? 'native image delivery is unavailable on this host (attachment store cannot write)'
+    : "the active model can't process images"
   const noun = n === 1 ? 'image' : 'images'
   const verb = n === 1 ? 'analyze it' : 'analyze them'
   const clause = n >= 2 ? ' with image_paths (pass all paths in one batch)' : ''
-  const header = `[${n} ${noun} referenced — the active model can't process images; call describe_image to ${verb}${clause}]`
+  const header = `[${n} ${noun} referenced — ${reason}; call describe_image to ${verb}${clause}]`
   if (n === 1) {
     return `${header}\nImage path: ${images[0]!.token}`
   }

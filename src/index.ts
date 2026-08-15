@@ -65,20 +65,6 @@ export function apply(ctx: Context, config: Partial<VisionConfig> = {}) {
   const markers = new MarkerRegistry()
   const markersDisposer = ctx.on('agent/disposed', ({ agent }) => { markers.detach(agent) })
 
-  const gate = new VisionGate(
-    ctx,
-    async (provider, model) => {
-      if (provider === undefined || model === undefined) return false
-      try {
-        const info = await ctx.llm.resolveModelInfo(provider, model)
-        return info.inputModalities?.includes('image') ?? false
-      } catch {
-        return false // unknown → text-only (safe default)
-      }
-    },
-    () => resolved.enabled,
-  )
-
   // NATIVE-first delivery probe: the sub-agent path attaches the image via
   // the harness attachment store (ImageBlock). On Android/Termux the store's
   // durability walk cannot open /data/data (EACCES), so the native path is
@@ -99,6 +85,27 @@ export function apply(ctx: Context, config: Partial<VisionConfig> = {}) {
     }
     return storeCanWrite
   }
+
+  // Effective modality = model image capability AND native delivery. On
+  // Termux no model can receive an ImageBlock (the store cannot write), so a
+  // vision-capable primary is treated as text-only there: describe_image
+  // becomes visible and the user's textOnlyPasteMode governs (hint = on-demand
+  // delegation via http, auto = automatic, off = markers only). On hosts with
+  // a working store, multimodal models keep native passthrough.
+  const gate = new VisionGate(
+    ctx,
+    async (provider, model) => {
+      if (provider === undefined || model === undefined) return false
+      try {
+        const info = await ctx.llm.resolveModelInfo(provider, model)
+        const imageCapable = info.inputModalities?.includes('image') ?? false
+        return imageCapable && (await canDeliverImage())
+      } catch {
+        return false // unknown → text-only (safe default)
+      }
+    },
+    () => resolved.enabled,
+  )
 
   // Shared delegation entry point (tool + paste auto mode). Workspace and the
   // per-call cancellation signal differ per use; the rest is live config.
