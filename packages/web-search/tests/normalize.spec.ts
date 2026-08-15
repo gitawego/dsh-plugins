@@ -47,6 +47,16 @@ describe('normalize', () => {
     ])
   })
 
+  it('extracts plaintext content snippet from web_search_result (MiniMax)', () => {
+    const body = { type: 'message', content: [{
+      type: 'web_search_tool_result',
+      content: [{ type: 'web_search_result', title: 'T', url: 'https://x.com', content: 'plaintext snippet here', page_age: '2026-01-01' }],
+    }] }
+    expect(parseGoResponse(body)).toEqual([
+      { url: 'https://x.com', title: 'T', snippet: 'plaintext snippet here', publishedAt: '2026-01-01' },
+    ])
+  })
+
   it('returns [] when Go returns no web_search_tool_result block', () => {
     expect(parseGoResponse({ type: 'message', content: [{ type: 'text', text: 'hi' }] })).toEqual([])
   })

@@ -100,6 +100,9 @@ export function parseGoResponse(body: any): RawSource[] {
       const source: RawSource = { url: item.url }
       if (typeof item.title === 'string' && item.title.length > 0) source.title = item.title
       if (typeof item.page_age === 'string' && item.page_age.length > 0) source.publishedAt = item.page_age
+      // MiniMax (and other Anthropic-compatible servers) return plaintext
+      // `content` on each result; opencode Go returns opaque encrypted_content.
+      if (typeof item.content === 'string' && item.content.length > 0) source.snippet = item.content
       out.push(source)
     }
   }
