@@ -37,7 +37,7 @@ import {
   createSymbolsTool,
   createWorkspaceSymbolTool,
 } from './queries.ts'
-import { installLspWeb } from './web.ts'
+import { installLspWeb, type LspSettingsLike } from './web.ts'
 
 export const name = 'dsh-lsp'
 
@@ -100,6 +100,22 @@ export function apply(ctx: Context, base: Partial<LspSettings> = {}) {
   const settingsWatch = settings.watch(async (next: unknown) => {
     resolved = resolveConfig(mergeConfig(next))
   })
+
+  // Writeable settings seam shared by the Web settings route and the /lsp
+  // command (headless users configure without the Web UI).
+  const lspSettings: LspSettingsLike = {
+    get: () => settings.get() as LspSettings,
+    update: (patch) => settings.update(patch),
+    mutate: (ops) =>
+      ctx.settings.mutate(
+        LSP_SETTINGS_NAMESPACE,
+        ops.map((o) =>
+          o.op === 'set'
+            ? { op: 'set' as const, path: Array.isArray(o.path) ? o.path : [o.path], value: o.value as never }
+            : { op: 'unset' as const, path: Array.isArray(o.path) ? o.path : [o.path] },
+        ),
+      ),
+  }
 
   // Shared LSP manager pool keyed by resolved project root (the agent's
   // workspace cwd), so agents in the same workspace share one LspManager —
@@ -226,7 +242,7 @@ export function apply(ctx: Context, base: Partial<LspSettings> = {}) {
     releaseManager(agent)
   })
 
-  installLspWeb(ctx, () => resolved, liveStatus)
+  installLspWeb(ctx, () => resolved, liveStatus, lspSettings)
 
   ctx.logger.info('dsh-lsp ready (%d server routes configured)', Object.keys(resolved.servers).length)
 

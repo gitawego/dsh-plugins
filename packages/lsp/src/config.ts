@@ -32,6 +32,8 @@ export interface ServerConfig {
   autoDownload?: boolean
   /** Drop this server from the catalog. */
   disabled?: boolean
+  /** Managed `typescript` payload version for the typescript server (default "6"). */
+  payloadVersion?: string
 }
 
 export interface ResolvedServer {
@@ -44,6 +46,8 @@ export interface ResolvedServer {
   autoDownload?: boolean
   /** Download strategy for autoDownload (from the default catalog). */
   download?: 'npm' | 'github-release' | 'go-install'
+  /** Managed `typescript` payload version (default "6"). */
+  payloadVersion?: string
 }
 
 export interface ProgressiveConfig {
@@ -75,6 +79,9 @@ const DEFAULT_PROGRESSIVE: ProgressiveConfig = {
 
 const DEFAULT_TIMEOUT = 30_000
 
+/** Default managed `typescript` payload version (6.x ships lib/tsserver.js). */
+export const DEFAULT_TS_PAYLOAD_VERSION = '6'
+
 /** Raw server entry as it appears in settings.yaml. */
 function ServerEntry(): Schema<ServerConfig> {
   return z.object({
@@ -86,6 +93,7 @@ function ServerEntry(): Schema<ServerConfig> {
     initialization: z.dict(z.any()),
     autoDownload: z.boolean(),
     disabled: z.boolean(),
+    payloadVersion: z.string(),
   })
 }
 
@@ -172,8 +180,13 @@ export function mergeConfig(partial: unknown): LspSettings {
         ...(cfg.env !== undefined ? { env: cfg.env } : {}),
         ...(cfg.initialization !== undefined ? { initialization: cfg.initialization } : {}),
         ...(boolOrUndef(cfg.autoDownload) !== undefined ? { autoDownload: cfg.autoDownload } : {}),
+        ...(strOrUndef(cfg.payloadVersion) !== undefined ? { payloadVersion: cfg.payloadVersion } : {}),
       }
     }
+  }
+  // Default the managed typescript payload version unless the user set one.
+  if (servers.typescript && servers.typescript.payloadVersion === undefined) {
+    servers.typescript = { ...servers.typescript, payloadVersion: DEFAULT_TS_PAYLOAD_VERSION }
   }
 
   return {
@@ -206,6 +219,7 @@ export function resolveConfig(config: LspSettings): ResolvedLspConfig {
       ...(server.initialization !== undefined ? { initialization: server.initialization } : {}),
       ...(boolOrUndef(server.autoDownload) !== undefined ? { autoDownload: server.autoDownload } : {}),
       ...(def?.download !== undefined ? { download: def.download } : {}),
+      ...(strOrUndef(server.payloadVersion) !== undefined ? { payloadVersion: server.payloadVersion } : {}),
     }
   }
   return {
