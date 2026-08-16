@@ -56,4 +56,12 @@ describe('mergeConfig / resolveConfig', () => {
     expect(resolved.servers.gopls!.download).toBe('go-install')
     expect(resolved.servers.clangd!.autoDownload).toBeUndefined()
   })
+
+  it('defaults the typescript payload version to 6 and allows override', () => {
+    expect(resolveConfig(mergeConfig({})).servers.typescript!.payloadVersion).toBe('6')
+    const over = resolveConfig(mergeConfig({
+      servers: { typescript: { payloadVersion: '5' } },
+    }))
+    expect(over.servers.typescript!.payloadVersion).toBe('5')
+  })
 })

@@ -3,6 +3,7 @@ import { createClient, type LspClient } from './client.js'
 import type { ResolvedLspConfig, ResolvedServer } from './config.js'
 import { canAutoDownload, downloadPlanFor, feasibleOn, install } from './download.js'
 import { detectPlatform } from './platform.js'
+import { resolveTsserverPath } from './tsserver.js'
 import { nearestRoot } from './root.js'
 import type { Diagnostic } from './types.js'
 import { fileURLToPath, pathToFileURL } from 'node:url'
@@ -123,13 +124,37 @@ export class LspManager {
         this.#broken.add(key)
         return undefined
       }
+      // Transparent global TypeScript payload: typescript-language-server needs
+      // a real `tsserver` (typescript JS payload). Resolve (or install globally)
+      // one so boot never fails with an opaque "no TypeScript installation".
+      let effectiveInitialization = server.initialization
+      if (id === 'typescript') {
+        const explicit = (server.initialization?.tsserver as { path?: string } | undefined)?.path
+        const ts = await resolveTsserverPath({
+          binDir: this.#options.config.binDir,
+          cwd: root,
+          explicit,
+          info,
+          version: server.payloadVersion,
+          onStatus: this.#options.onStatus,
+        })
+        if (ts.path) {
+          effectiveInitialization = {
+            ...(server.initialization ?? {}),
+            tsserver: { path: ts.path },
+          }
+        }
+        if (ts.action) {
+          this.#options.onStatus?.(`${id}: ${ts.action}`)
+        }
+      }
       this.#options.onStatus?.(`${id} starting`)
       try {
         const client = await createClient({
           serverID: id,
           command: [resolved.command, ...resolved.args],
           cwd: root,
-          initialization: server.initialization,
+          initialization: effectiveInitialization,
           env: server.env,
           timeoutMs: this.#options.config.timeout,
           signal: this.#options.signal,

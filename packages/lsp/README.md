@@ -74,6 +74,34 @@ type-checker.
 32-bit architectures are unsupported: managed installs are refused and the platform is reported
 unsupported — never a crash.
 
+### Transparent global TypeScript install
+
+`typescript-language-server` needs a real `typescript` payload (`lib/tsserver.js`) reachable at boot.
+The plugin resolves one transparently in this order and surfaces the action in the LSP status line:
+
+1. an explicit `tsserver.path` you configured, or
+2. a project-local `node_modules/typescript`, or
+3. an already-managed global `typescript`, or
+4. **auto-installs `typescript@6` globally** into the managed `binDir`
+   (`~/.cache/dsh-lsp/bin`) and points `tsserver.path` at it.
+
+By default it is pinned to the **6.x major** (`payloadVersion: "6"`) because that is the current
+stable release that still ships the classic `lib/tsserver.js` layout `typescript-language-server`
+consumes (`typescript@7+/latest` replaced it with a new layout).
+
+**The payload version is configurable:**
+```yaml
+lsp:
+  servers:
+    typescript:
+      payloadVersion: "5"        # install typescript@5 instead of the default 6
+      initialization:
+        tsserver:
+          path: /path/to/typescript/lib/tsserver.js   # optional explicit override
+```
+An explicit `tsserver.path` always wins; otherwise the configured `payloadVersion` (default `6`) is
+installed globally into the managed bin dir.
+
 ## Configuration (config-driven)
 
 Configuration lives in the DSH Settings document under the `lsp` namespace (`$DSH_HOME/settings.yaml`
