@@ -1,0 +1,5 @@
+# @gitawego/dsh-lsp bundle patch: applied as one profile layer when this
+# package joins a profile's `dsh.profile.bundles` (installed via `dsh plugin`).
+- insert:
+    - id: lsp
+      name: '@gitawego/dsh-lsp'

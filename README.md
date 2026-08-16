@@ -12,6 +12,9 @@ plugin under the `@gitawego` npm scope.
   enhanced web search provider. Works with **no API key** (free Parallel/Exa MCP
   backends) and optionally any LLM-backed web-search endpoint (Anthropic or
   OpenAI protocol) via `opencode-enhanced`.
+- [packages/lsp](packages/lsp/) — `@gitawego/dsh-lsp`: config-driven Language
+  Server Protocol integration (official servers by default, persistent sessions,
+  progressive diagnostics after edits, rich query tools, Web status card).
 
 ## Layout & tooling
 
