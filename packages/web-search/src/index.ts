@@ -7,16 +7,20 @@
  *
  * The model-facing `web_search` tool/schema are owned by dsh-tool-web (bundled);
  * this plugin only supplies a provider that the seam routes to.
+ *
+ * Lifecycle: `apply` registers the settings namespace and the search provider
+ * on this plugin's fiber. Both `ctx.settings.register` and `ctx.web.registerSearchProvider`
+ * are effect-scoped, but the search-provider effect lives on the WebRuntime's
+ * own fiber (not ours), so `apply` returns a disposer that drops it manually;
+ * the settings registration is cleaned up by the fiber itself.
  */
 import type { Context } from '@deepseek-ai/cordis'
 import type {} from '@deepseek-ai/dsh-web'
 import type {} from '@deepseek-ai/dsh-credentials'
 import type {} from '@deepseek-ai/dsh-settings'
-import type {} from '@deepseek-ai/dsh-host-webserver'
 import { credentialRef } from '@deepseek-ai/dsh-credentials'
 import { Config, WEB_SEARCH_SETTINGS_NAMESPACE, createResolvedConfig, type WebSearchConfig } from './config.ts'
 import { createSearchProvider, PROVIDER_ID } from './provider.ts'
-import { installWebSearchWeb } from './web.ts'
 
 export const name = '@gitawego/dsh-web-search'
 
@@ -53,16 +57,20 @@ export function apply(ctx: Context, config: Partial<WebSearchConfig> = {}): () =
           return undefined
         }
       },
+      // Hardcoded opencode-Go default fallback. Silently undefined when the
+      // credential isn't configured — the chain skips step 2 in that case.
+      resolveOpenCodeGoApiKey: async () => {
+        try {
+          const resolvedCred = await ctx.credentials.resolve(credentialRef('OPENCODE_GO_API_KEY'))
+          return resolvedCred?.value
+        } catch {
+          return undefined
+        }
+      },
     },
   )
 
   const disposeProvider = ctx.web.registerSearchProvider(provider)
-
-  const webSettingsLike = {
-    get: () => resolved,
-    update: (patch: Record<string, unknown>) => settings.update(patch as never),
-  }
-  installWebSearchWeb(ctx, webSettingsLike)
 
   return () => {
     disposeProvider()
