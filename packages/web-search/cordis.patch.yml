@@ -1,5 +1,37 @@
 # @gitawego/dsh-web-search bundle patch: applied as one profile layer when this
 # package joins a profile's `dsh.profile.bundles` (installed via `dsh plugin`).
+#
+# The patch does TWO things and is the install/uninstall contract for the bundle:
+#
+#   1. insert this plugin into the loader tree, so its `apply()` runs at boot
+#      and registers the `opencode-enhanced` WebSearchProvider into ctx.web;
+#
+#   2. override the `id: web` row's `config.searchProvider` so the seam routes
+#      `web_search` calls to this provider instead of `deepseek-official`.
+#
+# Uninstall: the patch is a bundle LAYER, applied in `dsh.profile.bundles`
+# order. Removing this package removes the layer, so on the next boot:
+#   - this plugin no longer inserts and `apply()` never runs (its provider
+#     and the web-search-enhanced settings namespace disappear);
+#   - the `id: web` row's `config.searchProvider` reverts to whatever the
+#     next-lower layer (typically dsh-base) wrote, defaulting back to
+#     `deepseek-official`.
+# No state persists beyond the boot composition; there is nothing to undo
+# programmatically on uninstall.
+#
+# A user override on the profile's own `cordis.patch.yml` or the
+# `$DSH_WEB_SEARCH_PROVIDER` env var outranks this layer, so a deployment that
+# prefers a different provider can still pin it after installing this bundle.
+
 - insert:
     - id: web-search
       name: '@gitawego/dsh-web-search'
+
+# Re-pin `web.searchProvider` to the new provider. `name` is restated so the
+# loader's id/name guard recognises the targeted row; `config` fully replaces
+# the row's config (the loader writes the new object, not a shallow merge), so
+# the deepseek-official default from dsh-base is overridden.
+- id: web
+  name: '@deepseek-ai/dsh-web'
+  config:
+    searchProvider: opencode-enhanced

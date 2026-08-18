@@ -29,7 +29,12 @@ const exaOk = () => textResponse('event: message\ndata: {"result":{"content":[{"
 const goOk = () => jsonResponse({ type: 'message', content: [ { type: 'server_tool_use', name: 'web_search', input: { query: 'q' } }, { type: 'web_search_tool_result', content: [{ type: 'web_search_result', title: 'G', url: 'https://g.com', encrypted_content: 'x' }] } ] })
 
 function makeProvider(runtime: Partial<ProviderRuntime>, fetchImpl: typeof fetch): WebSearchProvider {
-  return createSearchProvider(() => cfg(), { fetchImpl, ...runtime } as any)
+  return createSearchProvider(() => cfg(), {
+    fetchImpl,
+    resolveGoApiKey: async () => undefined,
+    resolveOpenCodeGoApiKey: async () => undefined,
+    ...runtime,
+} as any)
 }
 
 describe('provider (chained fallback)', () => {
@@ -88,5 +93,46 @@ describe('provider (chained fallback)', () => {
   it('available() is false when no free url and no go credential', async () => {
     const p = createSearchProvider(() => createResolvedConfig({ llm: { baseUrl: undefined, credential: undefined }, free: { parallelUrl: '', exaUrl: '', timeoutMs: 0, snippetMaxChars: 0, maxResults: 0 } } as Partial<WebSearchConfig>), {} as any)
     expect(p.available()).toBe(false)
+  })
+
+  it('falls through to opencode-go default when custom LLM fails', async () => {
+    // Custom LLM has a key, but its endpoint fails. The chain falls through
+    // to the opencode-go default (credential 'sk-go'), which then succeeds
+    // against its own Anthropic-format endpoint.
+    const failingCustom = () => { throw new Error('custom backend down') }
+    const fetchImpl = fakeFetch([failingCustom, goOk, exaOk])
+    const p = makeProvider({
+      resolveGoApiKey: async () => 'sk-custom',
+      resolveOpenCodeGoApiKey: async () => 'sk-go',
+    }, fetchImpl)
+    const result = await p.search({ query: 'q' })
+    expect(result.sources[0]!.url).toBe('https://g.com')
+    expect(result.sources[0]!.title).toBe('G')
+  })
+
+  it('skips opencode-go default silently when its credential is missing', async () => {
+    // Custom LLM is unset, opencode-go has no key; the chain must continue
+    // to the free backends without throwing the "no credential" error.
+    const customDisabled = createResolvedConfig({ llm: { enabled: false }, free: { parallelUrl: 'https://search.parallel.ai/mcp', exaUrl: 'https://mcp.exa.ai/mcp' } } as Partial<WebSearchConfig>)
+    const fetchImpl = fakeFetch([parallelOk]) // opencode-go never called
+    const p = createSearchProvider(() => customDisabled, {
+      fetchImpl,
+      resolveGoApiKey: async () => undefined,
+      resolveOpenCodeGoApiKey: async () => undefined,
+    })
+    const result = await p.search({ query: 'q' })
+    expect(result.sources[0]!.url).toBe('https://p.com')
+  })
+
+  it('prefers custom LLM when it works over opencode-go default', async () => {
+    // Both credentials resolve; the custom LLM should win (fewer fetches).
+    const fetchImpl = fakeFetch([goOk, exaOk]) // custom, exa never reached
+    const p = makeProvider({
+      resolveGoApiKey: async () => 'sk-custom',
+      resolveOpenCodeGoApiKey: async () => 'sk-go',
+    }, fetchImpl)
+    const result = await p.search({ query: 'q' })
+    expect(result.sources[0]!.url).toBe('https://g.com')
+    expect(fetchImpl).toHaveBeenCalledTimes(1) // custom LLM only, default skipped
   })
 })
