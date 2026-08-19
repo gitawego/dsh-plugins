@@ -2,9 +2,12 @@
 # install-plugins.sh — install all dsh-plugins packages into a DSH profile.
 #
 # Usage:
-#   bash scripts/install-plugins.sh [PROFILE_DIR]
+#   bash scripts/install-plugins.sh [PROFILE_DIR] [PKG]
 #
 # Defaults to $DSH_HOME/profiles/web (or ~/.dsh/profiles/web).
+# PKG filters to a single package (name or directory under packages/), e.g.
+#   bash scripts/install-plugins.sh "" ui-mobile
+#   bash scripts/install-plugins.sh ~/.dsh/profiles/web lsp
 # The script is idempotent: running it twice changes nothing unless a package
 # was added or removed from packages/.
 #
@@ -18,9 +21,11 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 MONOREPO_DIR="$(dirname "$SCRIPT_DIR")"
 PROFILE="${1:-${DSH_HOME:-${HOME}/.dsh}/profiles/web}"
+PKG="${2:-}"
 
 echo "monorepo: $MONOREPO_DIR"
 echo "profile:  $PROFILE"
+if [ -n "$PKG" ]; then echo "package:  $PKG (filtered)"; fi
 
 # Verify profile exists
 if [ ! -d "$PROFILE" ]; then
@@ -33,11 +38,12 @@ if [ ! -f "$PROFILE/package.json" ]; then
 fi
 
 # Scan packages/ and update profile manifest
-python3 - "$MONOREPO_DIR" "$PROFILE" << 'PYEOF'
+python3 - "$MONOREPO_DIR" "$PROFILE" "$PKG" << 'PYEOF'
 import json, subprocess, os, sys
 
 monorepo = sys.argv[1]
 profile = sys.argv[2]
+pkg_filter = sys.argv[3] or None
 packages_dir = os.path.join(monorepo, 'packages')
 
 manifest_path = os.path.join(profile, 'package.json')
@@ -55,6 +61,8 @@ for name in sorted(os.listdir(packages_dir)):
         pkg = json.load(f)
     pkg_name = pkg.get('name')
     if not pkg_name:
+        continue
+    if pkg_filter and pkg_filter not in (name, pkg_name):
         continue
 
     # Add as file dependency
