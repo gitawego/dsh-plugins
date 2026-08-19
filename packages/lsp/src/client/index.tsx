@@ -1,18 +1,35 @@
 /** dsh-lsp browser plugin (M3): an editable LSP settings section + an
- *  lsp_diagnostics tool card. Everything is DATA-DRIVEN from the host
- *  /_dsh/lsp and /_dsh/lsp/settings routes. The host surface (tools, /lsp
- *  command, progressive diagnostics) runs in every profile; the settings form
- *  reads/writes through the plugin-owned same-origin route. */
+ *  lsp_diagnostics tool card. Migration to rc.7:
+ *    - Live session status: was \`fetch(/_dsh/lsp)\` (a bespoke HTTP route
+ *      hosted by the server). Now subscribes to the host-side
+ *      \`lsp/status\` event; the host fires it on a 2s interval when at
+ *      least one client is subscribed.
+ *    - Settings: was \`fetch(/_dsh/lsp/settings)\` (POST backdrop). Now
+ *      \`ctx.settingsScope.bind({ namespace: 'lsp' })\` — the standard
+ *      settings scope, accessed via the \`settingsScope\` host service. */
 import { useEffect, useState, useSyncExternalStore } from 'react'
-import type { ClientContext, ToolCallBlock } from '@deepseek-ai/dsh-client-runtime/client'
+import type { ClientContext, ToolCallBlock, SettingsScope } from '@deepseek-ai/dsh-client-runtime/client'
+import type { SnapshotStore } from '@deepseek-ai/dsh-client-runtime/client'
 import type {} from '@deepseek-ai/dsh-client-ui-settings/client'
 import type {} from '@deepseek-ai/dsh-client-locale/client'
 import type {} from '@deepseek-ai/dsh-client-ui-tool/client'
 import type { PropsRuntime, TranslateNS } from '@deepseek-ai/dsh-client-ui-slots'
+import { applySettingsPatch, buildSettingsSnapshot, type LspSettingsLike } from '../settings-patch.js'
+import type { LspSettings } from '../config.js'
 
 const NS = 'lsp'
-const STATUS_ROUTE = '/_dsh/lsp'
-const SETTINGS_ROUTE = '/_dsh/lsp/settings'
+
+// Augment the cordis event map with the dsh-lsp client events. The host
+// uses these to maintain a refcount (lsp/status/subscribe increments,
+// lsp/status/unsubscribe decrements) and to fire the live status
+// snapshot (lsp/status).
+declare module '@deepseek-ai/cordis' {
+  interface Events {
+    'lsp/status': (snapshot: unknown) => void
+    'lsp/status/subscribe': () => void
+    'lsp/status/unsubscribe': () => void
+  }
+}
 
 type LspTranslate = TranslateNS<'lsp'>
 
@@ -146,12 +163,6 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
 }
 
-interface ApiEnvelope<T> {
-  ok: boolean
-  value?: T
-  error?: { code: string; message: string }
-}
-
 // ── status store (live sessions + configured servers) ──────────────────────
 
 interface StatusState {
@@ -163,7 +174,6 @@ interface StatusState {
 export class StatusController {
   private state: StatusState = { status: 'idle' }
   private readonly listeners = new Set<() => void>()
-  private generation = 0
 
   subscribe = (listener: () => void): (() => void) => {
     this.listeners.add(listener)
@@ -177,20 +187,18 @@ export class StatusController {
     for (const listener of this.listeners) listener()
   }
 
-  async load(): Promise<void> {
-    const generation = ++this.generation
-    this.set({ status: 'loading', error: undefined })
-    try {
-      const response = await fetch(STATUS_ROUTE, { credentials: 'same-origin' })
-      const body = await response.json() as ApiEnvelope<LspSnapshot>
-      if (generation !== this.generation) return
-      if (!response.ok || !body.ok || body.value === undefined) {
-        throw new Error(body.error?.message ?? `LSP status request failed with HTTP ${response.status}`)
-      }
-      this.set({ status: 'ready', snapshot: body.value })
-    } catch (error) {
-      if (generation !== this.generation) return
-      this.set({ status: 'error', error: error instanceof Error ? error.message : String(error) })
+  /** Bind the controller to the host-side lsp/status event. The host
+   *  fires the event on a 2s interval when at least one client is
+   *  subscribed. The subscribe/unsubscribe refcount is maintained by
+   *  the host (lsp/status/subscribe and lsp/status/unsubscribe). */
+  bind(ctx: ClientContext): () => void {
+    ctx.emit('lsp/status/subscribe')
+    const off = ctx.on('lsp/status', (snapshot) => {
+      this.set({ status: 'ready', snapshot: snapshot as LspSnapshot })
+    })
+    return () => {
+      off()
+      ctx.emit('lsp/status/unsubscribe')
     }
   }
 }
@@ -216,7 +224,8 @@ interface SettingsState {
 export class SettingsController {
   private state: SettingsState = { status: 'idle' }
   private readonly listeners = new Set<() => void>()
-  private generation = 0
+  private scope: SettingsScope<LspSettings> | undefined
+  private updateScope: ((patch: Record<string, unknown>) => Promise<void>) | undefined
 
   subscribe = (listener: () => void): (() => void) => {
     this.listeners.add(listener)
@@ -230,42 +239,41 @@ export class SettingsController {
     for (const listener of this.listeners) listener()
   }
 
-  async load(): Promise<void> {
-    const generation = ++this.generation
-    this.set({ ...this.state, status: 'loading', error: undefined })
-    try {
-      const response = await fetch(SETTINGS_ROUTE, { credentials: 'same-origin' })
-      const body = await response.json() as ApiEnvelope<LspSettingsSnapshot>
-      if (generation !== this.generation) return
-      if (!response.ok || !body.ok || body.value === undefined) {
-        throw new Error(body.error?.message ?? `LSP settings request failed with HTTP ${response.status}`)
-      }
-      this.set({ status: 'ready', snapshot: body.value })
-    } catch (error) {
-      if (generation !== this.generation) return
-      this.set({ ...this.state, status: 'error', error: error instanceof Error ? error.message : String(error) })
+  /** Bind to the settings scope. Replaces the previous fetch-based
+   *  GET/POST backdrop with the rc.7 settingsScope service. */
+  bind(
+    scope: SettingsScope<LspSettings>,
+    updateScope: (patch: Record<string, unknown>) => Promise<void>,
+  ): void {
+    this.scope = scope
+    this.updateScope = updateScope
+    this.refresh()
+    scope.subscribe(() => { this.refresh() })
+  }
+
+  refresh(): void {
+    const scope = this.scope
+    if (scope === undefined) return
+    const raw = scope.getSnapshot()
+    if (raw.value === undefined) {
+      this.set({ status: 'idle' })
+      return
     }
+    const snapshot: LspSettingsSnapshot = {
+      writable: raw.writable === true,
+      value: raw.value as LspSettingsSnapshot['value'],
+    }
+    this.set({ status: 'ready', snapshot })
   }
 
   async save(patch: Record<string, unknown>): Promise<void> {
-    const generation = ++this.generation
     this.set({ ...this.state, status: 'saving', error: undefined })
     try {
-      const response = await fetch(SETTINGS_ROUTE, {
-        method: 'POST',
-        credentials: 'same-origin',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(patch),
-      })
-      const body = await response.json() as ApiEnvelope<LspSettingsSnapshot>
-      if (generation !== this.generation) return
-      if (!response.ok || !body.ok || body.value === undefined) {
-        throw new Error(body.error?.message ?? `LSP settings save failed with HTTP ${response.status}`)
-      }
-      this.set({ status: 'ready', snapshot: body.value })
+      await this.updateScope?.(patch)
+      this.refresh()
     } catch (error) {
-      if (generation !== this.generation) return
-      this.set({ ...this.state, status: 'error', error: error instanceof Error ? error.message : String(error) })
+      const message = error instanceof Error ? error.message : String(error)
+      this.set({ ...this.state, status: 'error', error: message })
       throw error
     }
   }
@@ -329,16 +337,17 @@ function DiagnosticsView({ block, t = enFallback }: ToolViewProps) {
 // ── LSP settings section (editable form + live status) ─────────────────────
 
 type SettingsViewProps = PropsRuntime<'settings.section'> & {
+  ctx: ClientContext
   t?: LspTranslate
   status?: StatusController
   settings?: SettingsController
 }
 
-function SettingsSection({ status, settings, t = enFallback }: SettingsViewProps) {
+function SettingsSection({ status, settings, t = enFallback, ctx }: SettingsViewProps) {
   if (settings === undefined || status === undefined) {
     return <div className="dls-settings"><div className="dls-loading">{t('loading')}</div></div>
   }
-  return <LoadedSettings status={status} settings={settings} t={t} />
+  return <LoadedSettings status={status} settings={settings} t={t} ctx={ctx} />
 }
 
 interface Draft {
@@ -382,14 +391,13 @@ function draftOf(value: LspSettingsSnapshot['value']): Draft {
   }
 }
 
-function LoadedSettings({ status, settings, t }: { status: StatusController; settings: SettingsController; t: LspTranslate }) {
+function LoadedSettings({ status, settings, t, ctx }: { status: StatusController; settings: SettingsController; t: LspTranslate; ctx: ClientContext }) {
   const statusState = useSyncExternalStore(status.subscribe, status.getSnapshot)
   const settingsState = useSyncExternalStore(settings.subscribe, settings.getSnapshot)
   const [draft, setDraft] = useState<Draft | undefined>(undefined)
   const [message, setMessage] = useState<string | undefined>(undefined)
 
-  useEffect(() => { void status.load() }, [status])
-  useEffect(() => { void settings.load() }, [settings])
+  useEffect(() => status.bind(ctx), [status])
   useEffect(() => {
     if (settingsState.snapshot !== undefined) setDraft(draftOf(settingsState.snapshot.value))
   }, [settingsState.snapshot])
@@ -436,7 +444,6 @@ function LoadedSettings({ status, settings, t }: { status: StatusController; set
     try {
       await settings.save(patch)
       setMessage(t('saved'))
-      void status.load()
     } catch (error) {
       setMessage(`${t('saveFailed')}: ${error instanceof Error ? error.message : String(error)}`)
     }
@@ -508,7 +515,7 @@ function LoadedSettings({ status, settings, t }: { status: StatusController; set
         )}
         <div className="dls-save-row">
           <button type="button" className="dls-primary" disabled={!writable || settingsState.status === 'saving'} onClick={() => { void save() }}>{settingsState.status === 'saving' ? t('saving') : t('save')}</button>
-          <button type="button" className="dls-outline" disabled={statusState.status === 'loading'} onClick={() => { void status.load(); void settings.load() }}>{t('reload')}</button>
+          <button type="button" className="dls-outline" disabled={statusState.status === 'loading'} onClick={() => { void settings.refresh() }}>{t('reload')}</button>
         </div>
       </section>
     </div>
@@ -577,7 +584,7 @@ function installStyles(): () => void {
 }
 
 /** Required client services. */
-export const inject = ['slots', 'locale']
+export const inject = ['slots', 'locale', 'settingsScope']
 
 /** Register the lsp_diagnostics tool card and the editable LSP settings section. */
 export function apply(ctx: ClientContext): void {
@@ -586,16 +593,42 @@ export function apply(ctx: ClientContext): void {
   const t = ctx.locale.bind(NS)
   const status = new StatusController()
   const settings = new SettingsController()
+  // Bind the controllers to the rc.7 host services. `settingsScope` is the
+  // standard settings seam exposed by dsh-client-ui-settings; the live
+  // status comes from the host-side `lsp/status` event (subscribed via
+  // `ctx.on`). The host maintains a refcount via lsp/status/subscribe so
+  // the 2s interval only fires when at least one client is listening.
+  status.bind(ctx)
+  const settingsScope = ctx.settingsScope.bind<LspSettings>({ namespace: 'lsp' })
+  settings.bind(settingsScope, async (patch) => {
+    await applySettingsPatch({ settings: { writable: true } } as never, {
+      get: () => settingsScope.getSnapshot().value as LspSettings,
+      update: async () => {},
+      mutate: async (ops: Array<{ op: 'set'; path: string | string[]; value?: unknown } | { op: 'unset'; path: string | string[] }>) => {
+        for (const op of ops) {
+          const path = Array.isArray(op.path) ? op.path : [op.path]
+          await settingsScope.set(path.join('.'), op.op === 'set' ? (op.value as never) : (undefined as never))
+        }
+      },
+    } as never, patch)
+  })
 
   ctx.slots.inject('tool.call.toolview', function* () {
     yield ctx.slots.register({ name: 'tool.call.toolview', key: 'lsp_diagnostics', inject: () => ({ t }) }, DiagnosticsView)
   })
 
+  // The slot's inject factory is the only place with access to the host
+  // services; the owner-props face doesn't carry ctx, so the component
+  // captures it via a closure. We wrap SettingsSection in a small
+  // function that injects ctx as an additional prop.
+  const SettingsSectionWithCtx = (
+    props: Omit<SettingsViewProps, 'ctx'>,
+  ): JSX.Element => SettingsSection({ ...props, ctx })
   ctx.slots.inject('settings.section', () => ctx.slots.register({
     name: 'settings.section',
     id: 'lsp',
     order: 40,
     label: () => t('nav'),
     inject: () => ({ t, status, settings }),
-  }, SettingsSection))
+  }, SettingsSectionWithCtx))
 }
