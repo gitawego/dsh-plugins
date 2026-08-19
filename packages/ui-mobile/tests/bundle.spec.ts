@@ -30,7 +30,6 @@ describe('dsh-ui-mobile client bundle', () => {
     expect(bundle).toContain("'min(300px, 88vw) 0 0'")
     expect(bundle).toContain("'0 0 min(300px, 88vw)'")
     expect(bundle).toContain('ctx.layout.toggleSidebar')
-    expect(bundle).toContain('ctx.layout.openDetails')
     expect(bundle).toContain('ctx.layout.closeDetails')
   })
 
@@ -38,9 +37,10 @@ describe('dsh-ui-mobile client bundle', () => {
     // conversation header: compact + tabs spaced
     expect(bundle).toContain('.wSkVaW_header')
     expect(bundle).toContain('.wSkVaW_tabs')
-    // composer toolbar: wrap + 44px tap targets so +/model/send don't overlap
+    // composer toolbar: one compact row, shrinkable selectors, >= 32px targets
     expect(bundle).toContain('.uV2eYG_row')
-    expect(bundle).toContain('min-width: 44px; min-height: 44px')
+    expect(bundle).toContain('flex-wrap: nowrap')
+    expect(bundle).toContain('width: 32px; height: 32px; min-width: 32px; min-height: 32px')
     // model select readable
     expect(bundle).toContain('._7KE1Ra_trigger')
     // todo titles wrap instead of truncating
@@ -50,7 +50,7 @@ describe('dsh-ui-mobile client bundle', () => {
     expect(bundle).toContain('.p-xYUq_actions')
   })
 
-  it('provides a top-left action bar and scrim and cleans up on dispose', () => {
+  it('provides a single top-left navigation button and scrim and cleans up on dispose', () => {
     expect(bundle).toContain('bar.id = BAR_ID')
     expect(bundle).toContain('scrim.id = SCRIM_ID')
     expect(bundle).toContain('gap: 16px')
