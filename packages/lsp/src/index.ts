@@ -5,6 +5,19 @@ import type {} from '@deepseek-ai/dsh-commands'
 import type {} from '@deepseek-ai/dsh-settings'
 import type {} from '@deepseek-ai/dsh-tools'
 import type { ToolRunContext } from '@deepseek-ai/dsh-tools'
+
+// Augment the cordis event map with dsh-lsp's own events. The host fires
+// `lsp/status` whenever the live session snapshot changes; the client
+// subscribes via `ctx.on('lsp/status', ...)`. The `lsp/status/*` events
+// maintain a listener-refcount so the host only emits when at least one
+// client is interested (avoids a 2s heartbeat forever).
+declare module '@deepseek-ai/cordis' {
+  interface Events {
+    'lsp/status': (snapshot: { writable: boolean; sessions: SessionStatus[] }) => void
+    'lsp/status/subscribe': () => void
+    'lsp/status/unsubscribe': () => void
+  }
+}
 import { createUserMessage } from '@deepseek-ai/dsh-llm'
 import { join } from 'node:path'
 import { homedir } from 'node:os'
@@ -37,7 +50,7 @@ import {
   createSymbolsTool,
   createWorkspaceSymbolTool,
 } from './queries.ts'
-import { installLspWeb, type LspSettingsLike } from './web.ts'
+import { applySettingsPatch, buildSettingsSnapshot, type LspSettingsLike } from './settings-patch.ts'
 
 export const name = 'dsh-lsp'
 
@@ -242,7 +255,20 @@ export function apply(ctx: Context, base: Partial<LspSettings> = {}) {
     releaseManager(agent)
   })
 
-  installLspWeb(ctx, () => resolved, liveStatus, lspSettings)
+  // LSP live-status updates are pushed to the client via the host-side
+  // `lsp/status` event. The client subscribes via `host.on('lsp/status', ...)`,
+  // no plugin-owned HTTP route needed. The host fires the event on a 2s
+  // interval while at least one listener is registered; the listener
+  // registry is owned by the host and incremented/decremented by the
+  // client via the `lsp/status/subscribe` event.
+  let statusListenerCount = 0
+  ctx.on('lsp/status/subscribe', () => { statusListenerCount += 1 })
+  ctx.on('lsp/status/unsubscribe', () => { statusListenerCount -= 1 })
+  const statusInterval = setInterval(() => {
+    if (statusListenerCount <= 0) return
+    ctx.emit('lsp/status', { writable: ctx.settings.writable, sessions: liveStatus() })
+  }, 2_000)
+  void statusInterval.unref?.()
 
   ctx.logger.info('dsh-lsp ready (%d server routes configured)', Object.keys(resolved.servers).length)
 

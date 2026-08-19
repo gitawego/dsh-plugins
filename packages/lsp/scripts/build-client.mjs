@@ -1,9 +1,11 @@
 import { mkdir, readFile, rm, writeFile } from 'node:fs/promises'
-import { dirname, join } from 'node:path'
+import { basename, dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const root = dirname(fileURLToPath(new URL('../package.json', import.meta.url)))
-const compiledPath = join(root, '.client-build', 'index.js')
+// The client tsconfig has rootDir: src; src/client/index.tsx emits to
+// .client-build/client/index.js (the leading src/ is preserved by tsc).
+const compiledPath = join(root, '.client-build', 'client', 'index.js')
 // client.bundle.js (NOT client.js): src/client.ts compiles to lib/client.js
 // as the SERVER-side LSP client (manager.ts imports { createClient } from it);
 // the browser bundle must not clobber that module.
@@ -28,4 +30,5 @@ const rawMap = JSON.parse(await readFile(compiledPath + '.map', 'utf8'))
 rawMap.file = 'client.bundle.js'
 rawMap.sources = rawMap.sources.map((sourcePath) => `../src/client/${sourcePath.replace(/^\.\.\//u, '')}`)
 await writeFile(outputPath + '.map', JSON.stringify(rawMap) + '\n')
+
 await rm(join(root, '.client-build'), { recursive: true, force: true })
