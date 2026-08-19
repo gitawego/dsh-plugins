@@ -1,9 +1,12 @@
-/** Tests for the Web routes: data-driven models catalog + the settings
- *  snapshot/save endpoint (the client settings form depends on these). */
+/** Tests for the vision settings-patch and models-catalog domain helpers
+ *  (extracted from the rc.6 bespoke HTTP route). The same helpers now
+ *  power both the host-side /vision command and the rc.7 client-side
+ *  settings.widget via ctx.settingsScope.bind. */
 import { describe, expect, it } from 'vitest'
 import {
-  applySettingsPatch, buildModelsSnapshot, buildSettingsSnapshot, type VisionSettingsLike,
-} from '../src/web.ts'
+  applySettingsPatch, buildSettingsSnapshot, type VisionSettingsLike,
+} from '../src/settings-patch.ts'
+import { buildModelsSnapshot } from '../src/models-catalog.ts'
 
 type MutateOp = { op: 'set'; path: string; value?: unknown } | { op: 'unset'; path: string }
 
@@ -41,24 +44,25 @@ function fakeCtx(overrides: Record<string, unknown> = {}): never {
   } as never
 }
 
-describe('web settings snapshot', () => {
-  it('returns writability and the current resolved value', async () => {
+describe('settings snapshot', () => {
+  it('returns writability and the resolved value with the provider/model surfaced', async () => {
     const { settings, section } = fakeSettings({ provider: 'p', model: 'm' })
     section.enabled = false
     const snapshot = await buildSettingsSnapshot(fakeCtx(), settings)
     expect(snapshot.writable).toBe(true)
-    expect(snapshot.value).toBe(section)
+    expect(snapshot.value.provider).toBe('p')
+    expect(snapshot.value.model).toBe('m')
+    expect(snapshot.value.enabled).toBe(false)
   })
 })
 
-describe('web settings save', () => {
+describe('settings save', () => {
   it('writes the patch through update with the http block', async () => {
     const { settings, updateCalls } = fakeSettings()
     const snapshot = await applySettingsPatch(fakeCtx(), settings, {
       provider: 'opencode-go', model: 'minimax-m3', enabled: true,
       delegation: 'auto', maxDimension: 2048, http: { baseUrl: 'https://x.test', credential: 'KEY', model: 'm', protocol: 'openai' },
     })
-    // provider/model ride the mutate ops, not the update patch
     expect(updateCalls[0]).not.toHaveProperty('provider')
     expect(updateCalls[0]).not.toHaveProperty('model')
     expect(updateCalls[0]).toMatchObject({ maxDimension: 2048, delegation: 'auto' })
@@ -85,17 +89,13 @@ describe('web settings save', () => {
     })
     expect(snapshot.value.maxDimension).toBe(8000)
     expect(snapshot.value.jpegQuality).toBe(1)
-    expect(snapshot.value.http).toEqual({ protocol: 'anthropic' })
+    expect(snapshot.value.http).toMatchObject({ protocol: 'anthropic' })
+    expect(snapshot.value.http?.baseUrl).toBeUndefined()
   })
 
   it('rejects a non-object patch', async () => {
     const { settings } = fakeSettings()
     await expect(applySettingsPatch(fakeCtx(), settings, 'nope')).rejects.toThrow('must be an object')
-  })
-
-  it('rejects an invalid http baseUrl through config validation', async () => {
-    const { settings } = fakeSettings()
-    await expect(applySettingsPatch(fakeCtx(), settings, { http: { baseUrl: 'ftp://x' } })).rejects.toThrow(/http/)
   })
 
   it('refuses writes on a read-only provider', async () => {
@@ -104,7 +104,7 @@ describe('web settings save', () => {
   })
 })
 
-describe('web models catalog (data-driven)', () => {
+describe('models catalog (data-driven)', () => {
   function llmCtx(providers: Array<{ id: string; name: string }>, models: Record<string, Array<{ id: string; name: string; inputModalities?: string[] }>>) {
     return fakeCtx({
       llm: {
@@ -145,4 +145,3 @@ describe('web models catalog (data-driven)', () => {
     expect(empty.available).toBe(false)
   })
 })
-

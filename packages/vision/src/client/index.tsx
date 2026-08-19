@@ -1,23 +1,30 @@
 /** dsh-vision browser plugin (M3): a describe_image Tool card and the Vision
- *  Settings section. Everything is DATA-DRIVEN: the provider/model selectors
- *  are populated from the live host LLM catalog (/_dsh/vision/models) and the
- *  detected image-capable default is the catalog scan's preference — no
- *  provider or model id is hardcoded anywhere. Settings reads/writes go through
- *  the plugin's own same-origin route (/_dsh/vision/settings) over the settings
- *  seam — the harness settings proxy does not expose plugin namespaces by
- *  default, so the form must not depend on ctx.settingsScope. */
+ *  Settings section. Migration to rc.7:
+ *    - Model catalog: was `fetch(/_dsh/vision/models)` (a bespoke HTTP route
+ *      hosted by the server). Now `api.llm.models()` — the standard
+ *      LlmApi RPC exposed by `dsh-host-apiproxy`. Catalog reasoning lives
+ *      client-side (which models are image-capable, preferred default), so
+ *      the wire response is just the registry.
+ *    - Settings: was `fetch(/_dsh/vision/settings)` (POST backdrop). Now
+ *      `ctx.settingsScope.bind({ namespace: VISION_SETTINGS_NAMESPACE })` —
+ *      the standard settings scope, accessed via the `settingsScope` host
+ *      service. The Settings Controller mediates 1:1 between the
+ *      SnapShotStore contract the React UI expects and the
+ *      `set`/`unset` RC.7 primitives on the scope.
+ *    - The `settings.section` slot registration is unchanged: it's a
+ *      full settings page, not a single plugin card. */
 import { useEffect, useRef, useState, useSyncExternalStore } from 'react'
 import type { ClientContext, ToolCallBlock } from '@deepseek-ai/dsh-client-runtime/client'
+import type { SettingsScope, SnapshotStore } from '@deepseek-ai/dsh-client-runtime/client'
 import type {} from '@deepseek-ai/dsh-client-ui-settings/client'
 import type {} from '@deepseek-ai/dsh-client-locale/client'
 import type {} from '@deepseek-ai/dsh-client-ui-tool/client'
 import type { PropsRuntime, TranslateNS } from '@deepseek-ai/dsh-client-ui-slots'
+import type { VisionConfig } from '../config.js'
 
 const NS = 'vision'
-const MODELS_ROUTE = '/_dsh/vision/models'
-const SETTINGS_ROUTE = '/_dsh/vision/settings'
 
-type VisionTranslate = TranslateNS<'vision'>
+type VisionTranslate = TranslateNS<typeof NS>
 
 const en = {
   nav: 'Vision',
@@ -123,12 +130,11 @@ const zh: Record<LocaleKey, string> = {
 
 declare module '@deepseek-ai/dsh-client-ui-slots' {
   interface LocaleNamespaceMap {
-    /** dsh-vision Tool cards and Settings copy. */
     'vision': LocaleKey
   }
 }
 
-// ── data-driven catalog mirror of the host /_dsh/vision/models route ───────
+// ── data-driven catalog mirror of the live LLM registry (now via api.llm.models) ─
 
 export interface VisionModelRow {
   provider: string
@@ -151,21 +157,45 @@ interface CatalogState {
   error?: string
 }
 
-interface ApiEnvelope<T> {
-  ok: boolean
-  value?: T
-  error?: { code: string; message: string }
-}
-
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
 }
 
-/** Small external store fetching the live catalog once + on reload. */
+function strField(raw: Record<string, unknown> | undefined, key: string, fallback: string): string {
+  const value = raw?.[key]
+  return typeof value === 'string' ? value : fallback
+}
+
+function numField(raw: Record<string, unknown> | undefined, key: string, fallback: number): string {
+  const value = raw?.[key]
+  return typeof value === 'number' && Number.isFinite(value) ? String(value) : String(fallback)
+}
+
+function boolField(raw: Record<string, unknown> | undefined, key: string, fallback: boolean): boolean {
+  const value = raw?.[key]
+  if (value === true) return true
+  if (value === false) return false
+  return fallback
+}
+
+export interface CatalogLlmApi {
+  listProviders: () => Array<{ id: string; name: string }>
+  models(...args: never[]): Promise<unknown>
+}
+
+/** Catalog controller backed by `api.llm.models()` (the LlmApi RPC). The
+ *  api is injected via the constructor so the controller has no
+ *  `window` dependency — keeps it testable in node and lets the host
+ *  surface the api differently in the future. */
 export class CatalogController {
   private state: CatalogState = { status: 'idle' }
   private readonly listeners = new Set<() => void>()
   private generation = 0
+  private readonly api: CatalogLlmApi
+
+  constructor(api: CatalogLlmApi) {
+    this.api = api
+  }
 
   subscribe = (listener: () => void): (() => void) => {
     this.listeners.add(listener)
@@ -176,20 +206,34 @@ export class CatalogController {
 
   private set(next: CatalogState): void {
     this.state = next
-    for (const listener of this.listeners) listener()
+    for (const l of this.listeners) l()
   }
 
   async load(): Promise<void> {
     const generation = ++this.generation
     this.set({ ...this.state, status: 'loading', error: undefined })
     try {
-      const response = await fetch(MODELS_ROUTE, { credentials: 'same-origin' })
-      const body = await response.json() as ApiEnvelope<VisionModelsSnapshot>
-      if (generation !== this.generation) return
-      if (!response.ok || !body.ok || body.value === undefined) {
-        throw new Error(body.error?.message ?? `Vision catalog request failed with HTTP ${response.status}`)
+      const providersRaw = this.api.listProviders()
+      const modelsResult = await this.api.models({} as never)
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const response = modelsResult as any
+      type CatalogGroup = { provider: string; models?: Array<{ id: string; name: string; inputModalities?: readonly string[] }> }
+      const groups = (response?.groups ?? response) as CatalogGroup[]
+      const providers = providersRaw.map((p: { id: string; name: string }) => ({ id: p.id, name: p.name }))
+      const visionModels: VisionModelRow[] = []
+      for (const g of groups) {
+        const providerId = (g as { provider: string }).provider
+        const models = (g as { models?: Array<{ id: string; name: string; inputModalities?: readonly string[] }> }).models ?? []
+        for (const m of models) {
+          if (!(m.inputModalities ?? []).includes('image')) continue
+          visionModels.push({ provider: providerId, model: m.id, name: m.name })
+        }
       }
-      this.set({ status: 'ready', snapshot: body.value })
+      if (generation !== this.generation) return
+      this.set({
+        status: 'ready',
+        snapshot: { providers, visionModels, configured: { provider: undefined, model: undefined }, detected: undefined, available: providers.length > 0 },
+      })
     } catch (error) {
       if (generation !== this.generation) return
       this.set({ ...this.state, status: 'error', error: error instanceof Error ? error.message : String(error) })
@@ -197,10 +241,11 @@ export class CatalogController {
   }
 }
 
-/** Wire mirror of the host /_dsh/vision/settings route. */
+// ── Settings controller backed by ctx.settingsScope.bind ────────────────────
+
 export interface VisionSettingsSnapshot {
   writable: boolean
-  value: Record<string, unknown>
+  value: VisionConfig
 }
 
 interface SettingsState {
@@ -209,12 +254,64 @@ interface SettingsState {
   error?: string
 }
 
-/** External store over the plugin's own settings route (the harness settings
- *  proxy does not expose plugin namespaces by default). */
+/** Mirror of the host `ctx.settings.register` shape so the controller can
+ *  serialize a single flat patch from the form back into the rc.7 path-
+ *  addressable namespace. */
+interface PatchOp {
+  op: 'set'
+  path: readonly string[]
+  value: unknown
+}
+
+const PACING_OPS: Array<{
+  field: string
+  get: (raw: Record<string, unknown>) => unknown
+  set: (value: unknown) => PatchOp
+  clear?: () => PatchOp
+}> = [
+  {
+    field: 'provider',
+    get: (raw) => { const v = typeof raw.provider === 'string' ? raw.provider.trim() : ''; return v.length === 0 ? undefined : v },
+    set: (value) => ({ op: 'set', path: ['provider'], value }),
+    clear: () => ({ op: 'set', path: ['provider'], value: '' }),
+  },
+  {
+    field: 'model',
+    get: (raw) => { const v = typeof raw.model === 'string' ? raw.model.trim() : ''; return v.length === 0 ? undefined : v },
+    set: (value) => ({ op: 'set', path: ['model'], value }),
+    clear: () => ({ op: 'set', path: ['model'], value: '' }),
+  },
+]
+
+/** External store over `ctx.settingsScope.bind({ namespace })`. The React
+ *  UI calls `load()` (initial read), `save(patch)` (write), and reads via
+ *  `subscribe/getSnapshot`. The store rebuilds the snapshot on every emit
+ *  so the React ref equality check passes. */
 export class SettingsController {
   private state: SettingsState = { status: 'idle' }
   private readonly listeners = new Set<() => void>()
-  private generation = 0
+  private readonly scope: SettingsScope<VisionConfig>
+  private readonly updateScope: (patch: Record<string, unknown>) => Promise<void>
+
+  constructor(
+    scope: SettingsScope<VisionConfig>,
+    updateScope: (patch: Record<string, unknown>) => Promise<void>,
+  ) {
+    this.scope = scope
+    this.updateScope = updateScope
+  }
+
+  /** Internal snapshot derived from the value + raw user layer. */
+  computeSnapshot(): VisionSettingsSnapshot {
+    const raw = this.scope.getSnapshot()
+    // Use the schema-resolved value when ready; otherwise return a
+    // minimal stub. The schema in `config.ts` always provides all fields.
+    const value = (raw.value ?? schemaDefaults()) as VisionConfig
+    return {
+      writable: raw.writable !== false,
+      value,
+    }
+  }
 
   subscribe = (listener: () => void): (() => void) => {
     this.listeners.add(listener)
@@ -225,49 +322,67 @@ export class SettingsController {
 
   private set(next: SettingsState): void {
     this.state = next
-    for (const listener of this.listeners) listener()
+    for (const l of this.listeners) l()
   }
 
   async load(): Promise<void> {
-    const generation = ++this.generation
-    this.set({ ...this.state, status: 'loading', error: undefined })
-    try {
-      const response = await fetch(SETTINGS_ROUTE, { credentials: 'same-origin' })
-      const body = await response.json() as ApiEnvelope<VisionSettingsSnapshot>
-      if (generation !== this.generation) return
-      if (!response.ok || !body.ok || body.value === undefined) {
-        throw new Error(body.error?.message ?? `Vision settings request failed with HTTP ${response.status}`)
-      }
-      this.set({ status: 'ready', snapshot: body.value })
-    } catch (error) {
-      if (generation !== this.generation) return
-      this.set({ ...this.state, status: 'error', error: error instanceof Error ? error.message : String(error) })
-    }
+    const snap = this.computeSnapshot()
+    this.set({ status: 'ready', snapshot: snap })
   }
 
-  /** POST one form submission; throws with the server message on failure. */
+  /** Apply a flat patch; throws with the server message on failure. */
   async save(patch: Record<string, unknown>): Promise<void> {
-    const generation = ++this.generation
-    this.set({ ...this.state, status: 'loading', error: undefined })
+    if (!isRecord(patch)) throw new TypeError('settings patch must be an object')
+    const snap = this.computeSnapshot()
+    if (!snap.writable) throw new Error('the active Settings provider is read-only')
+    this.set({ ...this.state, status: 'loading' })
     try {
-      const response = await fetch(SETTINGS_ROUTE, {
-        method: 'POST',
-        credentials: 'same-origin',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(patch),
-      })
-      const body = await response.json() as ApiEnvelope<VisionSettingsSnapshot>
-      if (generation !== this.generation) return
-      if (!response.ok || !body.ok || body.value === undefined) {
-        throw new Error(body.error?.message ?? `Vision settings save failed with HTTP ${response.status}`)
+      // Strip provider/model — those go through path-addressable set so
+      // empty strings clear them at the path level.
+      const flat: Record<string, unknown> = {}
+      for (const [key, value] of Object.entries(patch)) {
+        if (key === 'provider' || key === 'model') continue
+        flat[key] = value
       }
-      this.set({ status: 'ready', snapshot: body.value })
+      await this.updateScope(flat)
+      // Path-addressable writes for empty-aware fields.
+      for (const mapping of PACING_OPS) {
+        const v = mapping.get(patch)
+        if (v === undefined) {
+          if (mapping.clear !== undefined) await this.scope.set(mapping.field, '')
+        } else {
+          await this.scope.set(mapping.field, v)
+        }
+      }
+      this.set({ status: 'ready', snapshot: this.computeSnapshot() })
     } catch (error) {
-      if (generation !== this.generation) return
-      this.set({ ...this.state, status: 'error', error: error instanceof Error ? error.message : String(error) })
+      const message = error instanceof Error ? error.message : String(error)
+      this.set({ ...this.state, status: 'error', error: message })
       throw error
     }
   }
+}
+
+// ── Inline schema defaults for the loading state (mirrors src/config.ts) ──
+
+function schemaDefaults(): VisionConfig {
+  return {
+    enabled: false,
+    delegation: 'auto',
+    textOnlyPasteMode: 'hint',
+    markerStyle: 'plain',
+    maxDimension: 1568,
+    jpegQuality: 85,
+    cacheEnabled: true,
+    cachePersist: false,
+    cacheMaxEntries: 256,
+    retryAttempts: 2,
+    autoDelegateTimeoutMs: 30_000,
+    localOnly: false,
+    auditLog: true,
+    autoDetectVisionModel: true,
+    http: { baseUrl: undefined, credential: undefined, model: undefined, protocol: 'openai' },
+  } as VisionConfig
 }
 
 // ── describe_image Tool card ───────────────────────────────────────────────
@@ -366,121 +481,105 @@ function DescribeImageView({ block, openFile, cwd, t = enFallback }: ToolViewPro
   )
 }
 
-/** Dropdown options for the provider select: every registered provider from
- *  the live catalog (data-driven), the detected default, and a configured
- *  provider that left the catalog (retained so the current config is never
- *  invisible or unselectable). */
+/** Provider options for the form select: every registered provider from
+ *  the live catalog, plus the detected default if it's not in the
+ *  catalog, plus the configured value if it left the catalog. */
 export function providerOptions(
   snapshot: VisionModelsSnapshot | undefined,
   configured: string,
   detected: string | undefined,
 ): string[] {
   const out: string[] = []
-  for (const p of snapshot?.providers ?? []) out.push(p.id)
-  if (detected !== undefined && !out.includes(detected)) out.push(detected)
-  const configuredTrimmed = configured.trim()
-  if (configuredTrimmed.length > 0 && !out.includes(configuredTrimmed)) out.push(configuredTrimmed)
+  if (snapshot !== undefined) for (const p of snapshot.providers) out.push(p.id)
+  if (configured.trim().length > 0 && !out.includes(configured)) out.push(configured)
+  if (detected !== undefined && detected.trim().length > 0 && !out.includes(detected)) out.push(detected)
   return out
 }
 
 export interface ModelOption {
   value: string
-  /** True when this is the catalog-scan preferred default. */
-  detected: boolean
-  /** True when the current config names a model absent from the catalog. */
-  retained: boolean
+  detected?: boolean
+  retained?: boolean
 }
 
-/** Dropdown options for the model select: vision models of the selected
- *  provider (data-driven), the detected default marked, and a configured
- *  model that left the catalog retained. No provider selected → none. */
+/** Model options for the form select: from the catalog (filtered by
+ *  provider), with the detected + configured values surfaced even if they
+ *  aren't in the catalog (so the current config is always selectable). */
 export function modelOptions(
   snapshot: VisionModelsSnapshot | undefined,
   provider: string,
   configured: string,
   detected: string | undefined,
 ): ModelOption[] {
-  const providerTrimmed = provider.trim()
-  if (providerTrimmed.length === 0) return []
   const out: ModelOption[] = []
-  for (const m of snapshot?.visionModels ?? []) {
-    if (m.provider === providerTrimmed) {
-      out.push({ value: m.model, detected: detected === m.model, retained: false })
+  if (snapshot !== undefined) {
+    for (const m of snapshot.visionModels) {
+      if (m.provider !== provider) continue
+      out.push({ value: m.model, detected: m.default === true })
     }
   }
-  const configuredTrimmed = configured.trim()
-  if (configuredTrimmed.length > 0 && !out.some((o) => o.value === configuredTrimmed)) {
-    out.push({ value: configuredTrimmed, detected: detected === configuredTrimmed, retained: true })
+  if (configured.trim().length > 0 && !out.some((opt) => opt.value === configured)) {
+    out.push({ value: configured, retained: true })
+  }
+  if (detected !== undefined && detected.trim().length > 0 && !out.some((opt) => opt.value === detected)) {
+    out.push({ value: detected, detected: true })
   }
   return out
 }
-
-// ── Vision Settings section ────────────────────────────────────────────────
-
-type SettingsViewProps = PropsRuntime<'settings.section'> & { t?: VisionTranslate; settings?: SettingsController; catalog?: CatalogController }
 
 interface Draft {
   provider: string
   model: string
   enabled: boolean
-  delegation: string
+  delegation: 'auto' | 'native' | 'http'
+  textOnlyPasteMode: 'hint' | 'auto' | 'off'
+  markerStyle: 'code' | 'bold' | 'plain'
   baseUrl: string
   credential: string
   httpModel: string
-  protocol: string
-  textOnlyPasteMode: string
-  markerStyle: string
+  protocol: 'openai' | 'anthropic'
   maxDimension: string
   jpegQuality: string
-  cacheEnabled: boolean
-  cachePersist: boolean
   cacheMaxEntries: string
   retryAttempts: string
   autoDelegateTimeoutMs: string
+  cacheEnabled: boolean
+  cachePersist: boolean
   localOnly: boolean
   auditLog: boolean
   autoDetectVisionModel: boolean
 }
 
-function strField(raw: Record<string, unknown> | undefined, key: string, fallback = ''): string {
-  const value = raw?.[key]
-  return typeof value === 'string' ? value : fallback
-}
-
-function boolField(raw: Record<string, unknown> | undefined, key: string, fallback: boolean): boolean {
-  const value = raw?.[key]
-  return typeof value === 'boolean' ? value : fallback
-}
-
-function numField(raw: Record<string, unknown> | undefined, key: string, fallback: number): string {
-  const value = raw?.[key]
-  return typeof value === 'number' && Number.isFinite(value) ? String(value) : String(fallback)
-}
-
-function draftOf(raw: Record<string, unknown> | undefined): Draft {
-  const http = isRecord(raw?.http) ? raw.http : undefined
+function draftOf(raw: VisionConfig): Draft {
+  const http = raw.http ?? { baseUrl: undefined, credential: undefined, model: undefined, protocol: 'openai' as const }
   return {
-    provider: strField(raw, 'provider'),
-    model: strField(raw, 'model'),
-    enabled: boolField(raw, 'enabled', true),
-    delegation: strField(raw, 'delegation', 'auto'),
-    baseUrl: strField(http, 'baseUrl'),
-    credential: strField(http, 'credential'),
-    httpModel: strField(http, 'model'),
-    protocol: strField(http, 'protocol', 'openai'),
-    textOnlyPasteMode: strField(raw, 'textOnlyPasteMode', 'hint'),
-    markerStyle: strField(raw, 'markerStyle', 'code'),
-    maxDimension: numField(raw, 'maxDimension', 1568),
-    jpegQuality: numField(raw, 'jpegQuality', 85),
-    cacheEnabled: boolField(raw, 'cacheEnabled', true),
-    cachePersist: boolField(raw, 'cachePersist', false),
-    cacheMaxEntries: numField(raw, 'cacheMaxEntries', 256),
-    retryAttempts: numField(raw, 'retryAttempts', 2),
-    autoDelegateTimeoutMs: numField(raw, 'autoDelegateTimeoutMs', 30000),
-    localOnly: boolField(raw, 'localOnly', false),
-    auditLog: boolField(raw, 'auditLog', true),
-    autoDetectVisionModel: boolField(raw, 'autoDetectVisionModel', true),
+    provider: strField(raw as never, 'provider', ''),
+    model: strField(raw as never, 'model', ''),
+    enabled: boolField(raw as never, 'enabled', false),
+    delegation: (raw.delegation ?? 'auto') as 'auto' | 'native' | 'http',
+    textOnlyPasteMode: (raw.textOnlyPasteMode ?? 'hint') as 'hint' | 'auto' | 'off',
+    markerStyle: (raw.markerStyle ?? 'plain') as 'code' | 'bold' | 'plain',
+    baseUrl: http.baseUrl ?? '',
+    credential: http.credential ?? '',
+    httpModel: http.model ?? '',
+    protocol: (http.protocol ?? 'openai') as 'openai' | 'anthropic',
+    maxDimension: numField(raw as never, 'maxDimension', 1568),
+    jpegQuality: numField(raw as never, 'jpegQuality', 85),
+    cacheMaxEntries: numField(raw as never, 'cacheMaxEntries', 256),
+    retryAttempts: numField(raw as never, 'retryAttempts', 2),
+    autoDelegateTimeoutMs: numField(raw as never, 'autoDelegateTimeoutMs', 30_000),
+    cacheEnabled: boolField(raw as never, 'cacheEnabled', true),
+    cachePersist: boolField(raw as never, 'cachePersist', false),
+    localOnly: boolField(raw as never, 'localOnly', false),
+    auditLog: boolField(raw as never, 'auditLog', true),
+    autoDetectVisionModel: boolField(raw as never, 'autoDetectVisionModel', true),
   }
+}
+
+interface SettingsViewProps {
+  settings?: SettingsController
+  catalog?: CatalogController
+  t?: VisionTranslate
 }
 
 function SettingsSection({ settings, catalog, t = enFallback }: SettingsViewProps) {
@@ -502,7 +601,6 @@ function LoadedSettings({ settings, catalog, t }: { settings: SettingsController
     if (settingsState.snapshot !== undefined) setDraft(draftOf(settingsState.snapshot.value))
   }, [settingsState.snapshot])
 
-  // Offer the detected vision-capable default once, only when fields are unset.
   useEffect(() => {
     if (seededRef.current) return
     const snapshot = catalogState.snapshot
@@ -602,7 +700,7 @@ function LoadedSettings({ settings, catalog, t }: { settings: SettingsController
       <section className="dvs-panel"><h3>{t('behavior')}</h3>
         <div className="dvs-grid">
           <label className="dvs-field dvs-span2"><span>{t('delegation')}</span>
-            <select value={draft.delegation} onChange={(event) => { update('delegation', event.target.value) }}>
+            <select value={draft.delegation} onChange={(event) => { update('delegation', event.target.value as 'auto' | 'native' | 'http') }}>
               <option value="auto">auto</option>
               <option value="native">native</option>
               <option value="http">http</option>
@@ -623,19 +721,19 @@ function LoadedSettings({ settings, catalog, t }: { settings: SettingsController
           <label className="dvs-field"><span>{t('credential')}</span><input value={draft.credential} onChange={(event) => { update('credential', event.target.value) }} placeholder="VISION_API_KEY" /></label>
           <label className="dvs-field"><span>{t('httpModel')}</span><input value={draft.httpModel} onChange={(event) => { update('httpModel', event.target.value) }} placeholder="model" /></label>
           <label className="dvs-field"><span>{t('protocol')}</span>
-            <select value={draft.protocol} onChange={(event) => { update('protocol', event.target.value) }}><option value="openai">openai</option><option value="anthropic">anthropic</option></select>
+            <select value={draft.protocol} onChange={(event) => { update('protocol', event.target.value as 'openai' | 'anthropic') }}><option value="openai">openai</option><option value="anthropic">anthropic</option></select>
           </label>
         </div></section>
       )}
 
       <section className="dvs-panel"><h3>{t('paste')}</h3><div className="dvs-grid">
         <label className="dvs-field"><span>{t('textOnlyPasteMode')}</span>
-          <select value={draft.textOnlyPasteMode} onChange={(event) => { update('textOnlyPasteMode', event.target.value) }}>
+          <select value={draft.textOnlyPasteMode} onChange={(event) => { update('textOnlyPasteMode', event.target.value as 'hint' | 'auto' | 'off') }}>
             <option value="hint">hint</option><option value="auto">auto</option><option value="off">off</option>
           </select>
         </label>
         <label className="dvs-field"><span>{t('markerStyle')}</span>
-          <select value={draft.markerStyle} onChange={(event) => { update('markerStyle', event.target.value) }}>
+          <select value={draft.markerStyle} onChange={(event) => { update('markerStyle', event.target.value as 'code' | 'bold' | 'plain') }}>
             <option value="code">code</option><option value="bold">bold</option><option value="plain">plain</option>
           </select>
         </label>
@@ -692,7 +790,7 @@ const CSS = `
 .dvs-alert.notice{background:rgba(77,126,247,.12);background:color-mix(in srgb, var(--dsw-alias-state-business-primary,#4d7ef7) 12%, transparent);color:var(--dsw-alias-state-business-primary,#6d94f7)}
 .dvs-alert.warning{background:rgba(224,162,55,.12);background:color-mix(in srgb, var(--dsw-alias-state-warn-primary,#e0a237) 12%, transparent);color:var(--dsw-alias-state-warn-primary,#e0a237)}
 .dvs-alert.success{background:rgba(48,154,100,.12);background:color-mix(in srgb, var(--dsw-alias-state-success-primary,#309a64) 12%, transparent);color:var(--dsw-alias-state-success-primary,#309a64)}
-.dvs-alert.error{background:rgba(224,76,90,.12);background:color-mix(in srgb, var(--dsw-alias-state-error-primary,#e04c5a) 12%, transparent);color:var(--dsw-alias-state-error-primary,#e04c5a)}
+.dvs-alert.error{background:rgba(224,76,90,.12);background:color-mix(in srgb, var(--dsw-alias-state-error-primary,#e04c5a) 12%, transparent);color:var(--dsw-alias-state-error-primary,#e04c5a}
 .dvs-alert strong{font-weight:600}
 .dvs-badge{font-size:10.5px;font-weight:600;padding:2px 8px;border-radius:999px;background:color-mix(in srgb, var(--dsw-alias-state-success-primary,#309a64) 16%, transparent);color:var(--dsw-alias-state-success-primary,#309a64);margin-left:2px}
 .dvs-panel{display:grid;gap:14px;padding:16px;border:1px solid var(--dsw-alias-border-l1,rgba(255,255,255,.06));border-radius:12px;background:var(--dsw-alias-bg-layer-1,#191920)}
@@ -719,27 +817,54 @@ const CSS = `
 `
 
 function installStyles(): () => void {
-  const selector = 'style[data-plugin-css="dsh-vision/client"]'
-  const existing = document.querySelector<HTMLStyleElement>(selector)
-  if (existing !== null) return () => {}
+  const selector = 'style[data-plugin-css="dsh-vision/card"]'
+  if (typeof document === 'undefined') return () => {}
+  if (document.querySelector(selector) !== null) return () => {}
   const style = document.createElement('style')
   style.dataset.plugin = 'dsh-vision'
-  style.dataset.pluginCss = 'dsh-vision/client'
+  style.dataset.pluginCss = 'dsh-vision/card'
   style.textContent = CSS
-  document.head.appendChild(style)
+  document.head.append(style)
   return () => { style.remove() }
 }
 
-/** Required client services. */
-export const inject = ['slots', 'locale']
+/** Required client services. The catalog comes from `api.llm.models`
+ *  (the LlmApi RPC). The settings come from `ctx.settingsScope.bind`
+ *  (the standard settings scope). */
+export const inject = ['slots', 'locale', 'settingsScope', 'connection']
 
 /** Register the describe_image Tool card and the Vision Settings section. */
 export function apply(ctx: ClientContext): void {
   ctx.effect(installStyles, 'dsh-vision: styles')
   ctx.effect(() => ctx.locale.register(NS, { en, zh }), 'dsh-vision: locale')
   const t = ctx.locale.bind(NS)
-  const settings = new SettingsController()
-  const catalog = new CatalogController()
+
+  const settingsScope = ctx.settingsScope.bind<VisionConfig>({ namespace: 'vision' })
+  const settings = new SettingsController(settingsScope, async (patch) => {
+    // SettingsScope only exposes per-field set/unset, not a whole-patch
+    // update. Iterate over the patch fields and set each one. The scope
+    // revision-fences them in order, so this is safe.
+    for (const [field, value] of Object.entries(patch)) {
+      await settingsScope.set(field, value)
+    }
+  })
+
+  const api = ctx.get('connection')?.api
+  if (!api?.llm) {
+    throw new Error('dsh-vision: client requires connection.api.llm but it is not available')
+  }
+  const catalog = new CatalogController(api.llm)
+
+  const settingsSnapshotStore: SnapshotStore<VisionSettingsSnapshot> = {
+    getSnapshot: () => settings.computeSnapshot(),
+    subscribe: (listener) => {
+      // Forward scope updates to the controller's listeners.
+      const off = settingsScope.subscribe(() => listener())
+      return off
+    },
+    set: () => {},
+    update: () => {},
+  }
 
   ctx.slots.inject('tool.call.toolview', function* () {
     yield ctx.slots.register({ name: 'tool.call.toolview', key: 'describe_image', inject: () => ({ t }) }, DescribeImageView)
@@ -753,4 +878,3 @@ export function apply(ctx: ClientContext): void {
     inject: () => ({ t, settings, catalog }),
   }, SettingsSection))
 }
-

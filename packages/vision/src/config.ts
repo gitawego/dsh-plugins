@@ -5,7 +5,7 @@ import z from '@deepseek-ai/schemastery'
 import type Schema from '@deepseek-ai/schemastery'
 import { credentialRef, type CredentialRef } from '@deepseek-ai/dsh-credentials'
 import { settingsNamespace } from '@deepseek-ai/dsh-settings'
-import { VisionError } from './errors.ts'
+import { VisionError } from './errors.js'
 
 export const VISION_SETTINGS_NAMESPACE = settingsNamespace('vision')
 

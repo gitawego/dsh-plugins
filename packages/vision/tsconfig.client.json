@@ -4,7 +4,7 @@
     "module": "commonjs",
     "moduleResolution": "node",
     "jsx": "react-jsx",
-    "rootDir": "src/client",
+    "rootDir": "src",
     "outDir": ".client-build",
     "declaration": true,
     "declarationDir": "lib/types/client",
