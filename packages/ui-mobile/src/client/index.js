@@ -49,13 +49,6 @@ window.__ModuleLoader__.load({
       '<svg class="dls-glyph" viewBox="0 0 18 18" width="18" height="18" aria-hidden="true">' +
       '  <path d="M2 4.5h14M2 9h14M2 13.5h14" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>' +
       '</svg>'
-    var ICON_DETAILS =
-      '<svg class="dls-glyph" viewBox="0 0 18 18" width="18" height="18" aria-hidden="true">' +
-      '  <circle cx="9" cy="9" r="7.25" fill="none" stroke="currentColor" stroke-width="1.4"/>' +
-      '  <circle cx="9" cy="6" r="0.9" fill="currentColor"/>' +
-      '  <path d="M9 9v5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>' +
-      '</svg>'
-
     function responsiveCss() {
       return [
         '',
@@ -67,22 +60,30 @@ window.__ModuleLoader__.load({
         '  html[' + ROOT_ATTR + '] div[data-details-collapsed] {',
         '    grid-template-columns: 0 minmax(0, 1fr) 0 !important;',
         '  }',
-                // The pill floats over the top strip; give the conversation header
-        // a matching top offset so the tabs sit below it, not under it.
-        '  .wSkVaW_root { padding-top: 56px; }',
+                // The button floats over the header row's empty left region; only the
+        // left-aligned tabs need clearance so Chat/Trajectory never sit
+        // underneath it. No vertical reserve — the header starts at the top.
         '  .wSkVaW_header { min-height: 52px; padding: 6px 14px; }',
         '  .wSkVaW_titleCluster { min-width: 0; }',
         '  .wSkVaW_crumbs { display: none; }',
-        '  .wSkVaW_tabs { gap: 16px; padding: 0 14px; }',
+        '  .wSkVaW_tabs { gap: 16px; padding: 0 14px 0 64px; }',
         '  .wSkVaW_tab { font-size: 14px; padding: 8px 2px; }',
         '  .wSkVaW_headerActions { margin-left: auto; gap: 8px; }',
+        // Composer — one compact row on phones: shrink the icons back to
+        // the host's native sizes (28–34px), stop the wrap, and let the
+        // mode + model selectors truncate instead of pushing to a second
+        // line. Tap targets stay >= 32px (WCAG 2.5.8 minimum is 24px).
         '  .uV2eYG_card, .uV2eYG_root { padding: 8px; }',
-        '  .uV2eYG_row { flex-wrap: wrap; align-items: center; gap: 8px; }',
-        '  .uV2eYG_modes, .uV2eYG_select { min-width: 0; flex: 1 1 auto; }',
-        '  .uV2eYG_add, .uV2eYG_primary { min-width: 44px; min-height: 44px; }',
-        '  .uV2eYG_trailing { gap: 8px; }',
-        '  ._7KE1Ra_trigger { min-height: 40px; padding: 0 10px; }',
-        '  ._7KE1Ra_triggerLabel { max-width: 72vw; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }',
+        '  .uV2eYG_card { gap: 8px; padding-top: 8px; }',
+        '  .uV2eYG_row { flex-wrap: nowrap; align-items: center; gap: 6px; padding: 0 6px 6px; }',
+        '  .uV2eYG_modes { gap: 4px; min-width: 0; }',
+        '  .uV2eYG_modes .uV2eYG_select { min-width: 0; max-width: 34vw; }',
+        '  .uV2eYG_select { max-width: 34vw; height: 28px; padding: 0 16px 0 6px; font-size: 12px; }',
+        '  .uV2eYG_add, .uV2eYG_primary { width: 32px; height: 32px; min-width: 32px; min-height: 32px; }',
+        '  .uV2eYG_trailing { gap: 4px; }',
+        // Model/mode select — truncate, never wrap.
+        '  ._7KE1Ra_trigger { max-width: 26vw; height: 28px; padding: 0 4px 0 6px; font-size: 12px; }',
+        '  ._7KE1Ra_triggerLabel { max-width: 20vw; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }',
         '  .lXshSW_root { padding: 12px; }',
         '  .lXshSW_item { flex-wrap: wrap; align-items: flex-start; }',
         '  .lXshSW_title, .lXshSW_content { white-space: normal; overflow-wrap: anywhere; }',
@@ -94,20 +95,13 @@ window.__ModuleLoader__.load({
         // overrides when the browser supports safe-area insets. Never use
         // env() inside max() — Android WebView rejects that declaration
         // and the whole `top`/`left` property falls back to auto, dropping
-        // the pill to its static position at the bottom of <body>.
+        // the chrome to its static position at the bottom of <body>.
         '    top: 12px; left: 12px;',
         '    top: calc(env(safe-area-inset-top, 0px) + 12px);',
         '    left: calc(env(safe-area-inset-left, 0px) + 12px);',
         '    z-index: 2147483000;',
-        '    display: inline-flex; align-items: center; gap: 6px;',
-        '    padding: 4px;',
+        '    display: inline-flex;',
         '    box-sizing: border-box;',
-        '    background: rgba(14, 18, 32, 0.72);',
-        '    border: 1px solid rgba(232, 235, 243, 0.10);',
-        '    border-radius: 14px;',
-        '    backdrop-filter: blur(18px) saturate(140%);',
-        '    -webkit-backdrop-filter: blur(18px) saturate(140%);',
-        '    box-shadow: 0 2px 12px rgba(0, 0, 0, 0.35), inset 0 1px 0 rgba(255, 255, 255, 0.04);',
         '    transition: transform 180ms cubic-bezier(.4, 0, .2, 1), opacity 180ms ease;',
         '  }',
         '  html[' + ROOT_ATTR + '][data-dsh-phone-drawer] #' + BAR_ID + ' {',
@@ -116,9 +110,13 @@ window.__ModuleLoader__.load({
         '  #' + BAR_ID + ' button {',
         '    position: relative;',
         '    display: inline-flex; align-items: center; justify-content: center;',
-        '    width: 40px; height: 40px;',
-        '    margin: 0; border: 0; border-radius: 10px;',
-        '    background: transparent;',
+        '    width: 46px; height: 46px;',
+        '    margin: 0; border: 1px solid rgba(232, 235, 243, 0.10);',
+        '    border-radius: 50%;',
+        '    background: rgba(14, 18, 32, 0.72);',
+        '    backdrop-filter: blur(18px) saturate(140%);',
+        '    -webkit-backdrop-filter: blur(18px) saturate(140%);',
+        '    box-shadow: 0 2px 12px rgba(0, 0, 0, 0.35), inset 0 1px 0 rgba(255, 255, 255, 0.04);',
         '    color: var(--dsw-alias-label-primary, #e8ebf3);',
         '    -webkit-tap-highlight-color: transparent;',
         '    transition: background 120ms ease, color 120ms ease;',
@@ -137,8 +135,8 @@ window.__ModuleLoader__.load({
         '    transition: opacity 140ms ease, transform 140ms ease;',
         '    white-space: nowrap;',
         '  }',
-        '  #' + BAR_ID + ' button:hover { background: rgba(232, 235, 243, 0.06); }',
-        '  #' + BAR_ID + ' button:active { background: rgba(232, 235, 243, 0.10); }',
+        '  #' + BAR_ID + ' button:hover { background: rgba(232, 235, 243, 0.08); }',
+        '  #' + BAR_ID + ' button:active { background: rgba(232, 235, 243, 0.14); }',
         '  #' + BAR_ID + ' button:focus-visible {',
         '    outline: 2px solid #6CB6FF; outline-offset: 1px;',
         '  }',
@@ -276,21 +274,6 @@ window.__ModuleLoader__.load({
       }
     }
 
-    function onClickDetails(ctx) {
-      var layoutOk = false
-      try {
-        if (ctx && ctx.layout && typeof ctx.layout.openDetails === 'function') {
-          ctx.layout.openDetails()
-          layoutOk = true
-        }
-      } catch (e) { /* fall through */ }
-      if (!layoutOk) {
-        var btn = document.querySelector('[class*="detailsCol"] button')
-          || document.querySelector('[aria-label*="details" i][class*="iconButton"]')
-        if (btn && typeof btn.click === 'function') btn.click()
-      }
-    }
-
     function onClickScrim(ctx) {
       if (!ctx || !ctx.layout) return
       try {
@@ -315,7 +298,6 @@ window.__ModuleLoader__.load({
           return b
         }
         addBtn('Open navigation', 'Workspaces', ICON_MENU, onClickSidebar)
-        addBtn('Open details', 'Details', ICON_DETAILS, onClickDetails)
         document.body.appendChild(bar)
       }
       if (!scrim) {
