@@ -199,6 +199,15 @@ window.__ModuleLoader__.load({
         '  }',
         '  #' + SCRIM_ID + ' { position: fixed; inset: 0; z-index: 2147482999; display: none; background: rgba(0, 0, 0, 0.45); }',
         '  html[' + ROOT_ATTR + '][data-dsh-phone-drawer] #' + SCRIM_ID + ' { display: block; }',
+        // The open drawer must sit ABOVE the scrim or every tap — including
+        // taps on the drawer itself — would hit the scrim and the drawer
+        // would be unusable. The scrim covers only the rest of the screen,
+        // so tapping outside the drawer closes it (onClickScrim).
+        '  html[' + ROOT_ATTR + '][data-dsh-phone-drawer] [class*="sidebarCol"],',
+        '  html[' + ROOT_ATTR + '][data-dsh-phone-drawer] [class*="detailsCol"] {',
+        '    position: relative; z-index: 2147483001;',
+        '    box-shadow: 0 0 24px rgba(0, 0, 0, 0.4);',
+        '  }',
         '}',
         '@media (max-width: 700px) {',
         '  * { -webkit-tap-highlight-color: transparent; }',
@@ -211,7 +220,13 @@ window.__ModuleLoader__.load({
       ].join('\n')
     }
 
-    var inject = []
+    // Runtime inject list: cordis refuses `ctx.layout` access unless the
+    // plugin's OWN exported inject declares it ("cannot get property
+    // layout without inject"). package.json dsh.client.inject drives the
+    // boot graph, but the bundle export must match for the reflection
+    // guard. Without this the menu worked only via its DOM fallback and
+    // the scrim's close path threw silently.
+    var inject = ['layout']
 
     var bar = null
     var scrim = null
@@ -313,7 +328,10 @@ window.__ModuleLoader__.load({
       // re-runs this display computation.
       var modalOpen = !!document.querySelector('.VOzbGW_overlay')
       bar.style.display = (isNarrow() && !modalOpen) ? 'inline-flex' : 'none'
-      scrim.style.display = 'none'
+      // NOTE: never set scrim.style.display inline — an inline style beats
+      // the stylesheet's `[data-dsh-phone-drawer] #scrim { display: block }`
+      // and the scrim would stay invisible forever (taps pass through to
+      // the page and the drawer can't be closed by clicking outside).
     }
 
     function apply(ctx) {
