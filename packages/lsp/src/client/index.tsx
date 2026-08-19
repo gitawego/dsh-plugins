@@ -14,7 +14,6 @@ import type {} from '@deepseek-ai/dsh-client-ui-settings/client'
 import type {} from '@deepseek-ai/dsh-client-locale/client'
 import type {} from '@deepseek-ai/dsh-client-ui-tool/client'
 import type { PropsRuntime, TranslateNS } from '@deepseek-ai/dsh-client-ui-slots'
-import { applySettingsPatch, buildSettingsSnapshot, type LspSettingsLike } from '../settings-patch.js'
 import type { LspSettings } from '../config.js'
 
 const NS = 'lsp'
@@ -523,51 +522,65 @@ function LoadedSettings({ status, settings, t, ctx }: { status: StatusController
 }
 
 const CSS = `
-.dls-tool{margin:4px 0;border:1px solid var(--dsw-alias-border-l1,rgba(255,255,255,.06));border-radius:12px;background:var(--dsw-alias-bg-layer-1,#191920);overflow:hidden;font-family:var(--dsw-font-family,-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif)}
-.dls-tool-head{width:100%;min-height:38px;display:flex;align-items:center;gap:8px;padding:8px 10px;border:0;background:transparent;color:var(--dsw-alias-label-primary,#f5f5f7);text-align:left;cursor:pointer;font:inherit}
-.dls-tool-head:focus-visible{outline:2px solid var(--dsw-alias-brand-primary,#4d7ef7);outline-offset:-2px}
-.dls-tool-icon{width:22px;height:22px;display:grid;place-items:center;border-radius:7px;color:var(--dsw-alias-state-business-primary,#4d7ef7);background:color-mix(in srgb, var(--dsw-alias-state-business-primary,#4d7ef7) 14%, transparent);flex:none}
+/* dsh-lsp surfaces, restyled on the DSH design system (dsw alias tokens).
+   Canonical references (shipped bundles):
+   - cards: bg-layer-3 + border-l2 + radius 12 (settings-plugins .YyYd_a_card)
+   - inputs: bg-layer-3 + border-l2 + radius 8 + brand focus border (settings-plugins .At1oFq_input)
+   - selects: bg-module-platform pill, radius 18, no border (agent-preset ._5QVD0a_selector)
+   - buttons: radius-18 pills, 36px, label-primary-foreground (settings-models .zGbnIq_*)
+   - focus rings: buttons box-shadow 0 0 0 2px border-l3 (settings-models); inputs border-color brand */
+.dls-tool{margin:4px 0;border:1px solid var(--dsw-alias-border-l2);border-radius:12px;background:var(--dsw-alias-bg-layer-3);overflow:hidden;font-family:var(--dsw-font-family,-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif)}
+.dls-tool-head{width:100%;min-height:38px;display:flex;align-items:center;gap:8px;padding:8px 10px;border:0;background:transparent;color:var(--dsw-alias-label-primary);text-align:left;cursor:pointer;font:inherit}
+.dls-tool-head:focus-visible{outline:2px solid var(--dsw-alias-brand-primary);outline-offset:-2px}
+.dls-tool-icon{width:22px;height:22px;display:grid;place-items:center;border-radius:7px;color:var(--dsw-alias-state-business-primary);background:color-mix(in srgb, var(--dsw-alias-state-business-primary) 14%, transparent);flex:none}
 .dls-tool-title{font-size:13px;font-weight:600;white-space:nowrap}
-.dls-tool-summary{font-size:12px;color:var(--dsw-alias-label-tertiary,#9a9aa3);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:50%}
+.dls-tool-summary{font-size:12px;color:var(--dsw-alias-label-tertiary);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:50%}
 .dls-chevron{transition:transform .16s var(--ds-ease-in-out,cubic-bezier(.4,0,.2,1));opacity:.55}.dls-chevron[data-open=true]{transform:rotate(180deg)}
 .dls-tool-body{padding:2px 12px 12px}
-.dls-result{margin:0;font-size:12px;line-height:1.6;white-space:pre-wrap;padding:10px;border-radius:9px;background:var(--dsw-alias-bg-layer-2,#14141a);color:var(--dsw-alias-label-primary,#f5f5f7);max-height:240px;overflow:auto}
-.dls-muted{margin:0;color:var(--dsw-alias-label-tertiary,#9a9aa3);font-size:13px}
-.dls-settings{display:grid;gap:18px;max-width:920px;padding:10px 2px 44px;color:var(--dsw-alias-label-primary,#f5f5f7);font-family:var(--dsw-font-family,-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif)}
-.dls-settings-header h2{font-size:24px;font-weight:650;letter-spacing:-.02em;margin:0 0 6px}
-.dls-settings-header p{margin:0;color:var(--dsw-alias-label-secondary,#c8c8cf);font-size:13.5px;line-height:1.6;max-width:680px}
-.dls-alert{padding:10px 13px;border-radius:10px;font-size:13px;line-height:1.55;border:1px solid var(--dsw-alias-border-l1,rgba(255,255,255,.06))}
-.dls-alert.warning{background:color-mix(in srgb, var(--dsw-alias-state-warn-primary,#e0a237) 12%, transparent);color:var(--dsw-alias-state-warn-primary,#e0a237)}
-.dls-alert.success{background:color-mix(in srgb, var(--dsw-alias-state-success-primary,#309a64) 12%, transparent);color:var(--dsw-alias-state-success-primary,#309a64)}
-.dls-alert.error{background:color-mix(in srgb, var(--dsw-alias-state-error-primary,#e04c5a) 12%, transparent);color:var(--dsw-alias-state-error-primary,#e04c5a)}
-.dls-panel{display:grid;gap:14px;padding:16px;border:1px solid var(--dsw-alias-border-l1,rgba(255,255,255,.06));border-radius:12px;background:var(--dsw-alias-bg-layer-1,#191920)}
-.dls-panel h3{font-size:14px;font-weight:600;margin:0}
+.dls-result{margin:0;font-size:12px;line-height:1.6;white-space:pre-wrap;padding:10px;border-radius:9px;background:var(--dsw-alias-bg-layer-3);color:var(--dsw-alias-label-primary);max-height:240px;overflow:auto}
+.dls-muted{margin:0;color:var(--dsw-alias-label-tertiary);font-size:13px}
+.dls-settings{display:grid;gap:18px;max-width:720px;padding:10px 2px 44px;color:var(--dsw-alias-label-primary);font-family:var(--dsw-font-family,-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif)}
+.dls-settings-header h2{font-size:20px;font-weight:500;letter-spacing:0;margin:0 0 6px}
+.dls-settings-header p{margin:0;color:var(--dsw-alias-label-tertiary);font-size:14px;line-height:22px;max-width:680px}
+.dls-alert{padding:10px 13px;border-radius:10px;font-size:13px;line-height:1.55;border:1px solid var(--dsw-alias-border-l1)}
+.dls-alert.warning{background:color-mix(in srgb, var(--dsw-alias-state-warn-primary) 12%, transparent);color:var(--dsw-alias-state-warn-primary)}
+.dls-alert.success{background:color-mix(in srgb, var(--dsw-alias-state-success-primary) 12%, transparent);color:var(--dsw-alias-state-success-primary)}
+.dls-alert.error{background:color-mix(in srgb, var(--dsw-alias-state-error-primary) 12%, transparent);color:var(--dsw-alias-state-error-primary)}
+.dls-panel{display:grid;gap:14px;padding:14px 16px;border:1px solid var(--dsw-alias-border-l2);border-radius:12px;background:var(--dsw-alias-bg-layer-3)}
+.dls-panel h3{font-size:14px;font-weight:500;margin:0}
 .dls-table{width:100%;border-collapse:collapse;font-size:12.5px}
-.dls-table th,.dls-table td{text-align:left;padding:7px 10px;border-bottom:1px solid var(--dsw-alias-border-l1,rgba(255,255,255,.06));vertical-align:top}
-.dls-table th{font-size:11px;text-transform:uppercase;letter-spacing:.06em;color:var(--dsw-alias-label-tertiary,#9a9aa3);font-weight:600}
-.dls-table code,.dls-panel code{font-size:12px;color:var(--dsw-alias-label-primary,#f5f5f7)}
-.dls-badge{font-size:10.5px;font-weight:600;padding:2px 8px;border-radius:999px}
-.dls-badge[data-status=connected]{background:color-mix(in srgb, var(--dsw-alias-state-success-primary,#309a64) 16%, transparent);color:var(--dsw-alias-state-success-primary,#309a64)}
-.dls-badge[data-status=error]{background:color-mix(in srgb, var(--dsw-alias-state-error-primary,#e04c5a) 16%, transparent);color:var(--dsw-alias-state-error-primary,#e04c5a)}
+.dls-table th,.dls-table td{text-align:left;padding:7px 10px;border-bottom:1px solid var(--dsw-alias-border-l2);vertical-align:top}
+.dls-table th{font-size:11px;text-transform:uppercase;letter-spacing:.06em;color:var(--dsw-alias-label-tertiary);font-weight:500}
+.dls-table code,.dls-panel code{font-size:12px;color:var(--dsw-alias-label-primary)}
+.dls-badge{font-size:11px;font-weight:500;padding:1px 8px;border-radius:999px;line-height:17px}
+.dls-badge[data-status=connected]{background:color-mix(in srgb, var(--dsw-alias-state-success-primary) 16%, transparent);color:var(--dsw-alias-state-success-primary)}
+.dls-badge[data-status=error]{background:color-mix(in srgb, var(--dsw-alias-state-error-primary) 16%, transparent);color:var(--dsw-alias-state-error-primary)}
 .dls-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px 16px}
 .dls-grid .dls-span2{grid-column:1/-1}
 .dls-field{display:grid;gap:6px;align-content:start;min-width:0}
-.dls-field span{font-size:12.5px;font-weight:550;color:var(--dsw-alias-label-secondary,#c8c8cf)}
-.dls-field .dls-hint{font-size:11.5px;line-height:1.5;color:var(--dsw-alias-label-tertiary,#9a9aa3)}
-.dls-field input,.dls-field select,.dls-field textarea{box-sizing:border-box;width:100%;min-width:0;padding:0 10px;border:1px solid var(--dsw-alias-border-l2,rgba(255,255,255,.12));border-radius:8px;background:var(--dsw-alias-bg-layer-2,#14141a);color:var(--dsw-alias-label-primary,#f5f5f7);font:inherit;font-size:13px;outline:none;transition:border-color .12s var(--ds-ease-in-out,cubic-bezier(.4,0,.2,1)),box-shadow .12s var(--ds-ease-in-out,cubic-bezier(.4,0,.2,1))}
-.dls-field textarea{height:auto;padding:8px 10px;line-height:1.5;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;resize:vertical}
-.dls-field input:focus,.dls-field select:focus,.dls-field textarea:focus{border-color:var(--dsw-alias-brand-primary,#4d7ef7);box-shadow:0 0 0 2px color-mix(in srgb, var(--dsw-alias-brand-primary,#4d7ef7) 25%, transparent)}
-.dls-field input::placeholder,.dls-field textarea::placeholder{color:var(--dsw-alias-label-dimmed,#6f6f78)}
-.dls-check{display:flex;align-items:center;gap:9px;font-size:13px;color:var(--dsw-alias-label-primary,#f5f5f7);min-height:22px;cursor:pointer}
-.dls-check input{accent-color:var(--dsw-alias-brand-primary,#4d7ef7);width:15px;height:15px;flex:none;margin:0}
+.dls-field span{font-size:13px;font-weight:500;color:var(--dsw-alias-label-primary)}
+.dls-field .dls-hint{font-size:12px;line-height:1.5;color:var(--dsw-alias-label-tertiary)}
+.dls-field input{box-sizing:border-box;width:100%;min-width:0;height:34px;padding:0 12px;border:1px solid var(--dsw-alias-border-l2);border-radius:8px;background:var(--dsw-alias-bg-layer-3);color:var(--dsw-alias-label-primary);font:inherit;font-size:13px;line-height:1.5;outline:none;transition:border-color .12s var(--ds-ease-in-out,cubic-bezier(.4,0,.2,1))}
+.dls-field input:focus-visible{border-color:var(--dsw-alias-brand-primary);outline:none}
+.dls-field input:disabled{color:var(--dsw-alias-label-tertiary);cursor:default}
+.dls-field input::placeholder{color:var(--dsw-alias-label-dimmed)}
+.dls-field select{box-sizing:border-box;width:100%;min-width:0;height:36px;padding:0 14px;border:none;border-radius:18px;background:var(--dsw-alias-bg-module-platform);color:var(--dsw-alias-label-primary);font:inherit;font-size:14px;line-height:22px;cursor:pointer;outline:none;appearance:auto}
+.dls-field select:hover:not(:disabled){background:var(--dsw-alias-interactive-bg-hover)}
+.dls-field select:focus-visible{box-shadow:0 0 0 2px var(--dsw-alias-border-l3);outline:none}
+.dls-field textarea{box-sizing:border-box;width:100%;min-width:0;padding:8px 12px;border:1px solid var(--dsw-alias-border-l2);border-radius:8px;background:var(--dsw-alias-bg-layer-3);color:var(--dsw-alias-label-primary);font:inherit;font-size:13px;line-height:1.5;outline:none;resize:vertical;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;transition:border-color .12s var(--ds-ease-in-out,cubic-bezier(.4,0,.2,1))}
+.dls-field textarea:focus-visible{border-color:var(--dsw-alias-brand-primary);outline:none}
+.dls-field textarea::placeholder{color:var(--dsw-alias-label-dimmed)}
+.dls-check{display:flex;align-items:center;gap:9px;font-size:13px;color:var(--dsw-alias-label-primary);min-height:22px;cursor:pointer}
+.dls-check input{accent-color:var(--dsw-alias-brand-primary);width:15px;height:15px;flex:none;margin:0}
 .dls-save-row{display:flex;gap:10px;align-items:center}
-.dls-primary,.dls-outline{height:34px;padding:0 18px;border-radius:9px;font-size:13px;font-weight:600;cursor:pointer;transition:background-color .12s var(--ds-ease-in-out,cubic-bezier(.4,0,.2,1))}
-.dls-primary{background:var(--dsw-alias-button-primary-fill,#4d7ef7);color:var(--dsw-alias-label-primary-inverted,#17171c);border:0}
-.dls-primary:hover:not(:disabled){background:var(--dsw-alias-button-primary-hover,#3f66d9)}
-.dls-primary:disabled,.dls-outline:disabled{opacity:.45;cursor:default}
-.dls-outline{background:transparent;border:1px solid var(--dsw-alias-border-l2,rgba(255,255,255,.12));color:var(--dsw-alias-label-primary,#f5f5f7)}
-.dls-outline:hover:not(:disabled){background:var(--dsw-alias-interactive-bg-hover,rgba(255,255,255,.08))}
-.dls-loading{padding:26px;border-radius:12px;background:var(--dsw-alias-bg-layer-2,#14141a);font-size:13px;color:var(--dsw-alias-label-tertiary,#9a9aa3)}
+.dls-primary,.dls-outline{box-sizing:border-box;height:36px;padding:0 14px;border-radius:18px;font:inherit;font-size:14px;line-height:22px;cursor:pointer;transition:background-color .12s var(--ds-ease-in-out,cubic-bezier(.4,0,.2,1))}
+.dls-primary{background:var(--dsw-alias-button-primary-fill);color:var(--dsw-alias-label-primary-foreground);border:0}
+.dls-primary:hover:not(:disabled){background:var(--dsw-alias-button-primary-hover)}
+.dls-primary:disabled,.dls-outline:disabled{opacity:.4;cursor:default}
+.dls-outline{background:transparent;border:1px solid var(--dsw-alias-border-l2);color:var(--dsw-alias-label-primary)}
+.dls-outline:hover:not(:disabled){background:var(--dsw-alias-interactive-bg-hover)}
+.dls-primary:focus-visible,.dls-outline:focus-visible{box-shadow:0 0 0 2px var(--dsw-alias-border-l3);outline:none}
+.dls-loading{padding:26px;border-radius:12px;background:var(--dsw-alias-bg-layer-3);font-size:13px;color:var(--dsw-alias-label-tertiary)}
 @media(max-width:720px){.dls-grid{grid-template-columns:1fr}}
 `
 
@@ -601,16 +614,17 @@ export function apply(ctx: ClientContext): void {
   status.bind(ctx)
   const settingsScope = ctx.settingsScope.bind<LspSettings>({ namespace: 'lsp' })
   settings.bind(settingsScope, async (patch) => {
-    await applySettingsPatch({ settings: { writable: true } } as never, {
-      get: () => settingsScope.getSnapshot().value as LspSettings,
-      update: async () => {},
-      mutate: async (ops: Array<{ op: 'set'; path: string | string[]; value?: unknown } | { op: 'unset'; path: string | string[] }>) => {
-        for (const op of ops) {
-          const path = Array.isArray(op.path) ? op.path : [op.path]
-          await settingsScope.set(path.join('.'), op.op === 'set' ? (op.value as never) : (undefined as never))
-        }
-      },
-    } as never, patch)
+    // Write each editable field through the rc.7 settings scope directly.
+    // The client cannot import `src/settings-patch.ts` because that helper
+    // pulls in `@deepseek-ai/schemastery` (host-only). The scope's own
+    // schema rejects malformed values on `set`, so a minimal client-side
+    // shape check (object only) is enough UX-side; missing optional
+    // fields are simply skipped.
+    if (!isRecord(patch)) throw new TypeError('settings value must be an object')
+    if (patch.timeout !== undefined) await settingsScope.set('timeout', patch.timeout as never)
+    if (patch.binDir !== undefined) await settingsScope.set('binDir', patch.binDir as never)
+    if (patch.progressive !== undefined) await settingsScope.set('progressive', patch.progressive as never)
+    if (patch.servers !== undefined) await settingsScope.set('servers', patch.servers as never)
   })
 
   ctx.slots.inject('tool.call.toolview', function* () {

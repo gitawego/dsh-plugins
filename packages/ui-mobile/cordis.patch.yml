@@ -1,0 +1,6 @@
+# @gitawego/dsh-ui-mobile bundle patch: applied as one profile layer when this
+# package joins a profile's `dsh.profile.bundles` (installed via `dsh plugin`).
+# Inserts the client-plugin row the browser roster scans and serves.
+- insert:
+    - id: ui-mobile
+      name: '@gitawego/dsh-ui-mobile'
