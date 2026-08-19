@@ -4,7 +4,8 @@
  *  data-driven auto-detect. M2: paste UX via agent/pre-step (markers,
  *  ImageBlock attach for multimodal primaries, hint / auto-delegate for
  *  text-only primaries). M3: Web client plugin (describe_image tool card,
- *  data-driven Vision settings section, /_dsh/vision/models catalog route). */
+ *  data-driven Vision settings section via the native settings.section
+ *  slot). */
 import type { Context } from '@deepseek-ai/cordis'
 import type {} from '@deepseek-ai/dsh-agent'
 import type {} from '@deepseek-ai/dsh-attachment'
@@ -26,7 +27,6 @@ import { createPasteHook } from './paste.ts'
 import { createStreamImageConverter } from './stream.ts'
 import { createVisionSubagent } from './subagent.ts'
 import type { SettingsLike } from './commands.ts'
-import { installVisionWeb } from './web.ts'
 import { createDescribeImageTool } from './tool.ts'
 
 export const name = 'dsh-vision'
@@ -200,8 +200,6 @@ export function apply(ctx: Context, config: Partial<VisionConfig> = {}) {
     stream: (options) => ctx.llm.stream(options),
     logger: ctx.logger,
   }))
-
-  installVisionWeb(ctx, () => resolved, visionSettings)
 
   // Live re-resolution on settings changes; cache shape + mask re-sync.
   const settingsWatch = settings.watch(async (next: unknown) => {

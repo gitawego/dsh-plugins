@@ -3,7 +3,7 @@ import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const root = dirname(fileURLToPath(new URL('../package.json', import.meta.url)))
-const compiledPath = join(root, '.client-build', 'index.js')
+const compiledPath = join(root, '.client-build', 'client', 'index.js')
 const outputPath = join(root, 'lib', 'client.js')
 const source = await readFile(compiledPath, 'utf8')
 // The client entry id is the PACKAGE NAME (the host's boot graph keys bundles by

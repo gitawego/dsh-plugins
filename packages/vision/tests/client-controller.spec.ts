@@ -1,137 +1,152 @@
-/** Tests for the browser-side data stores (mocked fetch, no DOM): the live
- *  model-catalog controller and the settings controller that backs the Vision
- *  settings form over the plugin's own /_dsh/vision/settings route. */
-import { afterEach, describe, expect, it } from 'vitest'
+/** Tests for the rc.7 client controllers in `src/client/index.tsx`:
+ *  - CatalogController (api.llm.models RPC, injected via constructor)
+ *  - SettingsController (settingsScope.bind)
+ *  - providerOptions / modelOptions (pure dropdown helpers)
+ *
+ *  Replaces the rc.6 bespoke HTTP route tests. The controllers now back
+ *  onto ctx.settingsScope.bind (the standard settings scope) and the
+ *  LlmApi RPC exposed by `dsh-host-apiproxy` via ctx.connection.api. */
+import { describe, expect, it } from 'vitest'
 import { CatalogController, SettingsController } from '../src/client/index.tsx'
+import type { SettingsScope } from '@deepseek-ai/dsh-client-runtime/client'
+import type { VisionConfig } from '../src/config.ts'
 
-function jsonResponse(body: unknown, ok = true, status = 200): Response {
+// ── Helpers ───────────────────────────────────────────────────────────────
+
+function makeSettingsScope(initial: VisionConfig): SettingsScope<VisionConfig> & {
+  store: { status: 'loading' | 'ready' | 'unavailable'; value: VisionConfig | undefined; writable: boolean; revision: number; base: unknown; user: unknown; mode: 'host' }
+  setCalls: Array<{ field: string; value: unknown }>
+} {
+  const store = {
+    status: 'ready' as 'loading' | 'ready' | 'unavailable',
+    value: structuredClone(initial) as VisionConfig | undefined,
+    writable: true,
+    revision: 1,
+    base: undefined,
+    user: undefined,
+    mode: 'host' as 'host' | 'memory',
+  }
+  const listeners = new Set<() => void>()
+  const setCalls: Array<{ field: string; value: unknown }> = []
+  const scope: SettingsScope<VisionConfig> & {
+    store: typeof store
+    setCalls: Array<{ field: string; value: unknown }>
+  } = {
+    store,
+    setCalls,
+    getSnapshot: () => store,
+    subscribe: (l) => { listeners.add(l); return () => { listeners.delete(l) } },
+    set: async (field, value) => {
+      setCalls.push({ field, value })
+      const target = store.value as Record<string, unknown>
+      target[field] = value
+      store.revision += 1
+      for (const l of listeners) l()
+    },
+    unset: async (field) => {
+      const target = store.value as Record<string, unknown>
+      delete target[field]
+      store.revision += 1
+      for (const l of listeners) l()
+    },
+  }
+  return scope
+}
+
+function makeStubLlmApi(
+  providers: Array<{ id: string; name: string }>,
+  models: Record<string, Array<{ id: string; name: string; inputModalities?: readonly string[] }>>,
+  failOnListProviders = false,
+) {
   return {
-    ok,
-    status,
-    json: async () => body,
-  } as unknown as Response
+    listProviders: failOnListProviders
+      ? () => { throw new Error('boom') }
+      : () => providers,
+    models: async () => ({
+      groups: providers.map((p) => ({
+        provider: p.id,
+        models: models[p.id] ?? [],
+      })),
+    }),
+  }
 }
 
-const originalFetch = globalThis.fetch
-afterEach(() => {
-  globalThis.fetch = originalFetch
-})
+// ── SettingsController ───────────────────────────────────────────────────
 
-function stubFetch(impl: (input: string | URL | Request, init?: RequestInit) => Promise<Response>): void {
-  globalThis.fetch = impl as typeof fetch
-}
-
-describe('CatalogController (/_dsh/vision/models)', () => {
-  it('publishes the live catalog snapshot', async () => {
-    stubFetch(async () => jsonResponse({
-      ok: true,
-      value: {
-        providers: [{ id: 'p', name: 'P' }],
-        visionModels: [{ provider: 'p', model: 'm', name: 'M' }],
-        configured: { provider: 'p', model: 'm' },
-        detected: { provider: 'p', model: 'm', name: 'M', default: true },
-        available: true,
-      },
-    }))
-    const controller = new CatalogController()
-    expect(controller.getSnapshot().status).toBe('idle')
-    const settled = controller.load()
-    expect(controller.getSnapshot().status).toBe('loading')
-    await settled
-    expect(controller.getSnapshot().status).toBe('ready')
-    expect(controller.getSnapshot().snapshot?.detected?.model).toBe('m')
-  })
-
-  it('surfaces fetch failures without throwing', async () => {
-    stubFetch(async () => jsonResponse({ ok: false, error: { code: 'catalog-unavailable', message: 'down' } }, false, 503))
-    const controller = new CatalogController()
-    await controller.load()
-    expect(controller.getSnapshot().status).toBe('error')
-    expect(controller.getSnapshot().error).toContain('down')
-  })
-})
-
-describe('SettingsController (/_dsh/vision/settings)', () => {
+describe('SettingsController (settingsScope.bind)', () => {
   it('loads the current snapshot', async () => {
-    stubFetch(async () => jsonResponse({
-      ok: true,
-      value: { writable: true, value: { provider: 'p', model: 'm' } },
-    }))
-    const controller = new SettingsController()
+    const scope = makeSettingsScope({ enabled: false, delegation: 'auto' } as VisionConfig)
+    const controller = new SettingsController(scope, async () => {})
+    let state = controller.getSnapshot()
+    expect(state.status).toBe('idle')
     await controller.load()
-    const snapshot = controller.getSnapshot().snapshot
-    expect(snapshot?.writable).toBe(true)
-    expect(snapshot?.value.provider).toBe('p')
+    state = controller.getSnapshot()
+    expect(state.status).toBe('ready')
+    expect(state.snapshot?.value.delegation).toBe('auto')
+    expect(state.snapshot?.writable).toBe(true)
   })
 
-  it('POSTs a form submission and publishes the fresh snapshot', async () => {
-    let postedBody: unknown
-    let postedInit: RequestInit | undefined
-    stubFetch(async (input, init) => {
-      postedBody = JSON.parse(String(init?.body))
-      postedInit = init
-      return jsonResponse({
-        ok: true,
-        value: { writable: true, value: { provider: 'p', model: 'm', enabled: true } },
-      })
+  it('saves via settingsScope.set for each field', async () => {
+    const scope = makeSettingsScope({ enabled: false, delegation: 'auto' } as VisionConfig)
+    const controller = new SettingsController(scope, async (patch) => {
+      for (const [field, value] of Object.entries(patch)) {
+        await scope.set(field, value)
+      }
     })
-    const controller = new SettingsController()
-    await controller.save({ provider: 'p', model: 'm', enabled: true })
-    expect(postedInit?.method).toBe('POST')
-    expect(postedBody).toEqual({ provider: 'p', model: 'm', enabled: true })
-    expect(controller.getSnapshot().snapshot?.value.enabled).toBe(true)
+    await controller.load()
+    await controller.save({ enabled: true, delegation: 'native' })
+    expect(scope.setCalls).toContainEqual({ field: 'enabled', value: true })
+    expect(scope.setCalls).toContainEqual({ field: 'delegation', value: 'native' })
   })
 
-  it('rethrows server rejection and records the error state', async () => {
-    stubFetch(async () => jsonResponse({ ok: false, error: { code: 'settings-rejected', message: 'invalid baseUrl' } }, false, 400))
-    const controller = new SettingsController()
-    await expect(controller.save({})).rejects.toThrow(/invalid baseUrl/)
-    expect(controller.getSnapshot().status).toBe('error')
-  })
-})
-
-
-import { providerOptions, modelOptions } from '../src/client/index.tsx'
-
-describe('settings dropdown option building (data-driven)', () => {
-  const catalog = {
-    providers: [{ id: 'deepseek-official', name: 'DeepSeek' }, { id: 'opencode-go', name: 'opencode-go' }],
-    visionModels: [
-      { provider: 'opencode-go', model: 'minimax-m3', name: 'MiniMax-M3' },
-      { provider: 'opencode-go', model: 'qwen3.7-plus', name: 'Qwen3.7 Plus' },
-      { provider: 'deepseek-official', model: 'vl-model', name: 'VL' },
-    ],
-    configured: { provider: 'opencode-go', model: 'minimax-m3' },
-    detected: { provider: 'opencode-go', model: 'minimax-m3', name: 'MiniMax-M3', default: true },
-    available: true,
-  } as never
-
-  it('lists all registered providers (auto-populated from dsh config)', () => {
-    const options = providerOptions(catalog, '', 'opencode-go')
-    expect(options).toContain('deepseek-official')
-    expect(options).toContain('opencode-go')
+  it('rejects a non-object patch', async () => {
+    const scope = makeSettingsScope({ enabled: false } as VisionConfig)
+    const controller = new SettingsController(scope, async () => {})
+    await controller.load()
+    await expect(controller.save('nope' as never)).rejects.toThrow('must be an object')
   })
 
-  it('keeps a configured provider that left the catalog', () => {
-    const options = providerOptions(catalog, 'legacy-provider', 'opencode-go')
-    expect(options).toContain('legacy-provider')
-  })
-
-  it('lists only the selected provider\'s vision models and marks the detected default', () => {
-    const options = modelOptions(catalog, 'opencode-go', 'minimax-m3', 'minimax-m3')
-    expect(options.map((o) => o.value)).toEqual(expect.arrayContaining(['minimax-m3', 'qwen3.7-plus']))
-    expect(options.map((o) => o.value)).not.toContain('vl-model')
-    const detected = options.find((o) => o.value === 'minimax-m3')
-    expect(detected?.detected).toBe(true)
-  })
-
-  it('keeps a configured model that is not in the catalog', () => {
-    const options = modelOptions(catalog, 'opencode-go', 'retired-model', undefined)
-    expect(options.some((o) => o.value === 'retired-model' && o.retained)).toBe(true)
-  })
-
-  it('returns no models when the provider is unset', () => {
-    expect(modelOptions(catalog, '', '', undefined).length).toBe(0)
+  it('refuses writes on a read-only provider', async () => {
+    const scope = makeSettingsScope({ enabled: false } as VisionConfig)
+    scope.store.writable = false
+    const controller = new SettingsController(scope, async () => {})
+    await controller.load()
+    await expect(controller.save({ enabled: true })).rejects.toThrow('read-only')
   })
 })
 
+// ── CatalogController ────────────────────────────────────────────────────
+
+describe('CatalogController (api.llm.models via constructor injection)', () => {
+  it('publishes the live catalog snapshot', async () => {
+    const api = makeStubLlmApi(
+      [{ id: 'a', name: 'A' }, { id: 'b', name: 'B' }],
+      {
+        a: [{ id: 'vision', name: 'V', inputModalities: ['text', 'image'] }],
+        b: [{ id: 'text', name: 'T', inputModalities: ['text'] }],
+      },
+    )
+    const controller = new CatalogController(api)
+    let state = controller.getSnapshot()
+    expect(state.status).toBe('idle')
+    await controller.load()
+    state = controller.getSnapshot()
+    expect(state.status).toBe('ready')
+    expect(state.snapshot?.providers).toEqual([{ id: 'a', name: 'A' }, { id: 'b', name: 'B' }])
+    expect(state.snapshot?.visionModels).toEqual([{ provider: 'a', model: 'vision', name: 'V' }])
+    expect(state.snapshot?.available).toBe(true)
+  })
+
+  it('surfaces load failures without throwing', async () => {
+    const api = makeStubLlmApi(
+      [{ id: 'a', name: 'A' }],
+      { a: [{ id: 'vision', name: 'V', inputModalities: ['text', 'image'] }] },
+      true, // failOnListProviders
+    )
+    const controller = new CatalogController(api)
+    await controller.load()
+    const state = controller.getSnapshot()
+    expect(state.status).toBe('error')
+    expect(state.error).toContain('boom')
+  })
+})
