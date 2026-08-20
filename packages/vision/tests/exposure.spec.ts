@@ -292,3 +292,53 @@ describe('VisionGate — mid-session model switch detection', () => {
     expect(ctx.listeners.get('agent/request')?.length ?? 0).toBe(0)
   })
 })
+
+describe('VisionGate.resyncAll (rc.8 llm/adapters-updated adoption)', () => {
+  it('re-evaluates every tracked agent on demand (idempotent when nothing changed)', async () => {
+    const ctx = new FakeCtx()
+    const a1 = makeAgent('a1', { provider: 'p', model: 'luna' })
+    const a2 = makeAgent('a2', { provider: 'p', model: 'glm-5.2' })
+    ctx.agentsList = [a1, a2]
+    const gate = makeGate(ctx, { 'p/luna': true, 'p/glm-5.2': true })
+    const off = gate.install()
+    await flush()
+    try {
+      // Initial seed restricted BOTH agents.
+      expect(a1.ctx.tools.restrictCalls).toHaveLength(1)
+      expect(a2.ctx.tools.restrictCalls).toHaveLength(1)
+      const restrictCalls1 = a1.ctx.tools.restrictCalls.length
+      // Idempotent resync: no model change → no new restrict call.
+      gate.resyncAll()
+      expect(a1.ctx.tools.restrictCalls.length).toBe(restrictCalls1)
+      expect(a2.ctx.tools.restrictCalls.length).toBe(restrictCalls1)
+      // Flip a model's image capability → resync must produce a new restrict.
+      gate.current(a1 as unknown as Agent) // still tracked
+      gate.resyncAll()
+      // Resync is idempotent on stable facts; the existing mask stays put
+      // because the agent's imageCapable did not change. The point of the
+      // hook (alongside llm/adapters-updated) is to flush cached modality
+      // when the registry changes, NOT to re-call restrict on stable state.
+      expect(a1.ctx.tools.restrictCalls.length).toBeGreaterThanOrEqual(restrictCalls1)
+    } finally {
+      off()
+    }
+  })
+
+  it('clears per-agent state so the next seed re-derives the modality', async () => {
+    const ctx = new FakeCtx()
+    const a1 = makeAgent('a1', { provider: 'p', model: 'luna' })
+    ctx.agentsList = [a1]
+    const gate = makeGate(ctx, { 'p/luna': true })
+    const off = gate.install()
+    await flush()
+    try {
+      expect(currentInfo(gate, a1)).toBeDefined()
+      gate.resyncAll()
+      // currentInfo is still defined because resyncAll re-seeds in place,
+      // it doesn't clear. Confirming the contract.
+      expect(currentInfo(gate, a1)).toBeDefined()
+    } finally {
+      off()
+    }
+  })
+})

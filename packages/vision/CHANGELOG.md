@@ -4,6 +4,42 @@ All notable changes to **@gitawego/dsh-vision** are documented here. Format foll
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); this project adheres to
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.0] - 2026-08-20
+
+### Added
+
+- **DSH `rc.8` peer-dep alignment** — all `@deepseek-ai/dsh-*` peer/dev deps are now
+  pinned to `0.1.0-rc.8` so the plugin resolves against the newer host runtime.
+  Adoption of rc.8 primitives: `ImageAttachmentLimits` enforcement, pre-flight
+  `admitEncodedImages`, `offloadRequestImages` request-budget enforcement,
+  canonical `contentHasImage`, and the `AttachmentError→VisionError` mapping.
+- **`/vision delegation <auto|native|http>`**, **`/vision http <baseUrl> [credential] [model] [protocol]`**, and
+  **`/vision http-clear`** subcommands — explicit control over the delegation
+  transport and the raw-http endpoint, so Termux users who cannot use the
+  attachment-store path can switch to base64 http delegation without hand-editing
+  `settings.yaml`.
+- **Conservative http delegation auto-fill** — on boot (and on auto-detect) the
+  plugin reads the provider's own `llm-pi-ai` profile and fills empty
+  `http.credential`/`http.model` so Termux http delegation works without
+  re-typing the account. `http.baseUrl`/`http.protocol` are NOT fabricated from the
+  catalog (a model's `anthropic-messages` label can point at an endpoint that
+  rejects the provider key) — the user or `/vision http` owns them; anything the
+  user set is never overwritten.
+- **Code-mode aware `describe_image` guidance** — the tool description and paste
+  hint now teach the model to call `describe_image` from inside a `run_code`
+  program (`tools.describe_image(...)`) when the agent presents tools as Code Mode
+  (`agent-presets.default: code`), which collapses native tool calls.
+
+### Fixed
+
+- **Termux image reads** — on Android/Termux the attachment store cannot write
+  (`/data/data` EACCES), so `delegation=auto` falls back to http; the http block is
+  now auto-derivable (credential/model) or settable via `/vision http`, and the
+  working endpoint (`https://opencode.ai/zen/go/v1` + `protocol: openai` for
+  opencode-go) is verified live.
+- **`unknown tool` for `describe_image` under Code Mode** — the executor collapses
+  native tool calls; the guidance now routes through the SDK binding.
+
 ## [0.2.0] - 2026-08-15
 
 ### Added
