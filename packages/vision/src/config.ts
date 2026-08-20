@@ -178,8 +178,11 @@ function isMarkerStyle(value: unknown): value is MarkerStyle {
 function isPasteMode(value: unknown): value is PasteMode {
   return typeof value === 'string' && (PASTE_MODES as readonly string[]).includes(value)
 }
-function isDelegationMode(value: unknown): value is DelegationMode {
+export function isDelegationMode(value: unknown): value is DelegationMode {
   return typeof value === 'string' && (DELEGATION_MODES as readonly string[]).includes(value)
+}
+export function isHttpProtocol(value: unknown): value is 'openai' | 'anthropic' {
+  return value === 'openai' || value === 'anthropic'
 }
 function clampInt(value: unknown, min: number, max: number, fallback: number): number {
   const n = typeof value === 'number' ? value : Number(value)
