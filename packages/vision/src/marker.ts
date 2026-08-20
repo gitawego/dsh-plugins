@@ -32,7 +32,11 @@ export function renderMarkers(text: string, paths: readonly string[], style: Mar
 }
 
 /** Zero-token hint appended on text-only primaries (paste mode "hint"):
- *  names the paths and the image_paths batch affordance (pi-vision v0.4.0). */
+ *  names the paths and the image_paths batch affordance (pi-vision v0.4.0).
+ *  CODE-MODE AWARE: when the agent presents tools as Code Mode (only run_code
+ *  is directly callable), a native describe_image call is denied by the
+ *  executor — the model must call it from inside a run_code program via the
+ *  SDK binding instead. The hint covers both routes so the model self-corrects. */
 export function buildHintLine(paths: readonly string[], markerStyle: MarkerStyle): string {
   const quoted = paths.map((p) => `"${p}"`).join(', ')
   return [
@@ -41,6 +45,7 @@ export function buildHintLine(paths: readonly string[], markerStyle: MarkerStyle
     paths.length === 1
       ? 'with image_path (single image).'
       : `with image_paths (all ${paths.length} in one batch call).`,
+    '(If your session uses Code Mode, call describe_image from inside a run_code program via the SDK binding: tools.describe_image({ image_path / image_paths, prompt }).)',
   ].join(' ')
 }
 
@@ -128,7 +133,8 @@ export function buildPasteHintLine(
   const noun = n === 1 ? 'image' : 'images'
   const verb = n === 1 ? 'analyze it' : 'analyze them'
   const clause = n >= 2 ? ' with image_paths (pass all paths in one batch)' : ''
-  const header = `[${n} ${noun} referenced — ${reason}; call describe_image to ${verb}${clause}]`
+  const codeMode = '(Code Mode: if only run_code is directly callable, call describe_image from inside it via the SDK binding, e.g. tools.describe_image({ image_path, prompt }))'
+  const header = `[${n} ${noun} referenced — ${reason}; call describe_image to ${verb}${clause}] ${codeMode}`
   if (n === 1) {
     return `${header}\nImage path: ${images[0]!.token}`
   }
