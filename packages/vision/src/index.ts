@@ -21,6 +21,8 @@ import { createVisionCommand } from './commands.ts'
 import { Config, VISION_SETTINGS_NAMESPACE, mergeConfig, resolveConfig, type ResolvedVisionConfig, type VisionConfig } from './config.ts'
 import { delegateToVisionModel, type DelegateDeps } from './delegate.ts'
 import { detectVisionModel } from './defaults.ts'
+import { deriveHttpFromProviderProfile, type DerivedHttpConfig } from './models-catalog.ts'
+import { settingsNamespace } from '@deepseek-ai/dsh-settings'
 import { VisionGate } from './exposure.ts'
 import { MarkerRegistry } from './marker.ts'
 import { createPasteHook } from './paste.ts'
@@ -55,6 +57,49 @@ export function apply(ctx: Context, config: Partial<VisionConfig> = {}) {
     dir: resolved.cachePersist ? join(home, 'cache', 'dsh-vision') : undefined,
     maxEntries: resolved.cacheMaxEntries,
   })
+
+  // rc.8 endpoint auto-completion: on hosts where the attachment store cannot
+  // deliver natively (Android/Termux EACCES — probed below), delegation=auto
+  // falls back to the http transport, which needs http.baseUrl + http.credential
+  // + http.model. We auto-complete the EMPTY http fields from the provider's OWN
+  // llm-pi-ai profile (credential/apiKeyEnv, declared baseURL) and the published
+  // pi-ai catalog endpoint. USER CHOICE IS PRESERVED: an http field the user
+  // explicitly set is never overwritten. This runs regardless of whether
+  // provider/model were pre-set or auto-detected.
+  void (async () => {
+    const p = resolved.provider
+    const m = resolved.model
+    if (p === undefined || m === undefined) return
+    try {
+      const llmPiAi = ctx.settings.get(settingsNamespace('llm-pi-ai')) as never
+      const derived = deriveHttpFromProviderProfile(llmPiAi, p, m)
+      if (derived === undefined) return
+      const http = resolved.http
+      // Conservative auto-fill: only credential + model come from the provider
+      // profile (correct — they identify the account and the vision model).
+      // We deliberately do NOT fabricate baseUrl/protocol from the catalog: a
+      // model's catalog `api: anthropic-messages` label and its endpoint
+      // can point at a /v1/messages route that rejects the provider key (401 —
+      // verified on opencode.ai), while the SAME provider only actually serves
+      // the model via the OpenAI-compatible /v1/chat/completions. baseUrl &
+      // protocol are provider-routing choices the user owns (/vision http) or
+      // a profile-declared baseURL; the catalog cannot answer them reliably.
+      const nextHttp: Record<string, unknown> = {
+        ...(http.baseUrl !== undefined && http.baseUrl.length > 0 ? { baseUrl: http.baseUrl } : (derived.baseUrl !== undefined ? { baseUrl: derived.baseUrl } : {})),
+        ...(http.credential !== undefined && http.credential.length > 0 ? { credential: http.credential } : (derived.credential !== undefined ? { credential: derived.credential } : {})),
+        ...(http.model !== undefined && http.model.length > 0 ? { model: http.model } : { model: m }),
+        ...((http.protocol !== undefined ? { protocol: http.protocol } : { protocol: 'openai' })),
+      }
+      const needsWrite = nextHttp.baseUrl !== undefined && nextHttp.credential !== undefined && nextHttp.model !== undefined
+        && (http.baseUrl === undefined || http.credential === undefined || http.model === undefined)
+      if (needsWrite) {
+        await settings.update({ http: nextHttp })
+        ctx.logger.info('dsh-vision: auto-completed http delegation from %s profile + catalog (baseUrl=%s, credential=%s, model=%s)', p, nextHttp.baseUrl, nextHttp.credential, nextHttp.model)
+      }
+    } catch (error) {
+      ctx.logger.warn('dsh-vision: http auto-completion skipped: %s', error instanceof Error ? error.message : String(error))
+    }
+  })()
   const rebuildCache = (): void => {
     cache = new VisionCache({
       dir: resolved.cachePersist ? join(home, 'cache', 'dsh-vision') : undefined,
@@ -211,13 +256,48 @@ export function apply(ctx: Context, config: Partial<VisionConfig> = {}) {
     gate.resyncAll()
   })
 
+  // rc.8 llm/adapters-updated: when an adapter registers, replaces, or
+  // disposes routes, the live modality catalog may change (a previously
+  // non-image-capable provider gained an image-capable model). The gate
+  // caches per-agent modality; without this subscription the cache would
+  // lag the registry until the next agent/request or system-prompt/assemble.
+  // resyncAll is idempotent on stable facts (no restrict churn when nothing
+  // changed). Listener failures are contained by the harness.
+  const adaptersUpdated = ctx.on('llm/adapters-updated', () => {
+    gate.resyncAll()
+  })
+
   // Data-driven auto-detect: persist once when provider+model are both unset.
   const autoDetect = ctx.on('agent/created', async ({ agent }) => {
     if (!resolved.autoDetectVisionModel || resolved.provider !== undefined || resolved.model !== undefined) return
     const detected = await detectVisionModel(ctx.llm, { primaryProvider: agent.options?.provider })
     if (detected !== undefined) {
       try {
-        await settings.update({ provider: detected.provider, model: detected.model })
+        const patch: Record<string, unknown> = { provider: detected.provider, model: detected.model }
+        // rc.8: on hosts where the attachment store cannot deliver natively
+        // (Termux), delegation=auto falls back to the http transport, which
+        // needs credential+model+baseUrl. The provider's OWN llm-pi-ai profile
+        // already carries the credential (apiKeyEnv) — derive it so the user
+        // does not re-type it. USER CHOICE IS PRESERVED: only empty http
+        // fields are pre-filled; an explicit http block (baseUrl/credential)
+        // the user set is never overwritten. A missing baseUrl in the profile
+        // stays user-supplied (the catalog endpoint is adapter-internal).
+        const llmPiAiSettings = ctx.settings.get(settingsNamespace('llm-pi-ai')) as never
+        const derived = deriveHttpFromProviderProfile(llmPiAiSettings, detected.provider, detected.model)
+        if (derived !== undefined && derived.credential !== undefined) {
+          const http = resolved.http
+          const nextHttp = {
+            ...(http.baseUrl !== undefined ? { baseUrl: http.baseUrl } : {}),
+            ...(http.credential !== undefined || derived.credential !== undefined ? { credential: http.credential ?? derived.credential } : {}),
+            ...(http.model !== undefined ? { model: http.model } : (detected.model !== undefined ? { model: detected.model } : {})),
+            protocol: http.protocol ?? 'openai',
+          }
+          if (!http.baseUrl || !http.credential || !http.model) {
+            patch.http = nextHttp
+            ctx.logger.info('dsh-vision: derived http delegation prepopulation from %s profile (credential=%s%s)', detected.provider, derived.credential, derived.baseUrl !== undefined ? `, baseUrl=${derived.baseUrl}` : ' (set baseUrl separately — catalog endpoint is adapter-internal)')
+          }
+        }
+        await settings.update(patch)
         ctx.logger.info('dsh-vision: auto-configured %s/%s (data-driven)', detected.provider, detected.model)
       } catch (error) {
         ctx.logger.warn('dsh-vision: auto-detect could not persist %s/%s: %s', detected.provider, detected.model, error instanceof Error ? error.message : String(error))
@@ -240,6 +320,7 @@ export function apply(ctx: Context, config: Partial<VisionConfig> = {}) {
     gateDisposer() // release per-agent tool masks + gate listeners
     markersDisposer() // marker registry cleanup on agent disposal
     streamDisposer() // request-boundary image converter (llm/stream)
+    adaptersUpdated() // rc.8 llm/adapters-updated subscription
     autoDetect()
     settingsWatch()
     pasteDisposer() // agent/pre-step hook

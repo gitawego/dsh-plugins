@@ -273,3 +273,97 @@ describe('commands', () => {
   })
 })
 
+import { isDelegationMode, isHttpProtocol } from '../src/config.ts'
+
+describe('commands: delegation + http config (rc.8 Termux fix)', () => {
+  function makeCmd(overrides: { current?: Record<string, unknown>; updates?: Array<Record<string, unknown>> } = {}) {
+    const updates: Array<Record<string, unknown>> = []
+    const cmd = createVisionCommand({
+      settings: {
+        get: () => ({}) as never,
+        update: async (patch: Record<string, unknown>) => { updates.push(patch) },
+        mutate: async () => { },
+        replace: async () => { },
+      },
+      config: () => ({
+        enabled: true,
+        textOnlyPasteMode: 'hint',
+        delegation: 'auto',
+        provider: 'p', model: 'm',
+        http: { baseUrl: undefined, credential: undefined, model: undefined, protocol: 'openai' },
+        ...(overrides.current ?? {}),
+      }) as never,
+      gate: { resyncAll: () => {} } as never,
+      cache: () => undefined,
+      home: '/tmp',
+      detect: async () => undefined,
+    })
+    return { cmd, updates }
+  }
+
+  it('delegation subcommand sets the delegation mode (validating the enum)', async () => {
+    const { cmd, updates } = makeCmd()
+    const inv = { rawInput: 'delegation http' } as never
+    const result = await cmd.handler?.(inv)
+    expect(result?.kind).toBe('success')
+    expect(updates[0]).toMatchObject({ delegation: 'http' })
+  })
+
+  it('delegation subcommand rejects an invalid mode', async () => {
+    const { cmd, updates } = makeCmd()
+    const inv = { rawInput: 'delegation bogus' } as never
+    const result = await cmd.handler?.(inv)
+    expect(result?.kind).toBe('error')
+    expect(updates).toHaveLength(0)
+  })
+
+  it('http subcommand sets baseUrl + credential + model + protocol', async () => {
+    const { cmd, updates } = makeCmd()
+    const inv = { rawInput: 'http https://opencode.ai/zen/go/v1 OPENCODE_GO_API_KEY minimax-m3 openai' } as never
+    const result = await cmd.handler?.(inv)
+    expect(result?.kind).toBe('success')
+    expect(updates).toHaveLength(1)
+    expect(updates[0]).toMatchObject({
+      http: {
+        baseUrl: 'https://opencode.ai/zen/go/v1',
+        credential: 'OPENCODE_GO_API_KEY',
+        model: 'minimax-m3',
+        protocol: 'openai',
+      },
+    })
+  })
+
+  it('http subcommand with no args shows the current endpoint (does not write)', async () => {
+    const { cmd, updates } = makeCmd({
+      current: { http: { baseUrl: 'https://opencode.ai/zen/go/v1', credential: 'OPENCODE_GO_API_KEY', model: 'minimax-m3', protocol: 'openai' } },
+    })
+    const inv = { rawInput: 'http' } as never
+    const result = await cmd.handler?.(inv)
+    expect(result?.kind).toBe('success')
+    const text = (result as { text: string }).text
+    expect(text).toContain('https://opencode.ai/zen/go/v1')
+    expect(updates).toHaveLength(0) // read-only — no settings write
+  })
+
+  it('http-clear removes the http block', async () => {
+    const { cmd, updates } = makeCmd({
+      current: {
+        http: { baseUrl: 'https://opencode.ai/zen/go/v1', credential: 'OPENCODE_GO_API_KEY', model: 'minimax-m3', protocol: 'openai' },
+      },
+    })
+    const inv = { rawInput: 'http-clear' } as never
+    const result = await cmd.handler?.(inv)
+    expect(result?.kind).toBe('success')
+    expect(updates[0]).toMatchObject({ http: {} })
+  })
+
+  it('enum surfaces for delegation + protocol exist and are validated', () => {
+    expect(isDelegationMode('auto')).toBe(true)
+    expect(isDelegationMode('native')).toBe(true)
+    expect(isDelegationMode('http')).toBe(true)
+    expect(isDelegationMode('bogus')).toBe(false)
+    expect(isHttpProtocol('openai')).toBe(true)
+    expect(isHttpProtocol('anthropic')).toBe(true)
+    expect(isHttpProtocol('bogus')).toBe(false)
+  })
+})

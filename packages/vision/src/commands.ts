@@ -6,7 +6,8 @@ import type { VisionGate } from './exposure.ts'
 import type { VisionCache } from './cache.ts'
 import type { ResolvedVisionConfig, VisionConfig } from './config.ts'
 import {
-  MARKER_STYLES, PASTE_MODES, REASONING_LEVELS, DEFAULT_CONFIG,
+  MARKER_STYLES, PASTE_MODES, REASONING_LEVELS, DELEGATION_MODES, DEFAULT_CONFIG,
+  isDelegationMode, isHttpProtocol,
 } from './config.ts'
 import { clearAuditLog, countAuditLog, resolveAuditPath, tailAuditLog } from './audit.ts'
 import { loadImage } from './image.ts'
@@ -79,11 +80,11 @@ function numberArg(raw: string | undefined, min: number, max: number, label: str
 export function createVisionCommand(deps: VisionCommandDeps): CommandDefinition {
   return {
     name: 'vision',
-    description: 'Vision tool configuration. Subcommands: show, session-status, on, off, provider <p>, model [<id>], max-dim <px>, quality <1-100>, reasoning-effort <level>, system-prompt [<text>|clear], cache <clear|show>, fallback [<p/m>|clear], clear, paste-mode [hint|auto|off], marker-style [s], auto-prompt [<text>|clear], preview <path>, batch-concurrency [<1-20>], local-only [on|off], audit <clear|show|path|on|off>, audit-path [<path>|clear], auto-detect [on|off].',
+    description: 'Vision tool configuration. Subcommands: show, session-status, on, off, provider <p>, model [<id>], max-dim <px>, quality <1-100>, reasoning-effort <level>, system-prompt [<text>|clear], cache <clear|show>, fallback [<p/m>|clear], clear, paste-mode [hint|auto|off], marker-style [s], auto-prompt [<text>|clear], preview <path>, batch-concurrency [<1-20>], local-only [on|off], audit <clear|show|path|on|off>, audit-path [<path>|clear], auto-detect [on|off], delegation <auto|native|http>, http <baseUrl> [credential] [model] [protocol], http-clear.',
     // The shipped Web command UI only intercepts lines with arguments when
     // the command declares an input hint (bare /vision still executes);
     // without this, subcommands fall through to a normal chat message.
-    input: { hint: 'show · session-status · on|off · model <provider/model> · provider <name> · paste-mode <hint|auto|off> · marker-style <code|bold|plain> · local-only <on|off> · cache <show|clear> · audit <show|clear|on|off> · fallback <p/m> · clear' },
+    input: { hint: 'show · session-status · on|off · model <provider/model> · provider <name> · paste-mode <hint|auto|off> · marker-style <code|bold|plain> · local-only <on|off> · cache <show|clear> · audit <show|clear|on|off> · fallback <p/m> · delegation <auto|native|http> · http <baseUrl> [credential] [model] [protocol] · http-clear · clear' },
     handler: async (invocation: CommandInvocation): Promise<CommandResult> => {
       const parts = invocation.rawInput.trim().split(/\s+/).filter(Boolean)
       const sub = parts[0] ?? ''
@@ -151,6 +152,43 @@ export function createVisionCommand(deps: VisionCommandDeps): CommandDefinition 
           }
           await settings.update({ model: value })
           return ok(`Vision model set to ${value}.`)
+        }
+        case 'delegation': {
+          const value = parts[1]
+          if (!value || !isDelegationMode(value)) {
+            return err(`Usage: /vision delegation <${DELEGATION_MODES.join('|')}>  (auto = sub-agent-first with http fallback; native = sub-agent only; http = direct endpoint)`)
+          }
+          await settings.update({ delegation: value })
+          deps.gate.resyncAll()
+          return ok(`Vision delegation set to ${value}. On Termux/Android where the attachment store cannot write, use 'http' (set /vision http <baseUrl> <credential> <model>).`)
+        }
+        case 'http': {
+          const baseUrl = parts[1]
+          if (!baseUrl) {
+            const current = c.http.baseUrl
+              ? `${c.http.baseUrl} model=${c.http.model ?? '(unset)'} credential=${c.http.credential ? String(c.http.credential) : '(unset)'} protocol=${c.http.protocol}`
+              : '(not set)'
+            return ok(`Vision http endpoint: ${current}. Usage: /vision http <baseUrl> [credential] [model] [protocol]`)
+          }
+          const credential = parts[2]
+          const model = parts[3]
+          const protocolRaw = parts[4] ?? 'openai'
+          if (!isHttpProtocol(protocolRaw)) return err(`Invalid protocol. Valid: openai, anthropic`)
+          if (!/^https?:\/\//.test(baseUrl)) return err('http.baseUrl must start with http(s)://')
+          await settings.update({
+            http: {
+              baseUrl,
+              ...(credential ? { credential } : {}),
+              ...(model ? { model } : {}),
+              protocol: protocolRaw,
+            },
+          })
+          return ok(`Vision http endpoint set: ${baseUrl}${credential ? ` (credential ${credential})` : ''}${model ? ` model=${model}` : ''} (${protocolRaw})`)
+        }
+        case 'http-clear': {
+          await settings.update({ http: {} })
+          deps.gate.resyncAll()
+          return ok('Vision http endpoint cleared.')
         }
         case 'max-dim': {
           const parsed = numberArg(parts[1], 1, 8000, 'max-dim')
