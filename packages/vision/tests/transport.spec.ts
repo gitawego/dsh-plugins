@@ -114,3 +114,95 @@ describe('callHttpVision (mocked fetch)', () => {
   })
 })
 
+/** admitEncodedImages path: when the host exposes a working attachment
+ *  store, the http transport validates the image against the rc.8
+ *  ImageAttachmentLimits via ctx.attachments.saveImage BEFORE hitting the
+ *  endpoint. Admission failures throw with the canonical AttachmentErrorCode
+ *  (mapped to VisionError); on hosts where the store cannot write
+ *  (Termux: no `attachments` arg), the transport falls through to base64
+ *  exactly as before. */
+import { AttachmentId } from '@deepseek-ai/dsh-attachment'
+import type { ImageAttachmentRef } from '@deepseek-ai/dsh-attachment'
+
+/** Helper: build a typed saveImage seam whose mock returns a properly
+ *  branded ImageAttachmentRef. The cast at the boundary is intentional —
+ *  tests only care about the call shape, not the brand. */
+function fakeRef(): ImageAttachmentRef {
+  return {
+    attachmentId: AttachmentId('sha256:abc'),
+    mediaType: 'image/png',
+    bytes: PNG_1x1.byteLength,
+    width: 1,
+    height: 1,
+  }
+}
+
+describe('callHttpVision admission via admitEncodedImages (rc.8)', () => {
+  it('skips admission when no attachments seam is provided (Termux path)', async () => {
+    const fetchMock = vi.fn(async () => jsonResponse({ choices: [{ message: { content: 'a cat' } }] }))
+    vi.stubGlobal('fetch', fetchMock)
+    // No attachments argument — existing behavior, must not break.
+    const text = await callHttpVision(BASE_OPTS)
+    expect(text).toBe('a cat')
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+  })
+
+  it('admits via saveImage before fetching when an attachments seam is provided', async () => {
+    const fetchMock = vi.fn(async () => jsonResponse({ choices: [{ message: { content: 'a cat' } }] }))
+    vi.stubGlobal('fetch', fetchMock)
+    const saveImage = vi.fn(async (_input: { data: Uint8Array; mediaType: string }) => fakeRef())
+    await callHttpVision({ ...BASE_OPTS, attachments: { saveImage } })
+    expect(saveImage).toHaveBeenCalledTimes(1)
+    // The saveImage call must carry the actual image bytes + declared MIME.
+    const arg = saveImage.mock.calls[0]?.[0]
+    expect(arg).toBeDefined()
+    expect(arg!.mediaType).toBe('image/png')
+    expect(arg!.data).toBeInstanceOf(Uint8Array)
+    expect(arg!.data.byteLength).toBe(PNG_1x1.byteLength)
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+  })
+
+  it('throws a VisionError with mapped code when admission fails (rc.8 IMAGE_TOO_LARGE)', async () => {
+    vi.stubGlobal('fetch', vi.fn())
+    const { AttachmentError } = await import('@deepseek-ai/dsh-attachment')
+    const saveImage = vi.fn(async () => {
+      throw new AttachmentError('too large', 'IMAGE_TOO_LARGE')
+    })
+    await expect(
+      callHttpVision({ ...BASE_OPTS, attachments: { saveImage } }),
+    ).rejects.toMatchObject({ code: 'too_large', name: 'VisionError' })
+  })
+
+  it('throws a VisionError with mapped code on UNSUPPORTED_IMAGE_TYPE', async () => {
+    vi.stubGlobal('fetch', vi.fn())
+    const { AttachmentError } = await import('@deepseek-ai/dsh-attachment')
+    const saveImage = vi.fn(async () => {
+      throw new AttachmentError('unsupported', 'UNSUPPORTED_IMAGE_TYPE')
+    })
+    await expect(
+      callHttpVision({ ...BASE_OPTS, attachments: { saveImage } }),
+    ).rejects.toMatchObject({ code: 'unsupported_format' })
+  })
+
+  it('still fetches even when admission succeeds (admission is validation, not transport)', async () => {
+    const fetchMock = vi.fn(async (_url: string | URL, init?: RequestInit) =>
+      jsonResponse({ choices: [{ message: { content: 'ok' } }] }) as unknown as Response & { _init?: RequestInit },
+    )
+    vi.stubGlobal('fetch', fetchMock)
+    const saveImage = vi.fn(async () => fakeRef())
+    const text = await callHttpVision({ ...BASE_OPTS, attachments: { saveImage } })
+    expect(text).toBe('ok')
+    // The fetch body still carries the inline base64 — providers cannot
+    // dereference a DSH ImageAttachmentRef. Admission is pre-flight only.
+    const call = fetchMock.mock.calls[0]
+    expect(call).toBeDefined()
+    const init = call![1]
+    expect(init).toBeDefined()
+    const body = JSON.parse(init!.body as string)
+    // BASE_OPTS has no systemPrompt → messages[0] is the user message.
+    const user = body.messages[0]
+    expect(user).toBeDefined()
+    const imagePart = user.content[0]
+    expect(imagePart.image_url.url.startsWith('data:image/png;base64,')).toBe(true)
+  })
+})

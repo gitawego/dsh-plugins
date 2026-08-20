@@ -12,7 +12,7 @@
  *  deterministic) and the original session messages are never modified — only
  *  the ephemeral request payload changes. */
 import type { ContentBlock, GenerateOptions, Message, StreamChunk } from '@deepseek-ai/dsh-llm'
-import { isAgentLoopRequest } from '@deepseek-ai/dsh-llm'
+import { contentHasImage, isAgentLoopRequest } from '@deepseek-ai/dsh-llm'
 import type { ImageAttachmentRef } from '@deepseek-ai/dsh-attachment'
 import type { DelegateParams, DelegateResult } from './delegate.ts'
 import { writeBlockTempFile } from './paste.ts'
@@ -36,14 +36,6 @@ export interface StreamConverterDeps {
   logger?: { warn: (message: string, ...args: unknown[]) => void }
 }
 
-function contentHasImageBlocks(content: readonly ContentBlock[] | undefined): boolean {
-  return (content ?? []).some((b) => b.type === 'image')
-}
-
-function messagesHaveImages(messages: readonly Message[]): boolean {
-  return messages.some((m) => contentHasImageBlocks(m.content))
-}
-
 /** Convert one message's image blocks to "[image: …]" text blocks. Returns the
  *  new message, or undefined when nothing changed. Never throws. */
 async function convertMessage(
@@ -52,7 +44,10 @@ async function convertMessage(
   delegate: StreamImageDelegate,
   signal: AbortSignal,
 ): Promise<Message | undefined> {
-  if (!contentHasImageBlocks(message.content)) return undefined
+  // rc.8 ADOPTION: use the canonical contentHasImage() helper, which walks
+  // nested tool-result content. The previous local helper only checked
+  // top-level blocks, missing nested images inside tool results.
+  if (!contentHasImage(message.content)) return undefined
   const newContent: ContentBlock[] = []
   const tempFiles: string[] = []
   try {
@@ -94,7 +89,9 @@ async function convertMessage(
 export function createStreamImageConverter(deps: StreamConverterDeps) {
   return async function* (options: GenerateOptions, next: () => AsyncIterable<StreamChunk>): AsyncIterable<StreamChunk> {
     // Loop-built agent requests are deep-frozen and read-only by contract.
-    if (isAgentLoopRequest(options) || !messagesHaveImages(options.messages)) {
+    // contentHasImage walks nested tool-result content (rc.8 canonical helper).
+    const hasImage = options.messages.some((m) => contentHasImage(m.content))
+    if (isAgentLoopRequest(options) || !hasImage) {
       yield* next()
       return
     }

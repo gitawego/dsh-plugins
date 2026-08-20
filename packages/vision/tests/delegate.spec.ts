@@ -233,3 +233,67 @@ describe('subagent delegation (DESIGN RULE)', () => {
   })
 })
 
+/** rc.8 AttachmentError → VisionError mapping (canonical ImageAdmissionErrorCode
+ *  taxonomy). When the host's attachment store refuses admission, the plugin
+ *  maps the closed rc.8 code to the plugin's open VisionErrorCode so callers
+ *  see a uniform vocabulary. The mapping is 1:1 for caller-correctable codes
+ *  (the isImageAdmissionError subset); storage faults map to 'unexpected'. */
+import { AttachmentError } from '@deepseek-ai/dsh-attachment'
+import { attachmentErrorToVisionError, mapAttachmentCode } from '../src/delegate.ts'
+
+describe('rc.8 attachment-error mapping (ImageAdmissionErrorCode → VisionErrorCode)', () => {
+  it('IMAGE_TOO_LARGE → too_large', () => {
+    expect(mapAttachmentCode('IMAGE_TOO_LARGE')).toBe('too_large')
+  })
+
+  it('IMAGE_DIMENSION_TOO_LARGE → too_large', () => {
+    expect(mapAttachmentCode('IMAGE_DIMENSION_TOO_LARGE')).toBe('too_large')
+  })
+
+  it('IMAGE_TOO_MANY_PIXELS → too_large', () => {
+    expect(mapAttachmentCode('IMAGE_TOO_MANY_PIXELS')).toBe('too_large')
+  })
+
+  it('IMAGES_TOO_LARGE → too_large', () => {
+    expect(mapAttachmentCode('IMAGES_TOO_LARGE')).toBe('too_large')
+  })
+
+  it('UNSUPPORTED_IMAGE_TYPE → unsupported_format', () => {
+    expect(mapAttachmentCode('UNSUPPORTED_IMAGE_TYPE')).toBe('unsupported_format')
+  })
+
+  it('IMAGE_TYPE_MISMATCH → unsupported_format', () => {
+    expect(mapAttachmentCode('IMAGE_TYPE_MISMATCH')).toBe('unsupported_format')
+  })
+
+  it('INVALID_IMAGE_BASE64 → invalid_data_url', () => {
+    expect(mapAttachmentCode('INVALID_IMAGE_BASE64')).toBe('invalid_data_url')
+  })
+
+  it('INVALID_IMAGE → invalid_data_url', () => {
+    expect(mapAttachmentCode('INVALID_IMAGE')).toBe('invalid_data_url')
+  })
+
+  it('TOO_MANY_IMAGES → batch_too_large', () => {
+    expect(mapAttachmentCode('TOO_MANY_IMAGES')).toBe('batch_too_large')
+  })
+
+  it('unknown / storage code → unexpected', () => {
+    expect(mapAttachmentCode('STORAGE_BACKEND_DOWN')).toBe('unexpected')
+    expect(mapAttachmentCode('UNKNOWN_ATTACHMENT_REF')).toBe('unexpected')
+  })
+
+  it('attachmentErrorToVisionError preserves the rc.8 code in the message', () => {
+    const err = new AttachmentError('image is 10MB', 'IMAGE_TOO_LARGE')
+    const mapped = attachmentErrorToVisionError(err)
+    expect(mapped.code).toBe('too_large')
+    expect(mapped.message).toContain('IMAGE_TOO_LARGE')
+    expect(mapped.message).toContain('image is 10MB')
+  })
+
+  it('attachmentErrorToVisionError is recognized as a VisionError (caller type guard works)', () => {
+    const mapped = attachmentErrorToVisionError(new AttachmentError('x', 'IMAGE_TOO_LARGE'))
+    expect(mapped.name).toBe('VisionError')
+    expect(mapped).toBeInstanceOf(Error)
+  })
+})

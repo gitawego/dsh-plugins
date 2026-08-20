@@ -16,8 +16,16 @@ import {
   appendAuditEntry, resolveAuditPath, truncateImagePathForLog, type AuditEntry,
 } from './audit.ts'
 import { callHttpVision, maxTokensFor, type HttpProtocol } from './transport.ts'
+import { attachmentErrorToVisionError, mapAttachmentCode } from './transport.ts'
 import { resolveInputPath } from './paths.ts'
 import { VisionError } from './errors.ts'
+
+// Re-export the rc.8 attachment-error mapping so plugin code (and tests) can
+// reach it from a single canonical entry point. [6]: when the sub-agent path
+// surfaces an AttachmentError (rare; the subagent's own paste hook admits the
+// image, so admission errors are its concern), map it through the same
+// vocabulary the http transport uses.
+export { mapAttachmentCode, attachmentErrorToVisionError }
 
 export interface DelegateParams {
   image_path: string
