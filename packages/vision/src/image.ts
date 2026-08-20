@@ -1,6 +1,7 @@
 /** Image loading, hashing, MIME sniffing, and (graceful) compression.
  *  Compression uses sharp when available and degrades to original bytes when
  *  it is not — mirroring pi-vision's "degrade gracefully" contract. */
+import type { ImageAttachmentLimits } from '@deepseek-ai/dsh-attachment'
 import { createHash } from 'node:crypto'
 import { readFile, stat } from 'node:fs/promises'
 import { existsSync } from 'node:fs'
@@ -41,6 +42,54 @@ export function hashBytes(bytes: Uint8Array): string {
   return createHash('sha256').update(bytes).digest('hex')
 }
 
+/** Inputs for {@link enforceImageLimits}: the raw bytes (or the byte length
+ *  alone), the media type, and (optionally) the decoded pixel dimensions.
+ *  Dimensions are only required when the caller's limits declare a
+ *  pixel-count or per-side bound. */
+export interface LimitCheckOptions {
+  bytes: number
+  mimeType: string
+  limits: ImageAttachmentLimits
+  dimensions?: { width: number; height: number }
+}
+
+/** Admission result: either passes, or fails with a plugin error code that
+ *  maps 1:1 to the rc.8 ImageAdmissionErrorCode subset (validated by [6]
+ *  via isImageAdmissionError). The message names the exact rc.8 code so
+ *  downstream consumers can route on the closed vocabulary. */
+export type LimitCheckResult =
+  | { ok: true }
+  | { ok: false; code: ImageLoadErrorCode; message: string }
+
+/** Pure admission check against the harness's typed ImageAttachmentLimits.
+ *  Mirrors dsh-attachment-local's validate order (byte → dimension → pixels)
+ *  and produces the same error codes so the wire format is uniform with the
+ *  rest of the harness. Pure (no I/O); used by loadImage() when limits are
+ *  provided and by tests directly. */
+export function enforceImageLimits(opts: LimitCheckOptions): LimitCheckResult {
+  const { bytes, mimeType, limits, dimensions } = opts
+  // Byte limit — first check (cheapest).
+  if (bytes > limits.maxImageBytes) {
+    return { ok: false, code: 'too_large', message: `image exceeds byte limit (rc.8 code: IMAGE_TOO_LARGE)` }
+  }
+  // Media-type allowlist — second check (memory-cheap, precedes decode).
+  if (!(limits.mediaTypes as readonly string[]).includes(mimeType)) {
+    return { ok: false, code: 'unsupported_format', message: `${mimeType} is not in the deployment media-type allowlist (rc.8 code: UNSUPPORTED_IMAGE_TYPE)` }
+  }
+  // Dimension / pixel checks — only when dimensions are known. Order matches
+  // dsh-attachment-local's validateImage (total pixels first, per-side second).
+  if (dimensions !== undefined) {
+    if (dimensions.width * dimensions.height > limits.maxImagePixels) {
+      return { ok: false, code: 'too_large', message: `image exceeds total pixel limit (rc.8 code: IMAGE_TOO_MANY_PIXELS)` }
+    }
+    const maxSide = Math.max(dimensions.width, dimensions.height)
+    if (maxSide > limits.maxImageDimension) {
+      return { ok: false, code: 'too_large', message: `image exceeds per-side dimension limit (rc.8 code: IMAGE_DIMENSION_TOO_LARGE)` }
+    }
+  }
+  return { ok: true }
+}
+
 /** Sniff MIME from magic bytes (PNG/JPEG/GIF/WebP/BMP). */
 export function sniffMime(bytes: Uint8Array): SupportedMime | undefined {
   if (bytes.length >= 8 && bytes[0] === 0x89 && bytes[1] === 0x50 && bytes[2] === 0x4e && bytes[3] === 0x47) return 'image/png'
@@ -72,7 +121,7 @@ function parseDataUrl(input: string): { bytes: Uint8Array; mimeType: SupportedMi
 /** Load an image from a file path, data: URL, or raw base64. */
 export async function loadImage(
   input: string,
-  opts: { cwd: string; maxBytes?: number },
+  opts: { cwd: string; maxBytes?: number; limits?: ImageAttachmentLimits },
 ): Promise<ImageLoadResult> {
   const maxBytes = opts.maxBytes ?? MAX_IMAGE_BYTES
   const trimmed = input.trim()

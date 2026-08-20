@@ -659,3 +659,98 @@ describe('paste hook — idempotency (never rewrite an already-rewritten message
     expect(deps.delegateCalls).toHaveLength(1)
   })
 })
+/** rc.8 offloadRequestImages adoption (paste hook).
+ *  When the host exposes a working attachment store AND the agent's primary
+ *  is multimodal AND the deployment sets a maxRequestImageBytes limit, the
+ *  paste hook applies offloadRequestImages() to the transformed batch so
+ *  accumulated image bytes can never exceed the provider's request budget.
+ *  The hook is a no-op when any precondition is missing. */
+import { OFFLOADED_IMAGE_TEXT, offloadRequestImages } from '@deepseek-ai/dsh-llm'
+import { AttachmentId } from '@deepseek-ai/dsh-attachment'
+
+/** Pull the rewritten UserMessage[] out of a PreStepDecision. The hook is
+ *  total — a 'reject' decision (rare; only when upstream rejected the
+ *  batch) leaves the messages untouched. We assert 'enter' for the new
+ *  tests so the type is precise. */
+function messagesFrom(decision: PreStepDecision): UserMessage[] {
+  expect(decision.kind).toBe('enter')
+  return (decision as { kind: 'enter'; messages: UserMessage[] }).messages
+}
+
+describe('offloadRequestImages adoption (rc.8)', () => {
+  it('is a no-op when requestImageByteLimit is undefined', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'dsh-vision-offload-'))
+    try {
+      const refs = Array.from({ length: 3 }, (_, i) => ({
+        attachmentId: AttachmentId('att-' + i),
+        mediaType: 'image/png' as const,
+        bytes: 1024,
+        width: 1,
+        height: 1,
+      }))
+      const msg = createUserMessage({
+        content: [
+          { type: 'text', text: 'three images' },
+          { type: 'image', attachment: refs[0]! },
+          { type: 'image', attachment: refs[1]! },
+          { type: 'image', attachment: refs[2]! },
+        ],
+        source: { kind: 'user' },
+      })
+      const deps = makeDeps({ isMultimodal: () => true, isImageCapable: () => true })
+      const decision = await runHook(deps, makeAgent(dir), [msg])
+      expect(JSON.stringify(messagesFrom(decision))).not.toContain(OFFLOADED_IMAGE_TEXT)
+    } finally {
+      await rm(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('offloads oldest images when the byte budget is exceeded (multimodal + native delivery)', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'dsh-vision-offload-'))
+    try {
+      const refs = Array.from({ length: 3 }, (_, i) => ({
+        attachmentId: AttachmentId('att-' + i),
+        mediaType: 'image/png' as const,
+        bytes: 1024,
+        width: 1,
+        height: 1,
+      }))
+      const msg = createUserMessage({
+        content: [
+          { type: 'text', text: 'three images' },
+          { type: 'image', attachment: refs[0]! },
+          { type: 'image', attachment: refs[1]! },
+          { type: 'image', attachment: refs[2]! },
+        ],
+        source: { kind: 'user' },
+      })
+      const deps = makeDeps({
+        isMultimodal: () => true,
+        isImageCapable: () => true,
+        requestImageByteLimit: 2000,
+      })
+      const decision = await runHook(deps, makeAgent(dir), [msg])
+      const text = JSON.stringify(messagesFrom(decision))
+      expect(text).toContain(OFFLOADED_IMAGE_TEXT)
+      expect(typeof offloadRequestImages).toBe('function')
+    } finally {
+      await rm(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('does NOT offload when primary is text-only (no ImageBlocks present)', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'dsh-vision-offload-'))
+    try {
+      const msg = userMessage('look at ' + dir + '/a.png')
+      const deps = makeDeps({
+        isMultimodal: () => false,
+        isImageCapable: () => false,
+        requestImageByteLimit: 0,
+      })
+      const decision = await runHook(deps, makeAgent(dir), [msg])
+      expect(JSON.stringify(messagesFrom(decision))).not.toContain(OFFLOADED_IMAGE_TEXT)
+    } finally {
+      await rm(dir, { recursive: true, force: true })
+    }
+  })
+})

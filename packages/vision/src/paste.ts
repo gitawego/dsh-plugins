@@ -24,7 +24,7 @@
 import type { Agent, PreStepDecision } from '@deepseek-ai/dsh-agent'
 import type { ImageAttachmentRef, ImageMediaType } from '@deepseek-ai/dsh-attachment'
 import type { ContentBlock, UserMessage } from '@deepseek-ai/dsh-llm'
-import { freezeMessage } from '@deepseek-ai/dsh-llm'
+import { freezeMessage, offloadRequestImages } from '@deepseek-ai/dsh-llm'
 import { createHash } from 'node:crypto'
 import { existsSync, mkdirSync, statSync, unlinkSync, writeFileSync } from 'node:fs'
 import { isAbsolute, join as joinPath, resolve as resolvePath } from 'node:path'
@@ -176,6 +176,12 @@ export interface PasteDeps {
   canDeliverImage: () => Promise<boolean>
   /** Build the delegation entry point for one agent's workspace. */
   delegateFor: (workspace: string) => PasteDelegate
+  /** Optional rc.8 request-image byte budget (from ctx.attachments.imageLimits
+   *  .maxMessageImageBytes). When set, the hook applies offloadRequestImages
+   *  to the transformed batch for multimodal primaries with native delivery so
+   *  accumulated image payload never exceeds the provider's per-request
+   *  image limit. Undefined = no offloading (the pre-rc.8 behavior). */
+  requestImageByteLimit?: number
   logger?: { warn: (message: string, ...args: unknown[]) => void }
 }
 
@@ -443,6 +449,26 @@ async function transformBatch(
       changed = true
     }
   }
+
+  // rc.8: enforce the deployment's request-image byte budget for multimodal
+  // primaries with native delivery. offloadRequestImages is the canonical
+  // helper — it walks the messages oldest-first and replaces ImageBlocks with
+  // OFFLOADED_IMAGE_TEXT until the accumulated base64 payload fits. No-op when
+  // the budget is undefined, when the agent isn't multimodal+deliverable, or
+  // when the batch already fits. The offloaded messages are still valid
+  // UserMessages (the replaced ImageBlocks become text blocks), so the
+  // reconstructability invariant holds: the durable session log retains the
+  // original ImageBlocks; only this ephemeral request payload changes.
+  if (deps.requestImageByteLimit !== undefined && multimodal && nativeDelivery) {
+    const offloaded = offloadRequestImages(out, deps.requestImageByteLimit)
+    if (offloaded !== out) {
+      // offloadRequestImages returns the same array reference when nothing
+      // changed; a different reference means at least one image was offloaded.
+      changed = true
+      return offloaded as UserMessage[]
+    }
+  }
+
   return changed ? out : undefined
 }
 
