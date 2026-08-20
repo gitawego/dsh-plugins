@@ -61,7 +61,8 @@ export function createDescribeImageTool(deps: DescribeImageDeps) {
     description: 'Analyze one or more image files and return text descriptions or answer questions about them. '
       + 'Delegates to a configured vision model when the active primary model cannot process images natively. '
       + 'Accepts file paths, data: URLs, or raw base64. For multiple images (comparison, cross-reference), pass image_paths (up to 50). '
-      + 'All paths are resolved against the session workspace.',
+      + 'All paths are resolved against the session workspace. '
+      + 'IMPORTANT CODE-MODE NOTE: if your agent presents tools as Code Mode (only `run_code` is directly callable), do NOT call this tool natively — instead call it from inside a run_code program via the SDK binding, e.g. await tools.describe_image({ image_path: path, prompt: \'what is in this image?\' }), and return/print the result.',
     parameters: {
       image_path: { type: 'string', description: 'Path to a single image file, a data: URL, or raw base64. Use this for one image.' },
       image_paths: { type: 'array', items: { type: 'string' }, description: 'Multiple image paths/data URLs/base64 strings to analyze together. Up to 50.' },
