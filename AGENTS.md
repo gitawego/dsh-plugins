@@ -18,7 +18,7 @@ together for version compatibility. Currently:
 - `packages/lsp` — LSP bridge.
 
 Each package is independently published and installed via `dsh plugin`,
-but they share the same Node version, pnpm version, and rc.7 DSH pinning.
+but they share the same Node version, pnpm version, and `0.1.1-rc.1` DSH pinning.
 
 ## Non-negotiable rules (apply to every package)
 
@@ -50,16 +50,31 @@ This rule is recorded in each package's `AGENTS.md` as
 
 ### DSH version pinning
 
-Every DSH peer dependency must be pinned to `^0.1.0-rc.7` (matching the
-host install at `dsh-global/node_modules/@deepseek-ai/*`). Pinning to
-`^0.1.0-rc.6` causes the plugin to fail to resolve against the host's
-newer runtime (semver pre-release tags don't cross the `rc.6 → rc.7`
-boundary). The DSH dependency set:
+Every DSH dependency must be pinned to the **exact** host version (currently
+`0.1.1-rc.1`, matching the host install at
+`dsh-global/node_modules/@deepseek-ai/*`). Caret ranges are forbidden for DSH
+packages: semver pre-release tags don't cross rc boundaries, so `^0.1.1-rc.1`
+silently resolves to a newer host level (`rc.2`, ...) and drifts from the
+running install. Only `@deepseek-ai/cordis` (`^4.0.1`) and
+`@deepseek-ai/schemastery` (`^3.18.1`) keep ranged pins — they are stable
+across dsh rc levels.
+
+After every host upgrade, run `pnpm install` in the profile directory
+(`~/.dsh/profiles/web`) WITHOUT `--offline`/frozen lockfile, so stale pinned
+copies of host packages cannot linger there: the loader resolves bare module
+names profile-first, and a stale profile copy shadows the upgraded host
+(this is exactly how `dsh web` started serving bare HTTP 400 for `/` after
+the `0.1.0-rc.7 → 0.1.1-rc.1` upgrade: a profile-local
+`dsh-host-webserver@0.1.0-rc.7` without the new `renderIndex()` shadowed the
+host's rc.1 copy). Never add `dsh-host-webserver` as a regular dependency:
+it must stay an optional peer or be omitted entirely, otherwise pnpm hoists a
+frozen copy into the profile that later shadows the host.
+
+The DSH dependency set:
 
 - `@deepseek-ai/dsh-credentials`
 - `@deepseek-ai/dsh-settings`
 - `@deepseek-ai/dsh-web`
-- `@deepseek-ai/dsh-host-webserver` (peer of web-search, optional)
 - `@deepseek-ai/dsh-client-connection` (client side)
 - `@deepseek-ai/dsh-client-locale` (client side)
 - `@deepseek-ai/dsh-client-runtime` (client side, includes `SettingsScope`)
@@ -86,9 +101,9 @@ no persistent state is left behind.
 A user override on the profile's own `cordis.patch.yml` (later layer
 wins) or an env var (e.g. `$DSH_WEB_SEARCH_PROVIDER`) outranks this layer.
 
-### RC.7 Settings Card extension point
+### Settings Card extension point
 
-Every plugin that ships a settings UI after rc.7 must use the native
+Every plugin that ships a settings UI must use the native
 `settings.plugin.item` slot keyed by its settings namespace. The slot
 type is augmented at runtime by `dsh-client-ui-settings-plugins` (the
 Plugins tab composition). The card lives under
