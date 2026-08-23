@@ -324,7 +324,7 @@ vision provider via the Models page is picked up without a restart; also re-run 
 - **M2 (paste UX):** `agent/pre-step` hook — markers, hint/auto/off, auto-delegate, marker styles.
 - **M3 (native + Web):** native transport (ImageBlock/`llm.stream`), auto-detect, client plugin
   (settings.section, tool card, preview route, locale).
-- **M4 (polish):** compose preview slot, Web `/vision preview`, headless profile verification, README/AGENTS.md.
+- **M4 (polish):** compose preview slot, Web `/vision preview`, headless profile verification, README/AGENT.md.
 
 ## 16. Open decisions (defaults chosen above)
 

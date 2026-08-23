@@ -1,4 +1,4 @@
-# AGENTS.md — dsh-vision (architecture)
+# AGENT.md — dsh-vision (architecture)
 
 Read this first. This file records the **project architecture and the
 non-negotiable design rules**. It is deliberately NOT a lessons recorder:

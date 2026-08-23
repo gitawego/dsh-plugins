@@ -1,4 +1,4 @@
-# AGENTS.md — dsh-web-search (architecture)
+# AGENT.md — dsh-web-search (architecture)
 
 The non-negotiable design rules for `@gitawego/dsh-web-search`. **LESSONS.md
 holds the session history, debugging deep-dives, and host environment facts;
@@ -176,13 +176,13 @@ user's interactive shell, not from this session.
 
 - [LESSONS.md](./LESSONS.md) — session history, debugging deep-dives, host
   facts, tool pitfalls.
-- `~/workspace/dsh-vision` — sibling plugin, the AGENTS.md / LESSONS.md
+- `~/workspace/dsh-vision` — sibling plugin, the AGENT.md / LESSONS.md
   convention originates there.
 - DSH API docs: `/data/data/com.termux/files/home/dsh-global/node_modules/@deepseek-ai/<pkg>/README.md`.
 
 ## Cross-reference
 
-- [../../AGENTS.md](../../AGENTS.md) — monorepo-wide rules (process
+- [../../AGENT.md](../../AGENT.md) — monorepo-wide rules (process
   restart policy, DSH version pinning, bundle install contract, Settings
   Card extension point, real-browser debugging). The "do not kill dsh"
   rule is recorded here and in the root; per-package docs may elaborate
