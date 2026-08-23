@@ -1,7 +1,7 @@
 # LESSONS.md — dsh-vision session history, pitfalls, and environment
 
 The project's running history, the lessons learned the hard way, and the
-host-specific facts a resuming session needs. **AGENTS.md holds the
+host-specific facts a resuming session needs. **AGENT.md holds the
 architecture and design rules; this file is the lessons recorder.**
 
 ## Session history (what was done, in order)

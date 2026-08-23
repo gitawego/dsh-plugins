@@ -176,6 +176,6 @@ GitHub Release.
 ## Docs
 
 - [SPEC.md](SPEC.md) — full implementation spec (feature parity, architecture, KV-cache requirements).
-- [AGENTS.md](AGENTS.md) — project architecture and design rules.
+- [AGENT.md](AGENT.md) — project architecture and design rules.
 - [LESSONS.md](LESSONS.md) — session history, debugging deep-dives, tooling pitfalls.
 
