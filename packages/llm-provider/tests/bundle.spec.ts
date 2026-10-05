@@ -15,8 +15,32 @@
  * Runs against the built output, so it must run after `pnpm build`.
  */
 import { readFileSync, existsSync } from 'node:fs'
+import { createRequire } from 'node:module'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
+
+const require = createRequire(import.meta.url)
+
+/**
+ * Materialize the built client bundle the way the browser module loader does,
+ * so its exports can be asserted instead of pattern-matched.
+ * @param path - the built bundle.
+ * @returns the module the bundle registers.
+ */
+function materialize(path: string): { inject?: string[]; apply?: unknown } {
+    let factory: ((require: (specifier: string) => unknown) => { inject?: string[]; apply?: unknown }) | undefined
+    const source = readFileSync(path, 'utf8')
+    // The bundle only registers a factory at script execution.
+    new Function('window', source)({
+        __ModuleLoader__: {
+            load: ({ factory: loaded }: { factory: typeof factory }) => {
+                factory = loaded
+            },
+        },
+    })
+    if (factory === undefined) throw new Error('the client bundle registered no factory')
+    return factory((specifier: string) => require(specifier.startsWith('react') ? specifier : specifier))
+}
 
 const root = join(import.meta.dirname, '..')
 const pkg = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8')) as {
@@ -86,5 +110,25 @@ describe('client bundle', () => {
         const source = readFileSync(bundle, 'utf8')
         expect(source).toContain('llm-provider')
         expect(source).toContain('settings.plugin.item')
+    })
+
+    it('declares every scoped Remote namespace it reads', () => {
+        // cordis resolves `ctx.remote.llm` through a service key of its own and
+        // throws "cannot get property "remote.llm" without inject" when the
+        // namespace is undeclared. The card's model list and key field both read
+        // those namespaces, so a missing declaration is a runtime failure with
+        // no compile-time signal.
+        const module = materialize(bundle)
+        expect(module.inject).toContain('remote')
+        for (const scoped of ['remote.llm', 'remote.credentials']) {
+            expect(module.inject, `${scoped} is read but not declared`).toContain(scoped)
+        }
+    })
+
+    it('reads the Remote carrier directly, because a lazy lookup is what broke it', () => {
+        // `ctx.get('remote')?.llm` bypasses the inject declaration and throws at
+        // read time; the direct property is the only form that works.
+        const source = readFileSync(bundle, 'utf8')
+        expect(source).not.toMatch(/get\(\s*["']remote["']\s*\)/)
     })
 })

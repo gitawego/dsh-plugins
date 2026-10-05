@@ -515,28 +515,20 @@ export function OpenCodeGoCard(props: OpenCodeGoCardProps): JSX.Element {
 
 /** Bring the card's face to the component, keyed by the settings namespace. */
 export function createFace(ctx: ClientContext, scope: SettingsScope<ProviderSections>): OpenCodeGoCardFace {
-    /** The credentials domain, resolved lazily for the same reason `remote` is. */
-    const credentials = () => ctx.get('remote')?.credentials
     const controller: ProviderCard = createProviderCard({
         scope,
         route: ROUTE,
         describeCredential: async (reference) => {
-            const domain = credentials()
-            if (domain === undefined) throw new Error('the credentials domain is not available in this client')
-            const response = await domain.describe([reference])
+            const response = await ctx.remote.credentials.describe([reference])
             if (!response.ok) throw new Error(response.error.message)
             return response.value[reference]?.configured === true
         },
         writeCredential: async (reference, value) => {
-            const domain = credentials()
-            if (domain === undefined) throw new Error('the credentials domain is not available in this client')
-            const response = await domain.set(reference, value)
+            const response = await ctx.remote.credentials.set(reference, value)
             if (!response.ok) throw new Error(response.error.message)
         },
         discover: async (route) => {
-            const llm = ctx.get('remote')?.llm
-            if (llm === undefined) throw new Error('the Remote carrier is not available in this client')
-            const result = await llm.discoverModels(NS, { provider: route })
+            const result = await ctx.remote.llm.discoverModels(NS, { provider: route })
             if (!result.ok) throw new Error(result.error.message)
             return result.value.map((model) => ({
                 id: model.id,
@@ -560,15 +552,21 @@ export function createFace(ctx: ClientContext, scope: SettingsScope<ProviderSect
 }
 
 /**
- * Services that must exist before this client half may register its card.
+ * Services this client half uses.
  *
- * `remote` is deliberately NOT among them. The card needs it only when the user
- * asks for the provider's model list, and gating registration on a service that
- * is needed later turns a missing Remote carrier into an invisible card with no
- * diagnostic. `createFace` resolves it lazily and reports a clear reason when it
- * is absent.
+ * Scoped Remote namespaces must be listed explicitly: cordis resolves
+ * `ctx.remote.llm` through a service key of its own, and reading it without
+ * declaring it throws
+ *
+ * ```text
+ * cannot get property "remote.llm" without inject
+ * ```
+ *
+ * — which is exactly how the model list and the API key field both failed.
+ * Declaring them here is also what makes the carrier's scope legible: the card's
+ * *registration* does not depend on them, but every read of them does.
  */
-export const inject = ['slots', 'locale', 'settingsScope']
+export const inject = ['slots', 'locale', 'settingsScope', 'remote', 'remote.llm', 'remote.credentials']
 
 /**
  * Mount the card.

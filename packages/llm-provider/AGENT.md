@@ -191,6 +191,29 @@ Two rules keep it fixed:
 - **Every new read of derived state needs a snapshot-identity test.** Field
   assertions pass happily while the card crashes in a browser.
 
+## Design rule — declare every scoped Remote namespace you read (NON-NEGOTIABLE)
+
+`ctx.remote.llm` and `ctx.remote.credentials` are **services with their own
+keys**, not plain properties. Reading one without declaring it throws at read
+time:
+
+```text
+Could not read the provider: cannot get property "remote.llm" without inject
+```
+
+That is how the model list and the API key field both failed. Two rules:
+
+- list every scoped namespace the client half reads in its exported `inject`
+  (`remote`, `remote.llm`, `remote.credentials`), exactly as the shipped
+  Models page does;
+- read them as `ctx.remote.<ns>`, never through `ctx.get('remote')?.<ns>`. The
+  accessor form bypasses the inject declaration and fails at the read, with no
+  compile-time signal.
+
+`tests/bundle.spec.ts` materializes the built bundle and asserts the declared
+list, so a new Remote read without its declaration fails a test instead of a
+user's click.
+
 ## Design rule — no card that cannot be filled (NON-NEGOTIABLE)
 
 The card shows what the browser can actually read: the settings namespace, and
