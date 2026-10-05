@@ -22,6 +22,9 @@
  * @module @gitawego/dsh-llm-provider/client/controller
  */
 
+import type { QuotaView } from './quota-format.ts'
+import type { QuotaReader } from './quota-client.ts'
+
 /** The subset of the settings scope this card uses. */
 export interface SettingsScopeLike<T> {
     getSnapshot(): {
@@ -103,6 +106,13 @@ export interface ApiKeyState {
     error: string | undefined
 }
 
+/** The allowance read's state. */
+export type QuotaState =
+    | { state: 'idle' }
+    | { state: 'loading' }
+    | { state: 'ready'; view: QuotaView; at: number }
+    | { state: 'failed'; reason: string }
+
 /** The model-picker dialog's state. */
 export interface PickerState {
     /** Whether the dialog is open. */
@@ -137,6 +147,8 @@ export interface CardSnapshot {
     withheldCount: number
     /** The picker dialog. */
     picker: PickerState
+    /** The allowance report. */
+    quota: QuotaState
     /** How many models the route may use. */
     advertisedCount: number
     /** How many the provider serves. */
@@ -193,6 +205,8 @@ export interface CardOptions {
     describeCredential: (reference: string) => Promise<boolean>
     /** Store a literal key under one reference, through the credentials domain. */
     writeCredential: (reference: string, value: string) => Promise<void>
+    /** Read the route's allowance windows from the host. */
+    readQuota: QuotaReader
     /** Route this card edits. */
     route: string
     /** Clock, injectable for deterministic tests. */
@@ -225,6 +239,8 @@ export interface ProviderCard {
     clearSelection(): void
     /** Write the picker's selection as the allowlist. */
     applyPicker(): Promise<void>
+    /** Read the route's allowance windows from the host. */
+    refreshQuota(): Promise<void>
     /** Drop every staged edit. */
     discard(): void
     /** Write every staged edit. */
@@ -275,6 +291,7 @@ export function createProviderCard(options: CardOptions): ProviderCard {
     let keyError: string | undefined
     let pickerOpen = false
     let pickerDraft = new Set<string>()
+    let quota: QuotaState = { state: 'idle' }
 
     /** The resolved section for this route. */
     const section = (): GatewaySection => options.scope.getSnapshot().value?.[route] ?? {}
@@ -337,6 +354,7 @@ export function createProviderCard(options: CardOptions): ProviderCard {
             advertisedModels: advertisedRows,
             withheldCount: rows.length - advertisedRows.length,
             picker: { open: pickerOpen, selected: [...pickerDraft].sort(), served: rows.length },
+            quota,
             advertisedCount: pinnedCount === 0 ? rows.filter((row) => row.served).length : pinnedCount,
             servedCount: rows.length,
             catalog,
@@ -470,6 +488,18 @@ export function createProviderCard(options: CardOptions): ProviderCard {
             if (!saveFailed) {
                 models = models.map((model) => ({ ...model, pinned: !coversAll && pickerDraft.has(model.id) }))
                 pickerOpen = false
+            }
+            publish()
+        },
+        async refreshQuota() {
+            quota = { state: 'loading' }
+            publish()
+            try {
+                // Deliberately on demand, not on a timer: the read spends the
+                // stored credential on one provider request.
+                quota = { state: 'ready', view: await options.readQuota(route), at: now() }
+            } catch (error) {
+                quota = { state: 'failed', reason: error instanceof Error ? error.message : String(error) }
             }
             publish()
         },

@@ -291,6 +291,33 @@ stored key", never "clear it"), and the control reports only `configured`. Do no
 "improve" this into a field that reads the key back — a response that carries a
 secret is the failure this design removes.
 
+## Design rule — one guarded route, and only because there is no seam (NON-NEGOTIABLE)
+
+The allowance is the single piece of client-facing state with no seam: the llm
+Remote namespace carries no usage call, forwarded events are a host-owned
+allowlist, and a browser cannot reach the provider's usage endpoint. So the
+plugin serves exactly one route, `GET /llm-provider/quota`
+(`src/quota-route.ts`), and it is guarded as strictly as the host guards `/api`:
+
+- `GET` only, loopback `Host` only, `Sec-Fetch-Site: cross-site` refused, and an
+  `Origin` whose authority disagrees with `Host` refused. Those headers are
+  browser-set and page scripts cannot forge them, which is what makes the guard
+  real rather than decorative;
+- the payload is aggregate percentages — never key material, prompt content, or
+  session data;
+- it is read on demand, never on a timer, because each read spends the stored
+  credential.
+
+Rules that follow:
+
+- **Do not add a second route.** If new client-facing state is needed, look for a
+  seam first: a settings namespace, or a Remote namespace the host already
+  exposes. A route is the last resort, and the reasoning belongs in a comment.
+- **Do not loosen the guard** to make a call convenient — not by accepting any
+  host, not by dropping the origin check, not by allowing a write.
+- Keep `QUOTA_ROUTE_PATH` in `quota-path.ts`: the host half imports `node:http`
+  and the browser half must not pull Node built-ins in behind a constant.
+
 ## Design rule — every live read degrades, never blanks
 
 Boot, refresh, and the discovery handler all reach the network. A failure must

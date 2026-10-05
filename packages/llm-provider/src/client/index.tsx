@@ -43,7 +43,8 @@ import {
     type ProviderSections,
 } from './controller.ts'
 import { en, zh } from './strings.ts'
-import { QUOTA_CSS, QuotaToolView } from './quota-view.tsx'
+import { QUOTA_CSS, QuotaGauges, QuotaToolView } from './quota-view.tsx'
+import { createQuotaReader } from './quota-client.ts'
 // The route key comes from the same table the adapter registers, so a rename
 // cannot leave the card editing a section nothing serves.
 import { OPENCODE_GO } from '../gateways.ts'
@@ -84,6 +85,7 @@ interface OpenCodeGoCardFace {
     save: () => void
     editApiKey: (text: string) => void
     saveApiKey: () => void
+    refreshQuota: () => void
     openPicker: () => void
     closePicker: () => void
     togglePickerModel: (modelId: string) => void
@@ -421,6 +423,9 @@ export function OpenCodeGoCard(props: OpenCodeGoCardProps): JSX.Element {
 
     useEffect(() => {
         props.refresh()
+        // One allowance read per card mount: it spends the stored credential on
+        // one provider request, so it is on demand rather than on a timer.
+        props.refreshQuota()
     }, [])
 
     // The card lists what the route may use. What it may not lives in the
@@ -523,6 +528,29 @@ export function OpenCodeGoCard(props: OpenCodeGoCardProps): JSX.Element {
                     )}
             </section>
 
+            <section className="lp-section">
+                <div className="lp-row lp-row--head">
+                    <h4 className="lp-h">{t('allowance')}</h4>
+                    <div className="lp-actions">
+                        <span className="lp-state" data-tone={snapshot.quota.state === 'failed' ? 'warn' : undefined}>
+                            {snapshot.quota.state === 'loading'
+                                ? t('reading')
+                                : snapshot.quota.state === 'failed'
+                                    ? `${t('readFailed')}: ${snapshot.quota.reason}`
+                                    : snapshot.quota.state === 'ready'
+                                        ? `${t('read')} ${formatAge(snapshot.quota.at, nowRef.current)}`
+                                        : t('quotaHint')}
+                        </span>
+                        <button type="button" className="lp-btn" disabled={snapshot.quota.state === 'loading'} onClick={props.refreshQuota}>
+                            {t('refresh')}
+                        </button>
+                    </div>
+                </div>
+                {snapshot.quota.state === 'ready'
+                    ? <QuotaGauges view={snapshot.quota.view} />
+                    : <p className="lp-hint">{t('quotaHint')}</p>}
+            </section>
+
             <details className="lp-cfg">
                 <summary>{t('configuration')}</summary>
                 <div className="lp-fields">
@@ -600,7 +628,7 @@ export function OpenCodeGoCard(props: OpenCodeGoCardProps): JSX.Element {
             </details>
 
             <div className="lp-foot">
-                <p>{t('quotaHint')}</p>
+                <p>{t('quotaCommandHint')}</p>
                 <div className="lp-actions">
                     {snapshot.saveFailed ? <span className="lp-state" data-tone="warn">{t('saveFailed')}</span> : null}
                     <button
@@ -659,6 +687,7 @@ export function createFace(ctx: ClientContext, scope: SettingsScope<ProviderSect
     const controller: ProviderCard = createProviderCard({
         scope,
         route: ROUTE,
+        readQuota: createQuotaReader(),
         describeCredential: async (reference) => {
             const response = await carrier().credentials.describe([reference])
             if (!response.ok) throw new Error(response.error.message)
@@ -689,6 +718,7 @@ export function createFace(ctx: ClientContext, scope: SettingsScope<ProviderSect
         save: () => { void controller.save() },
         editApiKey: (text) => { controller.editApiKey(text) },
         saveApiKey: () => { void controller.saveApiKey() },
+        refreshQuota: () => { void controller.refreshQuota() },
         openPicker: () => { controller.openPicker() },
         closePicker: () => { controller.closePicker() },
         togglePickerModel: (modelId) => { controller.togglePickerModel(modelId) },

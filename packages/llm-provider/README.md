@@ -67,9 +67,10 @@ Settings → Plugins → **OpenCode Go**.
 - **Configuration** — credential reference, endpoint, session routing, default
   thinking effort, and the image budgets. One **Save** writes every staged field
   as a path-addressed settings mutation.
-- **Allowance** is not in the card: the browser has no path to the provider's
-  usage endpoint, and the card says so rather than drawing a gauge it cannot
-  fill. Run `/llm-provider quota`, or ask the agent (it has the `llm_quota` tool).
+- **Allowance** — the 5-hour, weekly, and monthly windows as meters, with the
+  share left and a reset countdown. Read on demand (the *Refresh* button, and
+  once when the card opens), because each read spends the stored credential on
+  one provider request.
 
 ## Install
 
@@ -218,6 +219,36 @@ allowlist (`[]` = everything), which the card writes when you pin models.
 
 Adding a gateway is one entry in `src/gateways.ts` plus a catalog factory in
 `src/catalog.ts` — the settings schema is generated from the gateway table.
+
+## Where the allowance comes from
+
+The card cannot call the provider itself, and this host version gives a plugin no
+seam for it: the llm Remote namespace exposes `listProviders`,
+`listConfigurableProviders`, and `discoverModels` only; forwarded events are a
+host-owned allowlist a plugin cannot extend; and the usage endpoint is not
+reachable from a browser (no key, no CORS). So the plugin serves one route of its
+own:
+
+```text
+GET /llm-provider/quota?route=opencode-go-session
+→ {"route":"…","windows":[{"id":"rolling","label":"5-hour","percentUsed":3,
+   "percentRemaining":97,"status":"ok","resetsAt":"…"}],"fetchedAt":…}
+```
+
+It is a read of aggregate percentages — no key material, no prompt content, no
+session data — and it is guarded the way the host guards its own `/api` bridge:
+
+- `GET` only;
+- the `Host` header must be loopback, so a deployment bound to `0.0.0.0` does not
+  expose it;
+- `Sec-Fetch-Site: cross-site` is refused, and an `Origin` whose host:port
+  disagrees with `Host` is refused. Browsers set both and page scripts cannot
+  forge them, so another origin cannot read it.
+
+`tests/quota-route.spec.ts` covers the guard case by case. If you would rather
+this plugin served no HTTP at all, remove the `registerQuotaRoute` call: the
+tool card, the command, and the `llm_quota` tool keep working, and the card
+shows the hint instead of the meters.
 
 ## What you get on the wire
 
