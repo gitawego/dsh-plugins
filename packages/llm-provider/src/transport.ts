@@ -2,12 +2,12 @@
  * The pi-ai-backed transport behind the plugin's routes.
  *
  * One route is one pi-ai `Provider` built from its installed catalog, with the
- * profile applied (endpoint override, model allowlist) and the two things the
- * harness requires on every dispatch layered on:
+ * profile and the latest live catalog applied, and the two things the harness
+ * requires on every dispatch layered on:
  *
  * 1. **Attribution** — `attributionHeaders()` merged into every request, last,
- *    so a profile cannot shadow the product identity. pi-ai's `headers`
- *    request option is the wire hook.
+ *    so a profile cannot shadow the product identity. pi-ai's `headers` request
+ *    option is the wire hook.
  * 2. **Session routing** — the `x-opencode-session` header, derived from the
  *    harness session id. This is the fix for `400 MissingSessionID`.
  *
@@ -18,26 +18,25 @@
  * also keeps every request's options visible in one function, which is what
  * makes the header behaviour unit-testable.
  *
+ * The advertised model list is a merge of the installed catalog, the gateway's
+ * live id list, and models.dev metadata — see `catalog-feed.ts`. This module
+ * owns the *state*: which catalog generation a route is currently serving, and
+ * rebuilding a route when either its profile or its live catalog moves.
+ *
  * @module @gitawego/dsh-llm-provider/transport
  */
 import type {
+    Api,
     AssistantMessageEventStream,
     Context as PiContext,
     Model,
-    Api,
     Provider,
     SimpleStreamOptions,
 } from '@earendil-works/pi-ai'
 import { attributionHeaders } from '@deepseek-ai/dsh-llm'
 import { catalogProviderFactory, type CatalogProviderFactory } from './catalog.ts'
-import {
-    DEFAULT_API,
-    DEFAULT_CONTEXT_WINDOW,
-    DEFAULT_MAX_TOKENS,
-    resolveProfile,
-    type GatewayProfile,
-    type ProviderSettings,
-} from './config.ts'
+import { mergeCatalog, type LiveCatalog } from './catalog-feed.ts'
+import { resolveProfile, type GatewayProfile, type ProviderSettings } from './config.ts'
 import { withSessionHeader, type SessionHeaderedOptions } from './session-header.ts'
 import type { GatewayDefinition } from './gateways.ts'
 
@@ -51,7 +50,7 @@ export type PiRequestOptions = SimpleStreamOptions & SessionHeaderedOptions
  */
 export interface GatewayTransport {
     /**
-     * Models one route currently advertises, in catalog order and already
+     * Models one route currently advertises, in merge order and already
      * filtered by the profile's allowlist.
      * @param route - registered route key.
      * @returns the route's models; empty for an unknown or unbuildable route.
@@ -77,22 +76,48 @@ export interface GatewayTransport {
     stream(route: string, modelId: string, context: PiContext, options: PiRequestOptions): AssistantMessageEventStream
 }
 
-/** A transport whose profiles can follow the settings document. */
+/** A transport whose profiles and catalogs can follow their sources. */
 export interface MutableGatewayTransport extends GatewayTransport {
     /**
      * Install a new resolved profile set and rebuild only the routes whose
-     * profile actually changed. Rebuilding is cheap (catalog objects are static
-     * data) and keeps each request's options a pure function of one profile.
+     * profile actually changed. A route's live catalog survives the rebuild, so
+     * a settings edit does not throw away a fresh model list.
      * @param profiles - resolved profiles keyed by route.
      */
     setProfiles(profiles: ProviderSettings): void
+    /**
+     * Install a freshly fetched live catalog for one route.
+     * @param route - route the catalog belongs to.
+     * @param live - ids plus metadata, and when they were read.
+     */
+    setCatalog(route: string, live: LiveCatalog): void
+    /**
+     * The route's installed pi-ai catalog, before any live merge.
+     * @param route - route to read.
+     * @returns the catalog the installed pi-ai build describes.
+     */
+    installedModels(route: string): readonly Model<Api>[]
+    /**
+     * The route's current live catalog, when one has been fetched.
+     * @param route - route to read.
+     * @returns the live inputs, or undefined before the first successful fetch.
+     */
+    liveCatalog(route: string): LiveCatalog | undefined
+    /**
+     * The endpoint a route currently calls.
+     * @param route - route to read.
+     * @returns the profile override when set, otherwise the gateway default.
+     */
+    endpointOf(route: string): string
 }
 
 /** One route's built state. */
 interface RouteState {
     profile: GatewayProfile
-    provider: Provider
+    provider: Provider | undefined
+    installed: readonly Model<Api>[]
     models: readonly Model<Api>[]
+    live: LiveCatalog | undefined
     buildable: boolean
 }
 
@@ -112,86 +137,21 @@ export function withAttribution(headers: Record<string, string | null> | undefin
 }
 
 /**
- * The wire protocols a profile-declared model may name. Anything else is
- * dropped from the catalog: pi-ai would have no implementation for it, and a
- * route that advertises an unusable model is worse than one that reports
- * `UNKNOWN_MODEL` for it.
- */
-const DECLARABLE_APIS = ['openai-completions', 'openai-responses', 'anthropic-messages'] as const
-
-/** Zero cost: the harness never reports spend from these routes. */
-const NO_COST = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 } as const
-
-/**
- * Merge a profile's declared models into a route's catalog.
- *
- * A declared id the catalog already describes is corrected field by field —
- * the catalog stays the base, so an undeclared field keeps its surveyed value.
- * A declared id the catalog does not describe is built from the profile's
- * defaults, which is what lets a route serve a model released after this
- * pi-ai build.
- *
- * The profile's `models` allowlist narrows the CATALOG; declared models are
- * always advertised, because declaring one is itself the decision to serve it.
- * @param catalog - the installed catalog's models.
+ * Wrap a catalog provider so every dispatch carries the header stack.
+ * The model list is owned by the transport, not the catalog provider, so
+ * `getModels` is replaced too.
+ * @param gateway - the gateway being built.
  * @param profile - the resolved profile.
- * @param gateway - the gateway being built.
- * @returns the advertised model list, catalog order first.
- */
-export function mergeModels(
-    catalog: readonly Model<Api>[],
-    profile: GatewayProfile,
-    gateway: GatewayDefinition,
-): Model<Api>[] {
-    const allowed = profile.models.length === 0 ? undefined : new Set(profile.models)
-    const merged = new Map<string, Model<Api>>()
-    for (const model of catalog) {
-        if (allowed !== undefined && !allowed.has(model.id)) continue
-        merged.set(model.id, model)
-    }
-    for (const declared of profile.extraModels) {
-        const api = declared.api ?? DEFAULT_API
-        if (!(DECLARABLE_APIS as readonly string[]).includes(api)) continue
-        const base = merged.get(declared.id)
-        const endpoint = declared.baseURL ?? profile.baseURL ?? base?.baseUrl ?? gateway.baseURL
-        merged.set(declared.id, {
-            id: declared.id,
-            name: declared.name ?? base?.name ?? declared.id,
-            api: (declared.api ?? base?.api ?? DEFAULT_API) as Api,
-            provider: gateway.id,
-            baseUrl: endpoint,
-            reasoning: declared.reasoning ?? base?.reasoning ?? false,
-            input: declared.input ?? base?.input ?? ['text'],
-            cost: base?.cost ?? { ...NO_COST },
-            contextWindow: declared.contextWindow ?? base?.contextWindow ?? DEFAULT_CONTEXT_WINDOW,
-            maxTokens: declared.maxTokens ?? base?.maxTokens ?? DEFAULT_MAX_TOKENS,
-            ...(base?.compat !== undefined ? { compat: base.compat } : {}),
-        } as Model<Api>)
-    }
-    return [...merged.values()].map((model) => ({
-        ...model,
-        // The route key is what a request names, so it is what the model must
-        // carry: pi-ai dispatches on `model.provider`.
-        provider: gateway.id,
-        ...(profile.baseURL.length > 0 ? { baseUrl: profile.baseURL } : {}),
-    }))
-}
-
-/**
- * Apply a profile to a catalog provider: endpoint override, model allowlist,
- * model provider id, and the per-dispatch header stack.
- * @param gateway - the gateway being built.
  * @param base - the catalog provider.
- * @param profile - the resolved profile.
- * @returns the provider the transport dispatches through, plus its models.
+ * @param models - the merged model list this route advertises.
+ * @returns the provider the transport dispatches through.
  */
-function applyProfile(
+function wrapProvider(
     gateway: GatewayDefinition,
-    base: Provider,
     profile: GatewayProfile,
-): { provider: Provider; models: readonly Model<Api>[] } {
-    const models = mergeModels(base.getModels(), profile, gateway)
-
+    base: Provider,
+    models: readonly Model<Api>[],
+): Provider {
     /**
      * Layer the session-routing and attribution headers onto one dispatch's
      * options. Generic in the options type so the result stays assignable to
@@ -203,7 +163,7 @@ function applyProfile(
         return { ...(routed as object), headers: withAttribution(routed.headers) } as T
     }
 
-    const provider: Provider = {
+    return {
         ...base,
         id: gateway.id,
         ...(profile.baseURL.length > 0 ? { baseUrl: profile.baseURL } : {}),
@@ -215,14 +175,16 @@ function applyProfile(
             return base.streamSimple(model, context, headerised(options))
         },
     }
-    return { provider, models }
 }
 
 /**
  * Build the real pi-ai-backed transport.
  * @param gateways - routes to serve.
  * @param profiles - initial resolved profiles.
- * @param factories - catalog factory table; injectable for tests.
+ * @param factories - catalog factory table; an explicit table *replaces* the
+ *   installed catalogs rather than extending them, so a caller can ask for a
+ *   route with no catalog at all and see what production would do when pi-ai
+ *   ships none.
  * @returns the mutable transport.
  */
 export function createGatewayTransport(
@@ -230,24 +192,22 @@ export function createGatewayTransport(
     profiles: ProviderSettings,
     factories?: Readonly<Record<string, CatalogProviderFactory>>,
 ): MutableGatewayTransport {
-    // An explicit table REPLACES the installed catalogs rather than extending
-    // them, so a caller (a test, a probe) can ask for a route with no catalog
-    // at all and see exactly what production would do when pi-ai ships none.
     const resolveFactory = (key: string): CatalogProviderFactory | undefined =>
         factories === undefined ? catalogProviderFactory(key) : factories[key]
     const routes = new Map<string, RouteState>()
 
-    const rebuild = (gateway: GatewayDefinition, profile: GatewayProfile): RouteState => {
+    const rebuild = (gateway: GatewayDefinition, profile: GatewayProfile, live: LiveCatalog | undefined): RouteState => {
         const factory = resolveFactory(gateway.catalogProvider)
         if (factory === undefined) {
             // A gateway whose catalog this pi-ai build does not ship stays
             // registered (so a request fails loudly with UNKNOWN_MODEL rather
             // than NO_ADAPTER) but advertises nothing.
-            return { profile, provider: undefined as never, models: [], buildable: false }
+            return { profile, provider: undefined, installed: [], models: [], live, buildable: false }
         }
         const base = factory()
-        const { provider, models } = applyProfile(gateway, base, profile)
-        return { profile, provider, models, buildable: true }
+        const installed = base.getModels()
+        const models = mergeCatalog({ gateway, profile, installed, ...(live !== undefined ? { live } : {}) })
+        return { profile, provider: wrapProvider(gateway, profile, base, models), installed, models, live, buildable: true }
     }
 
     const install = (next: ProviderSettings): void => {
@@ -255,7 +215,7 @@ export function createGatewayTransport(
             const profile = resolveProfile(gateway, next[gateway.id])
             const current = routes.get(gateway.id)
             if (current !== undefined && sameProfile(current.profile, profile)) continue
-            routes.set(gateway.id, rebuild(gateway, profile))
+            routes.set(gateway.id, rebuild(gateway, profile, current?.live))
         }
     }
 
@@ -263,11 +223,25 @@ export function createGatewayTransport(
 
     return {
         setProfiles: install,
+        setCatalog: (route, live) => {
+            const gateway = gateways.find((entry) => entry.id === route)
+            if (gateway === undefined) return
+            const current = routes.get(route)
+            const profile = current?.profile ?? resolveProfile(gateway, profiles[route])
+            routes.set(route, rebuild(gateway, profile, live))
+        },
+        installedModels: (route) => routes.get(route)?.installed ?? [],
+        liveCatalog: (route) => routes.get(route)?.live,
+        endpointOf: (route) => {
+            const state = routes.get(route)
+            if (state === undefined) return ''
+            return state.profile.baseURL.length > 0 ? state.profile.baseURL : state.models[0]?.baseUrl ?? ''
+        },
         listModels: (route) => routes.get(route)?.models ?? [],
         getModel: (route, modelId) => routes.get(route)?.models.find((model) => model.id === modelId),
         stream: (route, modelId, context, options) => {
             const state = routes.get(route)
-            if (state === undefined || !state.buildable) {
+            if (state === undefined || state.provider === undefined) {
                 throw new LlmUnavailableError(`llm-provider does not serve route "${route}" in this build`)
             }
             const model = state.models.find((entry) => entry.id === modelId)

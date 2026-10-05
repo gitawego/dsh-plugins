@@ -25,23 +25,33 @@
  *   backed by the installed pi-ai catalog and pi-ai's own wire protocols;
  * - the `x-opencode-session` header, stamped per request from the harness
  *   session id, plus the mandatory attribution headers on every dispatch;
+ * - a **live model catalog**: the gateway's own `GET {baseURL}/models` list,
+ *   enriched with capacities, output caps, and thinking levels from models.dev,
+ *   merged over the installed catalog so a model released after this pi-ai
+ *   build is servable without a code change;
+ * - a **quota report**: the 5-hour, weekly, and monthly allowance windows the
+ *   provider discloses, exposed as `/llm-provider quota` and as the `llm_quota`
+ *   tool;
  * - a `llm-provider` settings namespace with one tuning profile per route
  *   (credential reference, endpoint override, model allowlist, image budgets);
- * - a configurable-provider directory entry per route, so the Models page can
- *   offer it the way it offers every other provider.
+ * - a configurable-provider directory entry and a model-discovery offer per
+ *   route, so the Models page can list and probe the route like any other.
  *
- * Lifecycle: `apply` registers the settings namespace, the adapter, and the
- * directory entry on this plugin's fiber — all three disappear together when
- * the bundle layer does.
+ * Lifecycle: `apply` registers everything on this plugin's fiber, so the
+ * settings namespace, the adapter, the directory entry, the discovery offer,
+ * the command, and the tool all disappear together when the bundle layer does.
  *
  * @module @gitawego/dsh-llm-provider
  */
 import type { AttachmentStore } from '@deepseek-ai/dsh-attachment'
 import type { Context } from '@deepseek-ai/cordis'
 import { credentialRef } from '@deepseek-ai/dsh-credentials'
-import { INVALID_CREDENTIAL_CODE, LlmError } from '@deepseek-ai/dsh-llm'
+import { INVALID_CREDENTIAL_CODE, LlmError, type LlmDiscoveredModel, type LlmModelDiscoveryRequest } from '@deepseek-ai/dsh-llm'
+import type {} from '@deepseek-ai/dsh-commands'
 import type {} from '@deepseek-ai/dsh-settings'
+import type {} from '@deepseek-ai/dsh-tools'
 import { GatewayAdapter } from './adapter.ts'
+import { createCatalogFeed, type CatalogFeed, type LiveCatalog } from './catalog-feed.ts'
 import {
     Config,
     LLM_PROVIDER_SETTINGS_NAMESPACE,
@@ -49,7 +59,10 @@ import {
     resolveProfiles,
     type ProviderSettings,
 } from './config.ts'
+import { fetchModelIds, fetchQuota, type QuotaSnapshot } from './gateway-api.ts'
 import { GATEWAYS, gatewayById, type GatewayDefinition } from './gateways.ts'
+import { fetchModelsDevCatalog } from './models-dev.ts'
+import { createQuotaTool, runProviderCommand, type SurfaceDeps } from './surface.ts'
 import { createGatewayTransport } from './transport.ts'
 
 /** Plugin display name for diagnostics. */
@@ -58,8 +71,9 @@ export const name = '@gitawego/dsh-llm-provider'
 /**
  * Services this plugin mounts below. `llm` is the seam it registers into;
  * `settings` owns the profile document; `credentials` resolves the profile's
- * credential reference. The attachment store is read optionally (image input
- * only) so a composition without one still serves text models.
+ * credential reference. The attachment store (image input), the command
+ * registry, and the tool registry are attached optionally, so a composition
+ * without one still serves text models.
  */
 export const inject = ['llm', 'settings', 'credentials']
 
@@ -69,9 +83,16 @@ export const ROUTES: readonly string[] = GATEWAYS.map((gateway) => gateway.id)
 export { Config, LLM_PROVIDER_SETTINGS_NAMESPACE, GATEWAYS, type ProviderSettings }
 export { OPENCODE_SESSION_HEADER, withSessionHeader } from './session-header.ts'
 export { createGatewayTransport } from './transport.ts'
+export { createCatalogFeed, mergeCatalog, thinkingLevelMapFor } from './catalog-feed.ts'
+export { fetchModelIds, fetchQuota, formatQuota, parseModelIds, parseQuota } from './gateway-api.ts'
+export { fetchModelsDevCatalog, parseModelsDevCatalog } from './models-dev.ts'
+export { formatCatalog, formatModel, runProviderCommand, createQuotaTool } from './surface.ts'
 export { GatewayAdapter } from './adapter.ts'
 export { resolveProfiles, resolveProfile, defaultProfile } from './config.ts'
-export { GATEWAYS as gatewayDefinitions, gatewayById } from './gateways.ts'
+export { GATEWAYS as gatewayDefinitions, gatewayById, protocolFor } from './gateways.ts'
+
+/** How long a fetched catalog stays authoritative before a request-path refresh. */
+export const CATALOG_TTL_MS = 6 * 60 * 60 * 1000
 
 /**
  * Mount the provider routes.
@@ -85,42 +106,51 @@ export function apply(ctx: Context): () => void {
     let profiles: ProviderSettings = resolveProfiles(settings.get())
     const transport = createGatewayTransport(GATEWAYS, profiles)
 
-    const watch = settings.watch((next: unknown) => {
-        profiles = resolveProfiles(next)
-        // Rebuild only what moved: a settings commit that changes nothing
-        // structurally leaves every built provider in place, so an in-flight
-        // request keeps the generation it started under.
-        transport.setProfiles(profiles)
-    })
-
     const profileFor = (route: string): ProviderSettings[string] => {
         const profile = profiles[route]
         if (profile !== undefined) return profile
         const gateway: GatewayDefinition | undefined = gatewayById(route)
-        return gateway === undefined ? defaultProfile(fallbackGateway(route)) : defaultProfile(gateway)
+        return defaultProfile(gateway ?? fallbackGateway(route))
     }
+
+    const resolveApiKey = async (route: string): Promise<string | undefined> => {
+        const ref = profileFor(route).apiKeyEnv
+        if (ref.length === 0) return undefined
+        try {
+            const resolved = await ctx.credentials.resolve(credentialRef(ref))
+            // `undefined` is the normal "this reference holds nothing" answer,
+            // not an error: pi-ai then tries the gateway's own ambient provider
+            // auth (`OPENCODE_API_KEY`).
+            return resolved?.value
+        } catch (error) {
+            throw new LlmError(
+                `credential reference "${ref}" for route "${route}" could not be resolved`,
+                INVALID_CREDENTIAL_CODE,
+                { cause: error },
+            )
+        }
+    }
+
+    /** The endpoint a route currently calls. */
+    const baseURLFor = (route: string): string => {
+        const override = profileFor(route).baseURL
+        if (override.length > 0) return override
+        return gatewayById(route)?.baseURL ?? override
+    }
+
+    const feed: CatalogFeed = createCatalogFeed({
+        gateways: GATEWAYS,
+        profileOf: profileFor,
+        resolveApiKey,
+        installedModels: (route) => transport.installedModels(route),
+        apply: (route: string, live: LiveCatalog) => transport.setCatalog(route, live),
+    })
 
     const adapter = new GatewayAdapter({
         transport,
         displayName: (route) => gatewayById(route)?.displayName ?? route,
         profileOf: profileFor,
-        resolveApiKey: async (route) => {
-            const ref = profileFor(route).apiKeyEnv
-            if (ref.length === 0) return undefined
-            try {
-                const resolved = await ctx.credentials.resolve(credentialRef(ref))
-                // `undefined` is the normal "this reference holds nothing"
-                // answer, not an error: pi-ai then tries the gateway's own
-                // ambient provider auth (`OPENCODE_API_KEY`).
-                return resolved?.value
-            } catch (error) {
-                throw new LlmError(
-                    `credential reference "${ref}" for route "${route}" could not be resolved`,
-                    INVALID_CREDENTIAL_CODE,
-                    { cause: error },
-                )
-            }
-        },
+        resolveApiKey,
         resolveAttachments: () => ctx.get('attachments') as AttachmentStore | undefined,
     })
 
@@ -137,10 +167,90 @@ export function apply(ctx: Context): () => void {
         })),
     )
 
+    // A draft provider in the Models page has no stored route to name, so the
+    // request carries its endpoint and one-shot credential directly.
+    const discovery = ctx.llm.registerModelDiscovery(
+        LLM_PROVIDER_SETTINGS_NAMESPACE,
+        async (request: LlmModelDiscoveryRequest, signal?: AbortSignal): Promise<readonly LlmDiscoveredModel[]> => {
+            const route = request.provider !== undefined && gatewayById(request.provider) !== undefined ? request.provider : ROUTES[0]
+            const baseURL = request.baseURL !== undefined && request.baseURL.trim().length > 0
+                ? request.baseURL.trim()
+                : route !== undefined ? baseURLFor(route) : undefined
+            if (baseURL === undefined) return []
+            const apiKey = request.apiKey ?? (route !== undefined ? await resolveApiKey(route) : undefined)
+            const [ids, metadata] = await Promise.all([
+                fetchModelIds({
+                    baseURL,
+                    ...(apiKey !== undefined ? { apiKey } : {}),
+                    ...(signal !== undefined ? { signal } : {}),
+                }),
+                fetchModelsDevCatalog({ ...(signal !== undefined ? { signal } : {}) }),
+            ])
+            return ids.map((id) => {
+                const meta = metadata.get(id)
+                return {
+                    id,
+                    ...(meta?.name !== undefined ? { name: meta.name } : {}),
+                    ...(meta?.contextWindow !== undefined ? { contextWindow: meta.contextWindow } : {}),
+                    ...(meta?.maxTokens !== undefined ? { maxTokens: meta.maxTokens } : {}),
+                }
+            })
+        },
+    )
+
+    /** Read one route's credential and endpoint, then ask for its quota. */
+    const quotaOf = async (route: string): Promise<QuotaSnapshot> => {
+        const apiKey = await resolveApiKey(route)
+        return fetchQuota(
+            { baseURL: baseURLFor(route), ...(apiKey !== undefined ? { apiKey } : {}) },
+            route,
+        )
+    }
+
+    const surfaces: SurfaceDeps = {
+        routes: ROUTES,
+        feed,
+        modelsOf: (route) => transport.listModels(route),
+        quotaOf,
+    }
+
+    // Both surfaces attach through `ctx.inject`, so a composition without a
+    // command or tool registry still gets the route itself. Cordis unloads the
+    // injected children with this plugin's fiber, so neither needs a manual
+    // disposer here.
+    ctx.inject(['commands'], (injected: Context) => {
+        injected.commands.register({
+            name: 'llm-provider',
+            description:
+                'Show the live LLM provider catalog (context window, output cap, thinking levels) or the subscription quota windows (5-hour, weekly, monthly), or refresh both from the provider.',
+            handler: (invocation) => runProviderCommand(surfaces, invocation.rawInput),
+        })
+    })
+    ctx.inject(['tools'], (injected: Context) => {
+        injected.tools.register(createQuotaTool(surfaces))
+    })
+
+    // Prime the live catalog in the background: a boot that cannot reach the
+    // gateway must still serve the installed catalog, so nothing waits on this.
+    const boot = new AbortController()
+    void feed.refresh(undefined, boot.signal).catch(() => undefined)
+
+    const watch = settings.watch((next: unknown) => {
+        const previous = profiles
+        profiles = resolveProfiles(next)
+        transport.setProfiles(profiles)
+        // A route pointed at another endpoint is describing a different
+        // catalog; re-read it rather than serving the previous endpoint's.
+        const moved = GATEWAYS.filter((gateway) => previous[gateway.id]?.baseURL !== profiles[gateway.id]?.baseURL)
+        for (const gateway of moved) void feed.refresh(gateway.id, boot.signal).catch(() => undefined)
+    })
+
     return () => {
+        boot.abort('llm-provider unloaded')
+        watch()
+        discovery()
         directory()
         registration()
-        watch()
     }
 }
 
@@ -153,5 +263,6 @@ function fallbackGateway(route: string): GatewayDefinition {
         baseURL: '',
         apiKeyEnv: '',
         sessionRouting: true,
+        protocols: { byId: {}, default: 'openai-completions' },
     }
 }
