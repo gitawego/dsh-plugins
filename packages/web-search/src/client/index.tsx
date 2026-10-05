@@ -1,859 +1,401 @@
-/* @gitawego/dsh-web-search browser plugin: the Web Search plugin card.
+/* @gitawego/dsh-web-search browser plugin: the Web search settings section.
  *
- * Registers one `settings.plugin.item` slot entry keyed by the
- * `web-search-enhanced` settings namespace the host serves. The card lives
- * inside the Plugins → Plugin configuration tab (`dsh-client-ui-settings-plugins`)
- * and reads/writes its namespace through the standard DSH settings scope
- * (`ctx.settingsScope.bind({ namespace })`); no plugin-owned HTTP route is
- * needed.
+ * **Settings → Web search**, its own entry beside Models, Plugins, LSP and LLM
+ * providers — not a card in the plugin list, for the same reason the LLM
+ * provider settings moved out: this is a configuration surface, and the plugin
+ * list is where you look for one plugin's toggle.
  *
- * The bundle-purity gate forbids importing the shipped
- * `dsh-client-ui-settings-plugins` card chrome or form model as values, so
- * this plugin owns its own disclosure chrome, form staging, and save flow —
- * mirror of the shipped card layout, scoped to the web-search namespace. The
- * slot type augmentation for `settings.plugin.item` is duplicated here as a
- * pure `declare module` augmentation (no value imports) so the slot call
- * stays compile-time checked without taking a runtime dependency on
- * `dsh-client-ui-settings-plugins`. */
-import { useState, type KeyboardEvent as ReactKeyboardEvent } from 'react'
+ * The layout is the *fallback chain*, because that is what a search provider
+ * is. The chain tries backends in order, so the order is information: each row
+ * carries its position, and the shipped endpoints are visibly different from the
+ * ones you can edit —
+ *
+ *   1  Custom LLM endpoint        (you own every field)
+ *   2  OpenCode Go                (endpoint and model fixed; credential reference)
+ *   3  Parallel                   (endpoint fixed; optional token)
+ *   4  Exa                        (endpoint fixed; optional token)
+ *   5  Your servers               (endpoint, tool and token, added or removed)
+ *
+ * A shipped endpoint is read-only on purpose: it is the address this plugin was
+ * tested against, and an editable one turns a working free backend into a typo
+ * that silently falls through the chain. The token lives on the same row as its
+ * endpoint, which is what the previous layout got wrong.
+ */
+import { useEffect, useState, useSyncExternalStore } from 'react'
 import type { Context as ClientContext } from '@deepseek-ai/cordis'
-import type { SnapshotStore } from '@deepseek-ai/dsh-client-store'
 import type { SettingsScope } from '@deepseek-ai/dsh-client-ui-settings/client'
 import type {} from '@deepseek-ai/dsh-client-ui-renderer/client'
-import type {} from '@deepseek-ai/dsh-client-ui-settings/client'
 import type {} from '@deepseek-ai/dsh-client-locale/client'
-import type { InjectFace, PropsRuntime, TranslateNS } from '@deepseek-ai/dsh-client-ui-slots'
+import type { InjectFace, PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
+import { BUILTIN_MCP_SERVERS } from '../mcp-servers.ts'
+import {
+    createWebSearchSection,
+    type WebSearchSectionController,
+    type WebSearchSnapshot,
+} from './controller.ts'
+import { en, zh } from './strings.ts'
 
-/* The settings namespace is also declared on the Host via `settingsNamespace('web-search-enhanced')`
- * in src/config.ts; both sides agree on this string literal so the host
- * serves the namespace and the browser card pairs it. */
-const WEB_SEARCH_SETTINGS_NAMESPACE = 'web-search-enhanced'
 const NS = 'web-search-enhanced'
 
-/* Pure-type augmentation for the `settings.plugin.item` slot, mirroring
- * `dsh-client-ui-settings-plugins/lib/types/client/slot-contract.d.ts`. The
- * tab owns the slot kind/scope, this plugin only contributes one keyed entry. */
+/* Pure-type augmentation for the locale namespace this section registers, so a
+ * missing translation is a compile error rather than a key shown to the user. */
 declare module '@deepseek-ai/dsh-client-ui-slots' {
-  interface SlotMap {
-    'settings.plugin.item': {
-      kind: 'keyed'
-      scope: 'root'
-      owner: SettingsPluginItemOwnerProps
+    interface LocaleNamespaceMap {
+        'web-search-enhanced': keyof typeof en
     }
-  }
-}
-interface SettingsPluginItemOwnerProps {
-  children?: never
 }
 
-type WebSearchTranslate = TranslateNS<typeof NS>
+/** Copy lookup bound to this plugin's namespace. */
+export type Translate = (key: keyof typeof en) => string
 
-const en = {
-  cardTitle: 'Web Search (enhanced)',
-  cardDescription: 'Chained web search: custom LLM → opencode Go default → Parallel → Exa. The free backends need no API key; the opencode-Go step uses OPENCODE_GO_API_KEY when set.',
-  sectionIntro: 'Configure the bundled enhanced search provider.',
-  llmTitle: 'LLM-backed web search (Anthropic web_search_20250305 / OpenAI-compatible)',
-  enableGo: 'Enable the LLM backend',
-  enableGoHint: 'When disabled, the free Parallel/Exa backends handle every query (no API key needed).',
-  protocol: 'Protocol',
-  protocolAnthropic: 'anthropic (/v1/messages)',
-  protocolOpenai: 'openai (/chat/completions)',
-  baseUrl: 'Base URL',
-  baseUrlHint: 'Empty disables the LLM backend.',
-  credential: 'Credential reference',
-  credentialHint: 'Name of a credential in the harness store (e.g. OPENCODE_GO_API_KEY). Not the DEEPSEEK_API_KEY used by the built-in DeepSeek search.',
-  model: 'Model',
-  modelHint: 'Default: deepseek-v4.1-flash (an Anthropic-format model that implements web_search_20250305). Other Anthropic routes may work — depends on whether the gateway implements the server tool.',
-  parallelCredential: 'Parallel token (optional)',
-  parallelCredentialHint: 'Credential reference for a Parallel API key. Blank keeps the free anonymous endpoint; a key raises its rate limits.',
-  exaCredential: 'Exa token (optional)',
-  exaCredentialHint: 'Credential reference for an Exa API key. Blank keeps the free anonymous endpoint; a key raises its rate limits.',
-  timeoutMs: 'Timeout (ms)',
-  freeTitle: 'Free backends (no API key)',
-  parallelUrl: 'Parallel endpoint',
-  exaUrl: 'Exa endpoint',
-  freeTimeoutMs: 'Free timeout (ms)',
-  snippetMaxChars: 'Snippet max chars',
-  maxResults: 'Max results',
-  save: 'Save',
-  saving: 'Saving…',
-  discard: 'Discard',
-  reset: 'Reset to default',
-  unsaved: 'Unsaved',
-  saveFailed: 'The deployment did not accept these values; they were left for you to correct.',
-  invalidNumber: 'Enter a number, or leave blank to use the default.',
-  readOnly: 'This deployment stores settings read-only.',
-  expand: 'Show settings',
-  collapse: 'Hide settings',
-} as const
-
-const zh: Record<keyof typeof en, string> = {
-  cardTitle: '网页搜索（增强）',
-  cardDescription: '链式网页搜索：自定义 LLM → opencode Go 默认 → Parallel → Exa。免费后端无需 API key；opencode Go 默认步骤使用 OPENCODE_GO_API_KEY（若已设置）。',
-  sectionIntro: '配置增强搜索提供方。',
-  llmTitle: 'LLM 网页搜索（Anthropic web_search_20250305 / OpenAI 兼容）',
-  enableGo: '启用 LLM 后端',
-  enableGoHint: '关闭时所有请求走免费 Parallel/Exa（无需 API key）。',
-  protocol: '协议',
-  protocolAnthropic: 'anthropic (/v1/messages)',
-  protocolOpenai: 'openai (/chat/completions)',
-  baseUrl: '服务地址',
-  baseUrlHint: '留空则禁用 LLM 后端。',
-  credential: '凭据引用',
-  credentialHint: '凭据库中的凭据名称（如 OPENCODE_GO_API_KEY）。非内置 DeepSeek 搜索使用的 DEEPSEEK_API_KEY。',
-  model: '模型',
-  modelHint: '默认值 deepseek-v4.1-flash（实现 web_search_20250305 的 Anthropic 格式模型）。其他 Anthropic 路由也可能可用 —— 取决于网关是否实现该服务端工具。',
-  parallelCredential: 'Parallel Token（可选）',
-  parallelCredentialHint: 'Parallel API Key 的凭据引用。留空则使用免费匿名端点；填写可提高速率上限。',
-  exaCredential: 'Exa Token（可选）',
-  exaCredentialHint: 'Exa API Key 的凭据引用。留空则使用免费匿名端点；填写可提高速率上限。',
-  timeoutMs: '超时（ms）',
-  freeTitle: '免费后端（无需 API key）',
-  parallelUrl: 'Parallel 端点',
-  exaUrl: 'Exa 端点',
-  freeTimeoutMs: '免费超时（ms）',
-  snippetMaxChars: '摘要最大字符数',
-  maxResults: '最大结果数',
-  save: '保存',
-  saving: '保存中…',
-  discard: '撤销',
-  reset: '恢复默认',
-  unsaved: '未保存',
-  saveFailed: '部署未接受这些值；已保留以便修正。',
-  invalidNumber: '请输入数字，或留空使用默认值。',
-  readOnly: '本部署的设置为只读。',
-  expand: '展开设置',
-  collapse: '收起设置',
+/** The face the section's slot entry injects. */
+export interface WebSearchSectionFace {
+    hooks: { webSearchSection: { getSnapshot: () => WebSearchSnapshot; subscribe: (listener: () => void) => () => void } }
+    t: Translate
+    controller: WebSearchSectionController
 }
 
-declare module '@deepseek-ai/dsh-client-ui-slots' {
-  interface LocaleNamespaceMap {
-    'web-search-enhanced': keyof typeof en
-  }
+const CSS = `
+.wss{display:flex;flex-direction:column;gap:16px}
+.wss-head{display:flex;flex-direction:column;gap:4px}
+.wss-title{margin:0;font-size:16px;font-weight:600;letter-spacing:.01em}
+.wss-intro{margin:0;max-width:62ch;font-size:12px;color:var(--dsw-alias-label-tertiary)}
+.wss-group{display:flex;flex-direction:column;gap:8px}
+.wss-group-title{margin:0;font-size:11px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;color:var(--dsw-alias-label-secondary)}
+.wss-chain{display:flex;flex-direction:column;margin:0;padding:0;list-style:none;border:1px solid var(--dsw-alias-border-l2);border-radius:12px;background:var(--dsw-alias-bg-layer-2)}
+.wss-step{display:grid;grid-template-columns:28px 1fr;gap:12px;padding:12px;border-bottom:1px solid var(--dsw-alias-border-l2)}
+.wss-step:last-child{border-bottom:0}
+.wss-rank{display:grid;place-items:center;width:20px;height:20px;margin-top:2px;border-radius:6px;background:var(--dsw-alias-bg-layer-3);color:var(--dsw-alias-label-secondary);font-family:var(--dsw-font-family-mono,ui-monospace,SFMono-Regular,Menlo,monospace);font-size:11px;font-variant-numeric:tabular-nums}
+.wss-body{display:flex;flex-direction:column;gap:8px;min-width:0}
+.wss-row{display:flex;align-items:baseline;gap:8px;flex-wrap:wrap}
+.wss-name{font-size:13px;font-weight:600;color:var(--dsw-alias-label-primary)}
+.wss-tag{padding:1px 6px;border:1px solid var(--dsw-alias-border-l2);border-radius:999px;font-size:10px;letter-spacing:.04em;text-transform:uppercase;color:var(--dsw-alias-label-tertiary)}
+.wss-note{margin:0;font-size:11px;color:var(--dsw-alias-label-tertiary)}
+.wss-url{margin:0;font-family:var(--dsw-font-family-mono,ui-monospace,SFMono-Regular,Menlo,monospace);font-size:11px;color:var(--dsw-alias-label-secondary);overflow-wrap:anywhere;user-select:all}
+.wss-fields{display:grid;gap:10px;grid-template-columns:repeat(auto-fit,minmax(200px,1fr))}
+.wss-field{display:grid;gap:4px;min-width:0}
+.wss-field label{font-size:12px;color:var(--dsw-alias-label-secondary)}
+.wss-field input,.wss-field select{width:100%;padding:6px 10px;border:1px solid var(--dsw-alias-border-l2);border-radius:8px;background:var(--dsw-alias-bg-layer-1);color:var(--dsw-alias-label-primary);font-size:13px}
+.wss-field input[aria-invalid="true"]{border-color:var(--dsw-alias-label-error)}
+.wss-field small{font-size:11px;color:var(--dsw-alias-label-tertiary)}
+.wss-actions{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.wss-btn{padding:4px 10px;border:1px solid var(--dsw-alias-border-l2);border-radius:8px;background:var(--dsw-alias-bg-layer-1);color:var(--dsw-alias-label-primary);font-size:12px;cursor:pointer}
+.wss-btn:hover:not(:disabled){background:var(--dsw-alias-interactive-bg-hover)}
+.wss-btn:disabled{opacity:.45;cursor:default}
+.wss-btn--primary{background:var(--dsw-alias-button-primary-fill);color:var(--dsw-alias-label-primary-inverted);border-color:#0000}
+.wss-btn--primary:hover:not(:disabled){background:var(--dsw-alias-button-primary-hover)}
+.wss-server{display:flex;flex-direction:column;gap:8px;padding:10px;border:1px dashed var(--dsw-alias-border-l2);border-radius:10px}
+.wss-empty{margin:0;font-size:11px;color:var(--dsw-alias-label-tertiary)}
+.wss-foot{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;border-top:1px solid var(--dsw-alias-border-l2);padding-top:12px}
+.wss-state{margin:0;font-size:11px;color:var(--dsw-alias-label-tertiary)}
+.wss-state[data-tone="warn"]{color:var(--dsw-alias-label-error)}
+`
+
+/** Install the section's stylesheet once, and remove it with the plugin. */
+function installStyles(): () => void {
+    const selector = 'style[data-plugin-css="dsh-web-search/section"]'
+    if (document.querySelector(selector) !== null) return () => {}
+    const style = document.createElement('style')
+    style.dataset.plugin = 'dsh-web-search'
+    style.dataset.pluginCss = 'dsh-web-search/section'
+    style.textContent = CSS
+    document.head.appendChild(style)
+    return () => {
+        style.remove()
+    }
 }
 
-/* ─── schema shape (mirrors src/config.ts) ──────────────────────────────── */
-
-interface LlmSection {
-  enabled?: boolean
-  protocol?: 'anthropic' | 'openai'
-  baseUrl?: string
-  credential?: string
-  model?: string
-  timeoutMs?: number
-}
-interface FreeSection {
-  parallelUrl?: string
-  exaUrl?: string
-  parallelCredential?: string
-  exaCredential?: string
-  timeoutMs?: number
-  snippetMaxChars?: number
-  maxResults?: number
-}
-interface WebSearchSection {
-  llm?: LlmSection
-  free?: FreeSection
-}
-
-/* ─── field staging model ───────────────────────────────────────────────── */
-
-export interface WebSearchFieldState {
-  text: string
-  overridden: boolean
-  invalid: boolean
-}
-export interface WebSearchCardState {
-  available: boolean
-  writable: boolean
-  dirty: boolean
-  invalid: boolean
-  saving: boolean
-  failed: boolean
-  llmEnabled: WebSearchFieldState
-  llmProtocol: WebSearchFieldState
-  llmBaseUrl: WebSearchFieldState
-  llmCredential: WebSearchFieldState
-  llmModel: WebSearchFieldState
-  llmTimeoutMs: WebSearchFieldState
-  parallelUrl: WebSearchFieldState
-  exaUrl: WebSearchFieldState
-  parallelCredential: WebSearchFieldState
-  exaCredential: WebSearchFieldState
-  freeTimeoutMs: WebSearchFieldState
-  snippetMaxChars: WebSearchFieldState
-  maxResults: WebSearchFieldState
+/** One labelled control. */
+function Field(props: {
+    id: string
+    label: string
+    value: string
+    hint?: string
+    invalid?: boolean
+    disabled: boolean
+    onChange: (text: string) => void
+}): JSX.Element {
+    return (
+        <div className="wss-field">
+            <label htmlFor={props.id}>{props.label}</label>
+            <input
+                id={props.id}
+                value={props.value}
+                disabled={props.disabled}
+                aria-invalid={props.invalid === true}
+                onChange={(event) => { props.onChange(event.target.value) }}
+            />
+            {props.hint !== undefined ? <small>{props.hint}</small> : null}
+        </div>
+    )
 }
 
-type DraftValue = string | number | boolean
-type SubSection = 'llm' | 'free'
-
-interface FieldSpec<T extends DraftValue> {
-  /** Sub-section under the root namespace. The scope writes the whole
-   *  sub-section object in one `set`, which is what the wire contract accepts. */
-  sub: SubSection
-  /** Field name inside the sub-section. */
-  name: string
-  /** Stored value → draft text. */
-  format(value: unknown): string
-  /** Draft text → stored value; undefined means invalid (blocks save). */
-  parse(text: string): T | undefined
+/** One labelled choice. */
+function Choice(props: {
+    id: string
+    label: string
+    value: string
+    options: { value: string; label: string }[]
+    disabled: boolean
+    onChange: (text: string) => void
+}): JSX.Element {
+    return (
+        <div className="wss-field">
+            <label htmlFor={props.id}>{props.label}</label>
+            <select id={props.id} value={props.value} disabled={props.disabled} onChange={(event) => { props.onChange(event.target.value) }}>
+                {props.options.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
+            </select>
+        </div>
+    )
 }
 
-function textField(sub: SubSection, name: string): FieldSpec<string> {
-  return {
-    sub, name,
-    format(value) { return typeof value === 'string' ? value : '' },
-    parse(text) { return text },
-  }
-}
-function numberField(sub: SubSection, name: string): FieldSpec<number> {
-  return {
-    sub, name,
-    format(value) { return typeof value === 'number' && Number.isFinite(value) ? String(value) : '' },
-    parse(text) {
-      const trimmed = text.trim()
-      if (trimmed.length === 0) return undefined
-      const n = Number(trimmed)
-      return Number.isFinite(n) ? n : undefined
-    },
-  }
-}
-function booleanField(sub: SubSection, name: string): FieldSpec<boolean> {
-  return {
-    sub, name,
-    format(value) { return value === true ? 'true' : 'false' },
-    parse(text) { return text === 'true' ? true : text === 'false' ? false : undefined },
-  }
-}
-function enumField<T extends string>(sub: SubSection, name: string, options: readonly T[]): FieldSpec<T> {
-  return {
-    sub, name,
-    format(value) { return typeof value === 'string' && (options as readonly string[]).includes(value) ? value : options[0]! },
-    parse(text) { return (options as readonly string[]).includes(text) ? (text as T) : undefined },
-  }
-}
-
-const FIELDS = {
-  llmEnabled: booleanField('llm', 'enabled'),
-  llmProtocol: enumField('llm', 'protocol', ['anthropic', 'openai'] as const),
-  llmBaseUrl: textField('llm', 'baseUrl'),
-  llmCredential: textField('llm', 'credential'),
-  llmModel: textField('llm', 'model'),
-  llmTimeoutMs: numberField('llm', 'timeoutMs'),
-  parallelUrl: textField('free', 'parallelUrl'),
-  exaUrl: textField('free', 'exaUrl'),
-  parallelCredential: textField('free', 'parallelCredential'),
-  exaCredential: textField('free', 'exaCredential'),
-  freeTimeoutMs: numberField('free', 'timeoutMs'),
-  snippetMaxChars: numberField('free', 'snippetMaxChars'),
-  maxResults: numberField('free', 'maxResults'),
-} as const
-type FieldKey = keyof typeof FIELDS
-
-/** Schema defaults projected as a `WebSearchSection` for the loading state
- *  (before the host scope has answered) and the unavailable state (where the
- *  wire would otherwise return undefined). Mirrors the host-side `Config`
- *  schema in `src/config.ts` so the form always shows the same baseline
- *  regardless of scope state. */
-function schemaDefaults(): WebSearchSection {
-  return {
-    llm: {
-      enabled: false,
-      protocol: 'anthropic',
-      baseUrl: '',
-      credential: '',
-      model: 'deepseek-v4.1-flash',
-      timeoutMs: 20_000,
-    },
-    free: {
-      parallelUrl: 'https://search.parallel.ai/mcp',
-      exaUrl: 'https://mcp.exa.ai/mcp',
-      parallelCredential: '',
-      exaCredential: '',
-      timeoutMs: 15_000,
-      snippetMaxChars: 300,
-      maxResults: 8,
-    },
-  }
-}
-
-function readField(section: WebSearchSection, key: FieldKey): unknown {
-  const { sub, name } = FIELDS[key]
-  const child = section[sub]
-  if (child === null || typeof child !== 'object' || Array.isArray(child)) return undefined
-  return (child as Record<string, unknown>)[name]
-}
-
-/** Whether the user-layer object carries this sub-section field. */
-function userLayerCarries(userLayer: unknown, key: FieldKey): boolean {
-  const { sub, name } = FIELDS[key]
-  if (userLayer === null || typeof userLayer !== 'object') return false
-  const subNode = (userLayer as Record<string, unknown>)[sub]
-  if (subNode === null || typeof subNode !== 'object' || Array.isArray(subNode)) return false
-  return Object.hasOwn(subNode as object, name)
-}
-
-function fieldStateOf(section: WebSearchSection, userLayer: unknown, drafts: ReadonlyMap<FieldKey, string>, key: FieldKey): WebSearchFieldState {
-  const spec = FIELDS[key]
-  const stored = readField(section, key)
-  const draft = drafts.get(key)
-  const baseText = spec.format(stored)
-  const text = draft ?? baseText
-  const parsed = spec.parse(text)
-  const overridden = userLayerCarries(userLayer, key) || draft !== undefined
-  const invalid = parsed === undefined && text.length > 0
-  return { text, overridden, invalid }
-}
-
-/* ─── snapshot + actions ────────────────────────────────────────────────── */
-
-interface WebSearchCardFace {
-  hooks: { webSearchCard: SnapshotStore<WebSearchCardState> }
-  edit(field: string, text: string): void
-  resetField(field: string): void
-  save(): void
-  discard(): void
-}
-
-type WebSearchCardProps = PropsRuntime<'settings.plugin.item'> & InjectFace<WebSearchCardFace> & { t: WebSearchTranslate }
-
-/** Tiny snapshot store: subscribe + getSnapshot, rebuild on demand. */
-function makeSnapshotStore<T>(compute: () => T): SnapshotStore<T> {
-  let last: T = compute()
-  const listeners = new Set<() => void>()
-  return {
-    getSnapshot(): T { return last },
-    subscribe(listener: () => void): () => void {
-      listeners.add(listener)
-      return () => { listeners.delete(listener) }
-    },
-    set(next: T): void {
-      last = next
-      for (const l of listeners) l()
-    },
-    update(mutator: (draft: T) => void): void {
-      mutator(last)
-      for (const l of listeners) l()
-    },
-  }
+/** The numeral that carries one step's position in the chain. */
+function Rank({ n }: { n: number }): JSX.Element {
+    return <span className="wss-rank" aria-hidden="true">{n}</span>
 }
 
 /**
- * Build the card controller: bridges the bound settings scope onto a
- * revision-fenced staging form. The controller is the `inject()` face the
- * slot registration returns — the framework hands it to the component as
- * `props.useWebSearchCard`, `props.edit`, `props.resetField`, `props.save`,
- * `props.discard`.
+ * The section.
+ * @param props - the section's owner props plus the injected face.
+ * @returns the section element tree.
  */
-export class WebSearchCardController {
-  private readonly scope: SettingsScope<WebSearchSection>
-  private readonly drafts = new Map<FieldKey, string>()
-  private readonly listeners = new Set<() => void>()
-  private readonly store: SnapshotStore<WebSearchCardState>
-  private generation = 0
-  private saving = false
-  private failed = false
+export function WebSearchSection(props: PropsRuntime<'settings.section'> & InjectFace<WebSearchSectionFace>): JSX.Element {
+    const t = props.t
+    const controller = props.controller
+    const state = props.useWebSearchSection((value) => value)
+    const { draft } = state
+    const disabled = !state.writable || state.saving
+    const [showLlm, setShowLlm] = useState(false)
+    const invalid = new Set(state.invalid)
 
-  constructor(scope: SettingsScope<WebSearchSection>) {
-    this.scope = scope
-    this.store = makeSnapshotStore<WebSearchCardState>(() => this.computeSnapshot())
-    scope.subscribe(() => { this.publish() })
-  }
+    return (
+        <div className="wss">
+            <header className="wss-head">
+                <h2 className="wss-title">{t('sectionTitle')}</h2>
+                <p className="wss-intro">{t('sectionIntro')}</p>
+            </header>
 
-  /** Stage text for one field. Drafts live on the form, not in the wire scope. */
-  edit(field: FieldKey, text: string): void {
-    this.drafts.set(field, text)
-    this.failed = false
-    this.publish()
-  }
+            <section className="wss-group">
+                <h3 className="wss-group-title">{t('chainTitle')}</h3>
+                <ol className="wss-chain">
+                    {/* 1 — the custom endpoint: the only backend whose every field is yours. */}
+                    <li className="wss-step">
+                        <Rank n={1} />
+                        <div className="wss-body">
+                            <div className="wss-row">
+                                <span className="wss-name">{t('llmTitle')}</span>
+                                <span className="wss-tag">{draft.llm.enabled ? t('on') : t('off')}</span>
+                                <button type="button" className="wss-btn" onClick={() => { setShowLlm((value) => !value) }}>
+                                    {showLlm ? t('hide') : t('edit')}
+                                </button>
+                            </div>
+                            <p className="wss-note">{t('llmNote')}</p>
+                            {showLlm
+                                ? (
+                                    <div className="wss-fields">
+                                        <Choice
+                                            id="wss-llm-enabled" label={t('enabled')} disabled={disabled}
+                                            value={draft.llm.enabled ? 'true' : 'false'}
+                                            options={[{ value: 'true', label: t('on') }, { value: 'false', label: t('off') }]}
+                                            onChange={(text) => { controller.editLlm('enabled', text) }}
+                                        />
+                                        <Choice
+                                            id="wss-llm-protocol" label={t('protocol')} disabled={disabled}
+                                            value={draft.llm.protocol}
+                                            options={[{ value: 'anthropic', label: t('protocolAnthropic') }, { value: 'openai', label: t('protocolOpenai') }]}
+                                            onChange={(text) => { controller.editLlm('protocol', text) }}
+                                        />
+                                        <Field
+                                            id="wss-llm-baseurl" label={t('baseUrl')} hint={t('baseUrlHint')} disabled={disabled}
+                                            value={draft.llm.baseUrl} onChange={(text) => { controller.editLlm('baseUrl', text) }}
+                                        />
+                                        <Field
+                                            id="wss-llm-credential" label={t('credential')} hint={t('credentialHint')} disabled={disabled}
+                                            value={draft.llm.credential} onChange={(text) => { controller.editLlm('credential', text) }}
+                                        />
+                                        <Field
+                                            id="wss-llm-model" label={t('model')} hint={t('modelHint')} disabled={disabled}
+                                            value={draft.llm.model} onChange={(text) => { controller.editLlm('model', text) }}
+                                        />
+                                        <Field
+                                            id="wss-llm-timeout" label={t('llmTimeout')} disabled={disabled} invalid={invalid.has('llm.timeoutMs')}
+                                            value={draft.llm.timeoutMs} onChange={(text) => { controller.editLlm('timeoutMs', text) }}
+                                        />
+                                    </div>
+                                )
+                                : null}
+                        </div>
+                    </li>
 
-  /** Drop a field's draft; the next save leaves no override. */
-  resetField(field: FieldKey): void {
-    this.drafts.delete(field)
-    this.failed = false
-    this.publish()
-  }
+                    {/* 2 — OpenCode Go: a shipped route with a shipped model. */}
+                    <li className="wss-step">
+                        <Rank n={2} />
+                        <div className="wss-body">
+                            <div className="wss-row">
+                                <span className="wss-name">{t('goTitle')}</span>
+                                <span className="wss-tag">{t('builtIn')}</span>
+                            </div>
+                            <p className="wss-url">https://opencode.ai/zen/go/v1 · deepseek-v4.1-flash</p>
+                            <p className="wss-note">{t('goNote')}</p>
+                            <div className="wss-fields">
+                                <Field
+                                    id="wss-go-credential" label={t('goCredential')} hint={t('goCredentialHint')} disabled={disabled}
+                                    value={draft.llm.credential === '' ? '' : draft.llm.credential}
+                                    onChange={(text) => { controller.editLlm('credential', text) }}
+                                />
+                            </div>
+                        </div>
+                    </li>
 
-  /** Drop every draft. */
-  discard(): void {
-    this.drafts.clear()
-    this.failed = false
-    this.publish()
-  }
+                    {/* 3 & 4 — the shipped MCP servers: fixed endpoint, optional token. */}
+                    {BUILTIN_MCP_SERVERS.map((server, index) => (
+                        <li className="wss-step" key={server.id}>
+                            <Rank n={index + 3} />
+                            <div className="wss-body">
+                                <div className="wss-row">
+                                    <span className="wss-name">{server.label}</span>
+                                    <span className="wss-tag">{t('builtIn')}</span>
+                                    <span className="wss-tag">{t('free')}</span>
+                                </div>
+                                <p className="wss-url">{server.url}</p>
+                                <div className="wss-fields">
+                                    <Field
+                                        id={`wss-${server.id}-token`}
+                                        label={t('token')}
+                                        hint={t('tokenHint')}
+                                        disabled={disabled}
+                                        value={server.credentialField === 'parallelCredential' ? draft.free.parallelCredential : draft.free.exaCredential}
+                                        onChange={(text) => { controller.editFree(server.credentialField, text) }}
+                                    />
+                                </div>
+                            </div>
+                        </li>
+                    ))}
 
-  private isInvalid(): boolean {
-    for (const [field, text] of this.drafts) {
-      if (FIELDS[field].parse(text) === undefined && text.length > 0) return true
-    }
-    return false
-  }
+                    {/* 5 — servers you add, tried in the order listed. */}
+                    <li className="wss-step">
+                        <Rank n={BUILTIN_MCP_SERVERS.length + 3} />
+                        <div className="wss-body">
+                            <div className="wss-row">
+                                <span className="wss-name">{t('serversTitle')}</span>
+                                <button type="button" className="wss-btn" disabled={disabled} onClick={() => { controller.addServer() }}>
+                                    {t('addServer')}
+                                </button>
+                            </div>
+                            <p className="wss-note">{t('serversNote')}</p>
+                            {draft.free.servers.length === 0
+                                ? <p className="wss-empty">{t('serversEmpty')}</p>
+                                : draft.free.servers.map((server, index) => (
+                                    <div className="wss-server" key={server.id}>
+                                        <div className="wss-fields">
+                                            <Field
+                                                id={`wss-server-${server.id}-url`} label={t('serverUrl')} disabled={disabled}
+                                                invalid={invalid.has(`free.servers.${index}.url`)}
+                                                value={server.url} onChange={(text) => { controller.editServer(server.id, 'url', text) }}
+                                            />
+                                            <Field
+                                                id={`wss-server-${server.id}-label`} label={t('serverLabel')} disabled={disabled}
+                                                value={server.label} onChange={(text) => { controller.editServer(server.id, 'label', text) }}
+                                            />
+                                            <Field
+                                                id={`wss-server-${server.id}-token`} label={t('token')} hint={t('tokenHint')} disabled={disabled}
+                                                value={server.credential} onChange={(text) => { controller.editServer(server.id, 'credential', text) }}
+                                            />
+                                            <Field
+                                                id={`wss-server-${server.id}-tool`} label={t('serverTool')} hint={t('serverToolHint')} disabled={disabled}
+                                                value={server.tool} onChange={(text) => { controller.editServer(server.id, 'tool', text) }}
+                                            />
+                                        </div>
+                                        <div className="wss-actions">
+                                            <button type="button" className="wss-btn" disabled={disabled} onClick={() => { controller.removeServer(server.id) }}>
+                                                {t('removeServer')}
+                                            </button>
+                                        </div>
+                                    </div>
+                                ))}
+                        </div>
+                    </li>
+                </ol>
+            </section>
 
-  private computeSnapshot(): WebSearchCardState {
-    const raw = this.scope.getSnapshot()
-    const section = (raw.value ?? {}) as WebSearchSection
-    const userLayer = raw.user
-    // Render the chrome whenever the namespace is exposed to this client —
-    // including during loading — so the user always sees the card. While
-    // `value` is undefined we project the schema's defaults through the field
-    // formatters, so the loading state never looks like "empty configuration".
-    // The chrome only hides on `unavailable` (the namespace is genuinely
-    // not served, e.g. the host plugin did not load).
-    const projected: WebSearchSection = raw.value === undefined
-      ? schemaDefaults()
-      : section
-    return {
-      available: raw.status !== 'unavailable',
-      // The SettingsScopeController initializes `writable: false` and only
-      // updates it once the describe RPC completes. While loading (or while
-      // the websocket is reconnecting), `raw.writable` is `false` even when
-      // the host is genuinely writable. Treat the writable flag as opt-in:
-      // only consider the host read-only when the scope is `ready` AND the
-      // host explicitly reports `writable: false`. While loading, default
-      // to writable so the user can stage drafts; the Save button itself
-      // still guards on the actual write attempt.
-      writable: raw.status === 'ready' ? raw.writable === true : true,
-      dirty: this.drafts.size > 0,
-      invalid: this.isInvalid(),
-      saving: this.saving,
-      failed: this.failed,
-      llmEnabled: fieldStateOf(projected, userLayer, this.drafts, 'llmEnabled'),
-      llmProtocol: fieldStateOf(projected, userLayer, this.drafts, 'llmProtocol'),
-      llmBaseUrl: fieldStateOf(projected, userLayer, this.drafts, 'llmBaseUrl'),
-      llmCredential: fieldStateOf(projected, userLayer, this.drafts, 'llmCredential'),
-      llmModel: fieldStateOf(projected, userLayer, this.drafts, 'llmModel'),
-      llmTimeoutMs: fieldStateOf(projected, userLayer, this.drafts, 'llmTimeoutMs'),
-      parallelUrl: fieldStateOf(projected, userLayer, this.drafts, 'parallelUrl'),
-      exaUrl: fieldStateOf(projected, userLayer, this.drafts, 'exaUrl'),
-      parallelCredential: fieldStateOf(projected, userLayer, this.drafts, 'parallelCredential'),
-      exaCredential: fieldStateOf(projected, userLayer, this.drafts, 'exaCredential'),
-      freeTimeoutMs: fieldStateOf(projected, userLayer, this.drafts, 'freeTimeoutMs'),
-      snippetMaxChars: fieldStateOf(projected, userLayer, this.drafts, 'snippetMaxChars'),
-      maxResults: fieldStateOf(projected, userLayer, this.drafts, 'maxResults'),
-    }
-  }
+            <section className="wss-group">
+                <h3 className="wss-group-title">{t('limitsTitle')}</h3>
+                <div className="wss-fields">
+                    <Field
+                        id="wss-free-timeout" label={t('freeTimeout')} disabled={disabled} invalid={invalid.has('free.timeoutMs')}
+                        value={draft.free.timeoutMs} onChange={(text) => { controller.editFree('timeoutMs', text) }}
+                    />
+                    <Field
+                        id="wss-snippet" label={t('snippetMaxChars')} disabled={disabled} invalid={invalid.has('free.snippetMaxChars')}
+                        value={draft.free.snippetMaxChars} onChange={(text) => { controller.editFree('snippetMaxChars', text) }}
+                    />
+                    <Field
+                        id="wss-max-results" label={t('maxResults')} disabled={disabled} invalid={invalid.has('free.maxResults')}
+                        value={draft.free.maxResults} onChange={(text) => { controller.editFree('maxResults', text) }}
+                    />
+                </div>
+            </section>
 
-  private publish(): void {
-    // Refresh the cached snapshot BEFORE notifying listeners so the next
-    // `getSnapshot()` returns the new state. `useSyncExternalStore` only
-    // re-renders when the snapshot reference differs, so updating `last`
-    // to a fresh object here is what triggers the React re-render.
-    this.store.set(this.computeSnapshot())
-  }
-
-  /**
-   * Write every staged edit. `SettingsScope.set` accepts one top-level
-   * field at a time, so each sub-section whose drafts are non-empty is
-   * written in one call carrying the merged sub-section object. A blank
-   * draft omits its field, so the next read re-inherits the composition
-   * default. A sub-section whose every field was blanked becomes an unset.
-   */
-  async save(): Promise<void> {
-    const generation = ++this.generation
-    if (!this.scope.getSnapshot().writable || this.isInvalid() || this.drafts.size === 0) return
-    this.saving = true
-    this.failed = false
-    this.publish()
-    try {
-      const section = (this.scope.getSnapshot().value ?? {}) as WebSearchSection
-      const bySub: Record<SubSection, Record<string, DraftValue>> = { llm: {}, free: {} }
-      for (const [field, text] of this.drafts) {
-        const spec = FIELDS[field]
-        const parsed = spec.parse(text)
-        if (parsed === undefined) continue
-        bySub[spec.sub][spec.name] = parsed
-      }
-      for (const sub of ['llm', 'free'] as const) {
-        const updates = bySub[sub]
-        if (Object.keys(updates).length === 0) continue
-        const existing = (section[sub] ?? {}) as Record<string, unknown>
-        const merged: Record<string, unknown> = { ...existing, ...updates }
-        // Drop fields the user explicitly blanked: the next read re-inherits
-        // the composition default instead of carrying an empty override.
-        for (const [name, value] of Object.entries(merged)) {
-          if (value === '') delete merged[name]
-          if (typeof value === 'number' && Number.isNaN(value)) delete merged[name]
-        }
-        if (Object.keys(merged).length === 0) {
-          await this.scope.unset(sub)
-        } else {
-          await this.scope.set(sub, merged)
-        }
-      }
-      if (generation !== this.generation) return
-      this.drafts.clear()
-      this.failed = false
-    } catch (error) {
-      if (generation !== this.generation) return
-      this.failed = true
-      // eslint-disable-next-line no-console
-      console.warn('dsh-web-search: settings save failed', error)
-    } finally {
-      if (generation === this.generation) {
-        this.saving = false
-        this.publish()
-      }
-    }
-  }
-
-  /** Build the slot entry's inject face. */
-  inject(): WebSearchCardFace {
-    return {
-      hooks: { webSearchCard: this.store },
-      edit: (field, text) => { this.edit(field as FieldKey, text) },
-      resetField: (field) => { this.resetField(field as FieldKey) },
-      save: () => { void this.save() },
-      discard: () => { this.discard() },
-    }
-  }
-}
-
-/* ─── value field control ───────────────────────────────────────────────── */
-
-interface ValueFieldProps {
-  id: string
-  label: string
-  hint?: string
-  invalidLabel?: string
-  resetLabel: string
-  overriddenLabel: string
-  numeric: boolean
-  disabled: boolean
-  state: WebSearchFieldState
-  onEdit: (text: string) => void
-  onReset: () => void
-}
-
-function ValueField(props: ValueFieldProps): JSX.Element {
-  const { id, label, hint, invalidLabel, resetLabel, overriddenLabel, numeric, disabled, state, onEdit, onReset } = props
-  const showOverridden = state.overridden
-  const showInvalid = state.invalid
-  return (
-    <div className="wsc-field">
-      <label htmlFor={id} className="wsc-field-label">{label}</label>
-      <div className="wsc-field-row">
-        <input
-          id={id}
-          type={numeric ? 'number' : 'text'}
-          inputMode={numeric ? 'numeric' : undefined}
-          value={state.text}
-          disabled={disabled}
-          onChange={(event) => { onEdit(event.target.value) }}
-          className="wsc-input"
-          aria-invalid={showInvalid || undefined}
-        />
-        {showOverridden ? (
-          <button type="button" className="wsc-reset" disabled={disabled} onClick={onReset}>{resetLabel}</button>
-        ) : null}
-      </div>
-      {hint !== undefined && !showInvalid ? <small className="wsc-hint">{hint}</small> : null}
-      {showInvalid && invalidLabel !== undefined ? <small className="wsc-invalid">{invalidLabel}</small> : null}
-      {showOverridden ? <small className="wsc-overridden">{overriddenLabel}</small> : null}
-    </div>
-  )
-}
-
-/* ─── boolean toggle control ────────────────────────────────────────────── */
-
-interface ToggleFieldProps {
-  id: string
-  label: string
-  hint?: string
-  disabled: boolean
-  state: WebSearchFieldState
-  onEdit: (text: string) => void
-}
-
-function ToggleField(props: ToggleFieldProps): JSX.Element {
-  const { id, label, hint, disabled, state, onEdit } = props
-  const checked = state.text === 'true'
-  // Mobile-first: the whole row is the touch target (min 44px tall). The
-  // toggle is a native <button> with role="switch" and aria-checked — no
-  // hidden checkbox, no label/htmlFor click-forwarding dance. Tapping the
-  // pill, the label, or anywhere in the row fires a real click that runs
-  // our onClick. The checkbox state lives in React state.text only.
-  //
-  // The `disabled` HTML attribute is forwarded so the browser blocks the
-  // click when the host reports read-only (memory mode). Visual read-only
-  // state (transient undefined writable or explicit false) is shown via
-  // data-disabled styling instead, so the user still sees what the host
-  // thinks but isn't blocked from staging a draft on mobile.
-  const handleClick = (): void => {
-    onEdit(checked ? 'false' : 'true')
-  }
-  const handleKeyDown = (event: ReactKeyboardEvent<HTMLButtonElement>): void => {
-    if (event.key === ' ' || event.key === 'Enter') {
-      event.preventDefault()
-      onEdit(checked ? 'false' : 'true')
-    }
-  }
-  return (
-    <div className="wsc-field">
-      <button
-        type="button"
-        id={id}
-        role="switch"
-        aria-checked={checked}
-        disabled={disabled}
-        className={checked ? 'wsc-toggle-row wsc-toggle-row-on' : 'wsc-toggle-row'}
-        data-checked={checked || undefined}
-        onClick={handleClick}
-        onKeyDown={handleKeyDown}
-      >
-        <span className="wsc-toggle-pill" aria-hidden="true">
-          <span className="wsc-toggle-knob" />
-        </span>
-        <span className="wsc-toggle-label">{label}</span>
-      </button>
-      {hint !== undefined ? <small className="wsc-hint">{hint}</small> : null}
-    </div>
-  )
-}
-
-/* ─── enum select control ───────────────────────────────────────────────── */
-
-interface SelectFieldProps {
-  id: string
-  label: string
-  options: ReadonlyArray<{ value: string; label: string }>
-  disabled: boolean
-  state: WebSearchFieldState
-  onEdit: (text: string) => void
-}
-
-function SelectField(props: SelectFieldProps): JSX.Element {
-  const { id, label, options, disabled, state, onEdit } = props
-  return (
-    <div className="wsc-field">
-      <label htmlFor={id} className="wsc-field-label">{label}</label>
-      <select id={id} className="wsc-input" value={state.text} disabled={disabled} onChange={(event) => { onEdit(event.target.value) }}>
-        {options.map((opt) => <option key={opt.value} value={opt.value}>{opt.label}</option>)}
-      </select>
-    </div>
-  )
-}
-
-/* ─── disclosure chrome (mirrors shipped PluginCard) ────────────────────── */
-
-function PluginCardShell(props: {
-  t: WebSearchTranslate
-  state: WebSearchCardState
-  titleKey: keyof typeof en
-  descriptionKey: keyof typeof en
-  children: React.ReactNode
-  onSave: () => void
-  onDiscard: () => void
-}): JSX.Element | null {
-  const { t, state, titleKey, descriptionKey, children, onSave, onDiscard } = props
-  // Open by default so the toggle is immediately visible on mobile — the
-  // plugin's whole purpose is to surface the LLM backend controls, and a
-  // collapsed card hides the toggle behind a tap that the user often doesn't
-  // realize they need to make.
-  const [open, setOpen] = useState(true)
-  if (!state.available) return null
-  const blocked = !state.dirty || state.invalid || state.saving
-  return (
-    <li className={open ? 'wsc-card wsc-card-open' : 'wsc-card'}>
-      <button
-        type="button"
-        className="wsc-header"
-        aria-expanded={open}
-        aria-label={`${t(open ? 'collapse' : 'expand')}: ${t(titleKey)}`}
-        onClick={() => { setOpen(!open) }}
-      >
-        <span className="wsc-head-text">
-          <span className="wsc-name">{t(titleKey)}</span>
-          <span className="wsc-description">{t(descriptionKey)}</span>
-        </span>
-        {state.dirty ? <span className="wsc-pending">{t('unsaved')}</span> : null}
-        <span className={open ? 'wsc-chevron wsc-chevron-open' : 'wsc-chevron'}>v</span>
-      </button>
-      {open ? (
-        <div className="wsc-body">
-          {!state.writable ? <p className="wsc-read-only" role="status">{t('readOnly')}</p> : null}
-          {children}
-          <div className="wsc-footer">
-            {state.failed ? <p className="wsc-failed" role="status">{t('saveFailed')}</p> : <span className="wsp-footer-spacer" />}
-            <button type="button" className="wsc-discard" disabled={!state.dirty || state.saving} onClick={onDiscard}>{t('discard')}</button>
-            <button type="button" className="wsc-save" disabled={blocked} onClick={onSave}>{t(state.saving ? 'saving' : 'save')}</button>
-          </div>
+            <div className="wss-foot">
+                <p className="wss-state" data-tone={state.failed ? 'warn' : undefined}>
+                    {state.failed ? t('saveFailed') : state.overridden ? t('configured') : t('notConfigured')}
+                </p>
+                <div className="wss-actions">
+                    <button type="button" className="wss-btn" disabled={disabled} onClick={() => { controller.discard() }}>{t('discard')}</button>
+                    <button
+                        type="button"
+                        className="wss-btn wss-btn--primary"
+                        disabled={disabled || state.invalid.length > 0}
+                        onClick={() => { void controller.save() }}
+                    >
+                        {state.saving ? t('saving') : t('save')}
+                    </button>
+                </div>
+            </div>
         </div>
-      ) : null}
-    </li>
-  )
+    )
 }
 
-/* ─── the card component ────────────────────────────────────────────────── */
-
-export function WebSearchCard(props: WebSearchCardProps): JSX.Element | null {
-  const state = props.useWebSearchCard((snapshot) => snapshot)
-  const enFallback: WebSearchTranslate = (key) => (en as Record<string, string>)[key] ?? key
-  const tr: WebSearchTranslate = props.t ?? enFallback
-  return (
-    <PluginCardShell
-      t={tr}
-      state={state}
-      titleKey="cardTitle"
-      descriptionKey="cardDescription"
-      onSave={props.save}
-      onDiscard={props.discard}
-    >
-      <p className="wsc-intro">{tr('sectionIntro')}</p>
-      <fieldset className="wsc-section">
-        <legend>{tr('llmTitle')}</legend>
-        <ToggleField
-          id="wsc-llm-enabled" label={tr('enableGo')} hint={tr('enableGoHint')} disabled={!state.writable}
-          state={state.llmEnabled} onEdit={(text) => { props.edit('llmEnabled', text) }}
-        />
-        <SelectField
-          id="wsc-llm-protocol" label={tr('protocol')} disabled={!state.writable}
-          options={[
-            { value: 'anthropic', label: tr('protocolAnthropic') },
-            { value: 'openai', label: tr('protocolOpenai') },
-          ]}
-          state={state.llmProtocol} onEdit={(text) => { props.edit('llmProtocol', text) }}
-        />
-        <ValueField
-          id="wsc-llm-baseurl" label={tr('baseUrl')} hint={tr('baseUrlHint')} resetLabel={tr('reset')} overriddenLabel={tr('unsaved')} invalidLabel={tr('invalidNumber')}
-          numeric={false} disabled={!state.writable}
-          state={state.llmBaseUrl} onEdit={(text) => { props.edit('llmBaseUrl', text) }} onReset={() => { props.resetField('llmBaseUrl') }}
-        />
-        <ValueField
-          id="wsc-llm-credential" label={tr('credential')} hint={tr('credentialHint')} resetLabel={tr('reset')} overriddenLabel={tr('unsaved')} invalidLabel={tr('invalidNumber')}
-          numeric={false} disabled={!state.writable}
-          state={state.llmCredential} onEdit={(text) => { props.edit('llmCredential', text) }} onReset={() => { props.resetField('llmCredential') }}
-        />
-        <ValueField
-          id="wsc-llm-model" label={tr('model')} hint={tr('modelHint')} resetLabel={tr('reset')} overriddenLabel={tr('unsaved')} invalidLabel={tr('invalidNumber')}
-          numeric={false} disabled={!state.writable}
-          state={state.llmModel} onEdit={(text) => { props.edit('llmModel', text) }} onReset={() => { props.resetField('llmModel') }}
-        />
-        <ValueField
-          id="wsc-llm-timeout" label={tr('timeoutMs')} resetLabel={tr('reset')} overriddenLabel={tr('unsaved')} invalidLabel={tr('invalidNumber')}
-          numeric={true} disabled={!state.writable}
-          state={state.llmTimeoutMs} onEdit={(text) => { props.edit('llmTimeoutMs', text) }} onReset={() => { props.resetField('llmTimeoutMs') }}
-        />
-      </fieldset>
-      <fieldset className="wsc-section">
-        <legend>{tr('freeTitle')}</legend>
-        <ValueField
-          id="wsc-parallel-url" label={tr('parallelUrl')} resetLabel={tr('reset')} overriddenLabel={tr('unsaved')} invalidLabel={tr('invalidNumber')}
-          numeric={false} disabled={!state.writable}
-          state={state.parallelUrl} onEdit={(text) => { props.edit('parallelUrl', text) }} onReset={() => { props.resetField('parallelUrl') }}
-        />
-        <ValueField
-          id="wsc-exa-url" label={tr('exaUrl')} resetLabel={tr('reset')} overriddenLabel={tr('unsaved')} invalidLabel={tr('invalidNumber')}
-          numeric={false} disabled={!state.writable}
-          state={state.exaUrl} onEdit={(text) => { props.edit('exaUrl', text) }} onReset={() => { props.resetField('exaUrl') }}
-        />
-        <ValueField
-          id="wsc-parallel-credential" label={tr('parallelCredential')} hint={tr('parallelCredentialHint')}
-          resetLabel={tr('reset')} overriddenLabel={tr('unsaved')} invalidLabel={tr('invalidNumber')}
-          numeric={false} disabled={!state.writable}
-          state={state.parallelCredential} onEdit={(text) => { props.edit('parallelCredential', text) }} onReset={() => { props.resetField('parallelCredential') }}
-        />
-        <ValueField
-          id="wsc-exa-credential" label={tr('exaCredential')} hint={tr('exaCredentialHint')}
-          resetLabel={tr('reset')} overriddenLabel={tr('unsaved')} invalidLabel={tr('invalidNumber')}
-          numeric={false} disabled={!state.writable}
-          state={state.exaCredential} onEdit={(text) => { props.edit('exaCredential', text) }} onReset={() => { props.resetField('exaCredential') }}
-        />
-        <ValueField
-          id="wsc-free-timeout" label={tr('freeTimeoutMs')} resetLabel={tr('reset')} overriddenLabel={tr('unsaved')} invalidLabel={tr('invalidNumber')}
-          numeric={true} disabled={!state.writable}
-          state={state.freeTimeoutMs} onEdit={(text) => { props.edit('freeTimeoutMs', text) }} onReset={() => { props.resetField('freeTimeoutMs') }}
-        />
-        <ValueField
-          id="wsc-snippet-chars" label={tr('snippetMaxChars')} resetLabel={tr('reset')} overriddenLabel={tr('unsaved')} invalidLabel={tr('invalidNumber')}
-          numeric={true} disabled={!state.writable}
-          state={state.snippetMaxChars} onEdit={(text) => { props.edit('snippetMaxChars', text) }} onReset={() => { props.resetField('snippetMaxChars') }}
-        />
-        <ValueField
-          id="wsc-max-results" label={tr('maxResults')} resetLabel={tr('reset')} overriddenLabel={tr('unsaved')} invalidLabel={tr('invalidNumber')}
-          numeric={true} disabled={!state.writable}
-          state={state.maxResults} onEdit={(text) => { props.edit('maxResults', text) }} onReset={() => { props.resetField('maxResults') }}
-        />
-      </fieldset>
-    </PluginCardShell>
-  )
+/**
+ * Build the section's face: one controller over the bound settings scope.
+ * @param ctx - the client context.
+ * @param scope - the bound `web-search-enhanced` scope.
+ * @returns the injected face.
+ */
+export function createSectionFace(ctx: ClientContext, scope: SettingsScope<unknown>): WebSearchSectionFace {
+    const controller = createWebSearchSection({ scope: scope as never })
+    return {
+        hooks: {
+            webSearchSection: {
+                getSnapshot: controller.getSnapshot,
+                subscribe: controller.subscribe,
+            },
+        },
+        t: ctx.locale.bind(NS) as unknown as Translate,
+        controller,
+    }
 }
 
-/* ─── client bundle entry ───────────────────────────────────────────────── */
-
-const CSS = `
-.wsc-card{border:1px solid var(--dsw-alias-border-l2);background:var(--dsw-alias-bg-layer-3);border-radius:12px;list-style:none;transition:border-color .16s,background .16s}
-.wsc-card:hover{border-color:var(--dsw-alias-label-dimmed)}
-.wsc-card-open{background:var(--dsw-alias-bg-layer-2);border-color:var(--dsw-alias-label-dimmed)}
-.wsc-header{appearance:none;width:100%;font:inherit;color:inherit;text-align:left;cursor:pointer;background:0 0;border:0;border-radius:12px;align-items:center;gap:12px;padding:14px 16px;display:flex}
-.wsc-header:focus-visible{outline:2px solid var(--dsw-alias-brand-primary);outline-offset:-2px}
-.wsc-head-text{flex-direction:column;flex:1;gap:4px;min-width:0;display:flex}
-.wsc-name{color:var(--dsw-alias-label-primary);font-size:15px;font-weight:600;line-height:1.4}
-.wsc-description{color:var(--dsw-alias-label-tertiary);font-size:13px;line-height:1.5}
-.wsc-chevron{color:var(--dsw-alias-label-tertiary);flex:none;transition:transform .16s}
-.wsc-chevron-open{transform:rotate(180deg)}
-.wsc-body{border-top:1px solid var(--dsw-alias-border-l2);margin:0 16px;padding:14px 0}
-.wsc-intro{color:var(--dsw-alias-label-secondary);margin:0 0 14px;font-size:13px;line-height:1.55}
-.wsc-read-only{color:var(--dsw-alias-label-tertiary);margin:0 0 10px;font-size:12px;line-height:1.5}
-.wsc-pending{white-space:nowrap;background:var(--dsw-alias-bg-module-platform);color:var(--dsw-alias-label-secondary);border-radius:999px;flex:none;padding:1px 8px;font-size:11px;font-weight:500;line-height:17px}
-.wsc-section{border:1px solid var(--dsw-alias-border-l2);background:transparent;border-radius:10px;margin:0 0 14px;padding:12px 14px}
-.wsc-section legend{color:var(--dsw-alias-label-primary);padding:0 6px;font-size:13px;font-weight:600}
-.wsc-field{display:grid;gap:5px;margin-bottom:12px}
-.wsc-field:last-child{margin-bottom:0}
-.wsc-field-label{color:var(--dsw-alias-label-secondary);font-size:12px;font-weight:550}
-.wsc-field-row{display:flex;gap:8px;align-items:center}
-.wsc-input{flex:1;min-width:0;box-sizing:border-box;height:32px;padding:0 10px;border:1px solid var(--dsw-alias-border-l2);border-radius:8px;background:var(--dsw-alias-bg-layer-1);color:var(--dsw-alias-label-primary);font:inherit;font-size:13px;outline:none}
-.wsc-input:focus{border-color:var(--dsw-alias-brand-primary);box-shadow:0 0 0 2px color-mix(in srgb,var(--dsw-alias-brand-primary) 25%,transparent)}
-.wsc-input[aria-invalid="true"]{border-color:var(--dsw-alias-state-error-primary,#e04c5a)}
-.wsc-reset{appearance:none;font:inherit;cursor:pointer;color:var(--dsw-alias-label-secondary);background:0 0;border:1px solid var(--dsw-alias-border-l2);border-radius:8px;padding:5px 12px;font-size:12px}
-.wsc-reset:disabled{opacity:.45;cursor:default}
-.wsc-hint,.wsc-invalid,.wsc-overridden{font-size:11.5px;line-height:1.5}
-.wsc-hint{color:var(--dsw-alias-label-tertiary)}
-.wsc-invalid{color:var(--dsw-alias-state-error-primary,#e04c5a)}
-.wsc-overridden{color:var(--dsw-alias-state-business-primary,#4d7ef7)}
-/* Toggle (mobile-first): the whole thing is a < <button> with no native
- * * checkbox + htmlFor dance — taps land on the real button, fires onClick.
- * * Touch target ≥ 44px, custom pill/knob visual, clear on/off state. */
-.wsc-toggle-row{display:flex;align-items:center;gap:12px;color:var(--dsw-alias-label-primary);font-size:13px;cursor:pointer;min-height:44px;padding:6px 8px;margin:-6px -8px;border-radius:8px;background:transparent;border:0;text-align:left;width:calc(100% + 16px);font-family:inherit;user-select:none;-webkit-user-select:none;-webkit-tap-highlight-color:transparent}
-.wsc-toggle-row:active:not([data-disabled]){background:var(--dsw-alias-interactive-bg-hover,rgba(255,255,255,.06))}
-.wsc-toggle-row:focus-visible{outline:2px solid var(--dsw-alias-brand-primary,#4d7ef7);outline-offset:-2px}
-.wsc-toggle-row[data-disabled]{opacity:.6;cursor:not-allowed}
-.wsc-toggle-pill{position:relative;flex:none;width:36px;height:22px;border-radius:999px;background:var(--dsw-alias-bg-layer-2,#14141a);border:1px solid var(--dsw-alias-border-l2,rgba(255,255,255,.12));transition:background-color .14s var(--ds-ease-in-out,cubic-bezier(.4,0,.2,1))}
-.wsc-toggle-row-on .wsc-toggle-pill{background:var(--dsw-alias-state-business-primary,#4d7ef7);border-color:transparent}
-.wsc-toggle-knob{position:absolute;top:1px;left:1px;width:18px;height:18px;border-radius:50%;background:var(--dsw-alias-label-primary,#f5f5f7);transition:transform .14s var(--ds-ease-in-out,cubic-bezier(.4,0,.2,1))}
-.wsc-toggle-row-on .wsc-toggle-knob{transform:translateX(14px)}
-.wsc-toggle-label{flex:1;min-width:0}
-.wsc-footer{border-top:1px solid var(--dsw-alias-border-l2);justify-content:flex-end;align-items:center;gap:8px;padding:12px 0 0;display:flex}
-.wsp-footer-spacer{flex:1}
-.wsc-failed{min-width:0;color:var(--dsw-alias-label-error);flex:1;margin:0;font-size:12px;line-height:1.5}
-.wsc-discard,.wsc-save{appearance:none;font:inherit;cursor:pointer;border:1px solid #0000;border-radius:8px;padding:5px 14px;font-size:13px;line-height:1.5}
-.wsc-discard{border-color:var(--dsw-alias-border-l2);color:var(--dsw-alias-label-secondary);background:0 0}
-.wsc-discard:hover:not(:disabled){background:var(--dsw-alias-interactive-bg-hover)}
-.wsc-save{background:var(--dsw-alias-button-primary-fill);color:var(--dsw-alias-label-primary-inverted);border-color:#0000}
-.wsc-save:hover:not(:disabled){background:var(--dsw-alias-button-primary-hover)}
-.wsc-discard:disabled,.wsc-save:disabled{opacity:.45;cursor:default}
-`
-
-function installStyles(): () => void {
-  const selector = 'style[data-plugin-css="dsh-web-search/card"]'
-  if (document.querySelector(selector) !== null) return () => {}
-  const style = document.createElement('style')
-  style.dataset.plugin = 'dsh-web-search'
-  style.dataset.pluginCss = 'dsh-web-search/card'
-  style.textContent = CSS
-  document.head.appendChild(style)
-  return () => { style.remove() }
-}
-
+/** Services this client half uses. */
 export const inject = ['slots', 'locale', 'settingsScope']
 
+/**
+ * Mount the section.
+ * @param ctx - the plugin's client context.
+ */
 export function apply(ctx: ClientContext): void {
-  ctx.effect(installStyles, 'dsh-web-search: card styles')
-  ctx.effect(() => ctx.locale.register(NS, { en, zh }), 'dsh-web-search: card locale')
-  const controller = new WebSearchCardController(ctx.settingsScope.bind({ namespace: WEB_SEARCH_SETTINGS_NAMESPACE }))
-  ctx.slots.inject('settings.plugin.item', () => ctx.slots.register({
-    name: 'settings.plugin.item',
-    key: WEB_SEARCH_SETTINGS_NAMESPACE,
-    locale: NS,
-    inject: () => controller.inject(),
-  }, WebSearchCard))
+    ctx.effect(installStyles, 'dsh-web-search: section styles')
+    ctx.effect(() => ctx.locale.register(NS, { en, zh }), 'dsh-web-search: section locale')
+    const scope = ctx.settingsScope.bind<unknown>({ namespace: NS })
+    const face = createSectionFace(ctx, scope)
+    ctx.slots.inject('settings.section', () => ctx.slots.register({
+        name: 'settings.section',
+        id: 'web-search',
+        order: 45,
+        label: () => face.t('nav'),
+        locale: NS,
+        inject: () => face,
+    }, WebSearchSection as never))
 }
+
+export type { WebSearchSnapshot }

@@ -25,6 +25,40 @@ Each stage is attempted in order; the first non-empty result wins. Only
 throws `WebError` when every stage fails. Respects the abort signal and
 the request's `maxResults` bound.
 
+## Design rule — the section's layout IS the fallback chain (NON-NEGOTIABLE)
+
+The settings surface is a **section** (`settings.section`, id `web-search`, order
+45), and its structure encodes the provider's semantics: the chain tries backends
+in order, so each row carries its rank and the rows are numbered. Numbering is
+justified here and only here — the content is a sequence.
+
+Two rules the previous card got wrong and this one must keep:
+
+- **A shipped endpoint is read-only.** `BUILTIN_MCP_SERVERS` is the list of
+  addresses we tested; an editable one turns a working free backend into a typo
+  that silently falls through the chain. Only the token is configurable.
+- **An endpoint and its token are one row.** Grouping by *backend* rather than by
+  field type is the whole point: the old layout put `Parallel endpoint`, `Exa
+  endpoint`, `Parallel token`, `Exa token` in one flat list, so neither pair read
+  as a unit.
+
+## Design rule — the browser half never imports the schema (NON-NEGOTIABLE)
+
+`config.ts` imports schemastery. The shared data the browser needs — the shipped
+server table and the entry type — lives in `mcp-servers.ts` so that rendering
+three strings does not pull a validation library into the bundle.
+`tests/bundle.spec.ts` asserts the built bundle contains no `schemastery` and no
+relative `require`, and that it registers a section rather than a plugin card.
+
+## Design rule — a write must not clobber the other sub-section's draft (NON-NEGOTIABLE)
+
+`save()` writes `llm` and `free` in turn, and the settings scope publishes after
+each write — which fires the subscription that rebuilds the draft from the stored
+section. Reloading there discarded the edits staged for the *other* sub-section,
+so saving dropped every added server. The subscription now skips while a write is
+in flight, and a successful save re-reads once afterwards; a refused write keeps
+the draft so it can be corrected. `tests/section-controller.spec.ts` pins it.
+
 ## Design rule — the free backends stay free, and their tokens are optional (NON-NEGOTIABLE)
 
 Both hosted MCP endpoints work anonymously and both accept an API key as a

@@ -127,7 +127,7 @@ describe('the credential references', () => {
         const provider = createSearchProvider(
             () => createResolvedConfig({
                 llm: { enabled: false, baseUrl: undefined, credential: undefined, model: 'deepseek-v4.1-flash', protocol: 'anthropic', timeoutMs: 1000 },
-                free: { ...DEFAULT_CONFIG.free, parallelCredential: 'PARALLEL_KEY', exaUrl: '' },
+                free: { ...DEFAULT_CONFIG.free, parallelCredential: 'PARALLEL_KEY' },
             }),
             {
                 fetchImpl: impl,
@@ -144,7 +144,7 @@ describe('the credential references', () => {
         const resolveParallelApiKey = vi.fn(async () => 'unused')
         const impl = (async () => new Response(parallelBody, { status: 200, headers: { 'content-type': 'application/json' } })) as unknown as typeof fetch
         const provider = createSearchProvider(
-            () => createResolvedConfig({ llm: { enabled: false, baseUrl: undefined, credential: undefined, model: 'deepseek-v4.1-flash', protocol: 'anthropic', timeoutMs: 1000 }, free: { ...DEFAULT_CONFIG.free, exaUrl: '' } }),
+            () => createResolvedConfig({ llm: { enabled: false, baseUrl: undefined, credential: undefined, model: 'deepseek-v4.1-flash', protocol: 'anthropic', timeoutMs: 1000 }, free: { ...DEFAULT_CONFIG.free } }),
             { fetchImpl: impl, resolveGoApiKey: async () => undefined, resolveOpenCodeGoApiKey: async () => undefined, resolveParallelApiKey } as ProviderRuntime,
         )
         await provider.search({ query: 'q' })

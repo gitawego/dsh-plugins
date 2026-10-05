@@ -9,9 +9,7 @@ describe('config', () => {
 
   it('has sensible defaults (free backends enabled, llm off by default)', () => {
     expect(DEFAULT_CONFIG.llm.baseUrl).toBeUndefined()
-    expect(DEFAULT_CONFIG.free.parallelUrl).toContain('search.parallel.ai/mcp')
-    expect(DEFAULT_CONFIG.free.exaUrl).toContain('mcp.exa.ai/mcp')
-    expect(DEFAULT_CONFIG.free.maxResults).toBe(8)
+            expect(DEFAULT_CONFIG.free.maxResults).toBe(8)
     expect(DEFAULT_CONFIG.free.snippetMaxChars).toBe(300)
   })
 
