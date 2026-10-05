@@ -4,9 +4,11 @@
  * `llm.credential` is a DSH credential-ref NAME (never a literal secret).
  */
 import z from '@deepseek-ai/schemastery'
-import { settingsNamespace } from '@deepseek-ai/dsh-settings'
 
-export const WEB_SEARCH_SETTINGS_NAMESPACE = settingsNamespace('web-search-enhanced')
+/** Settings namespace key. Spelled as a plain literal: the seam's
+ *  `SettingsNamespace` brand is applied by `ctx.settings.register`'s generic,
+ *  and `settingsNamespace()` (the old rc.7 helper) no longer exists. */
+export const WEB_SEARCH_SETTINGS_NAMESPACE = 'web-search-enhanced'
 
 export const LLM_PROTOCOLS = ['anthropic', 'openai'] as const
 export type LlmProtocol = (typeof LLM_PROTOCOLS)[number]

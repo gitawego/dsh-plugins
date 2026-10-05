@@ -176,9 +176,11 @@ user's interactive shell, not from this session.
 
 - [LESSONS.md](./LESSONS.md) — session history, debugging deep-dives, host
   facts, tool pitfalls.
-- `~/workspace/dsh-vision` — sibling plugin, the AGENT.md / LESSONS.md
-  convention originates there.
-- DSH API docs: `/data/data/com.termux/files/home/dsh-global/node_modules/@deepseek-ai/<pkg>/README.md`.
+- `../../packages/llm-provider/AGENT.md` — sibling plugin, the reference for
+  the adapter-side conventions (host-package peers, wire-level tests).
+- DSH API docs: `<dsh prefix>/lib/node_modules/@deepseek-ai/<pkg>/README.md`
+  (the installed host is the authority; the published docs site tracks master,
+  which is ahead of the pinned host version on the settings seam).
 
 ## Cross-reference
 

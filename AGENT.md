@@ -54,15 +54,15 @@ that apply across packages.
 A collection of DSH (DeepSeek Harness) plugin packages maintained
 together for version compatibility. Currently:
 
+- `packages/llm-provider` — `@gitawego/dsh-llm-provider` — LLM provider
+  routes (OpenCode Go first), including the gateway's required
+  `x-opencode-session` routing header.
 - `packages/web-search` — `@gitawego/dsh-web-search` — chained-fallback
   `WebSearchProvider` (Anthropic + free MCP backends).
-- `packages/vision` — `@gitawego/dsh-vision` — capability-aware vision
-  + paste extension.
-- `packages/ui-mobile` — DSH mobile UI surface.
 - `packages/lsp` — LSP bridge.
 
 Each package is independently published and installed via `dsh plugin`,
-but they share the same Node version, pnpm version, and `0.1.1-rc.1` DSH pinning.
+but they share the same Node version, pnpm version, and `0.1.5-rc.1` DSH pinning.
 
 ## Non-negotiable rules (apply to every package)
 
@@ -95,13 +95,20 @@ This rule is recorded in each package's `AGENT.md` as
 ### DSH version pinning
 
 Every DSH dependency must be pinned to the **exact** host version (currently
-`0.1.1-rc.1`, matching the host install at
-`dsh-global/node_modules/@deepseek-ai/*`). Caret ranges are forbidden for DSH
+`0.1.5-rc.1`, matching the host install at
+`<dsh prefix>/lib/node_modules/@deepseek-ai/dsh/node_modules/@deepseek-ai/*`). Caret ranges are forbidden for DSH
 packages: semver pre-release tags don't cross rc boundaries, so `^0.1.1-rc.1`
 silently resolves to a newer host level (`rc.2`, ...) and drifts from the
-running install. Only `@deepseek-ai/cordis` (`^4.0.1`) and
-`@deepseek-ai/schemastery` (`^3.18.1`) keep ranged pins — they are stable
-across dsh rc levels.
+running install. Only `@deepseek-ai/cordis` and
+`@deepseek-ai/schemastery` keep ranged pins — they are stable across dsh rc
+levels — and those ranges are kept at the **newest published release**
+(currently `^4.0.4` / `^3.18.4`).
+
+**Never bump a `@deepseek-ai/dsh-*` pin to npm's newest published version.**
+The newest published DSH line (`0.2.x` alpha/rc) is ahead of the installed
+host; pinning to it makes the plugins load against a host they were never
+typed against. "Upgrade dependencies" always means: non-DSH deps to latest,
+cordis/schemastery to latest, DSH to **the host's exact version**.
 
 After every host upgrade, run `pnpm install` in the profile directory
 (`~/.dsh/profiles/web`) WITHOUT `--offline`/frozen lockfile, so stale pinned
@@ -119,16 +126,50 @@ The DSH dependency set:
 - `@deepseek-ai/dsh-credentials`
 - `@deepseek-ai/dsh-settings`
 - `@deepseek-ai/dsh-web`
+- `@deepseek-ai/dsh-llm` (server side; adapter seam)
+- `@deepseek-ai/dsh-attachment` (server side; request images)
+- `@deepseek-ai/dsh-util-values` (server side; `JsonValue`)
+- `@deepseek-ai/dsh-llm-pi-ai` (server side; pi-ai catalog adapter — a
+  reference implementation, never a runtime dependency of our packages)
 - `@deepseek-ai/dsh-client-connection` (client side)
+- `@deepseek-ai/dsh-client-store` (client side; `SnapshotStore`)
 - `@deepseek-ai/dsh-client-locale` (client side)
-- `@deepseek-ai/dsh-client-runtime` (client side, includes `SettingsScope`)
-- `@deepseek-ai/dsh-client-ui-settings` (client side, includes `settingsScope` service)
-- `@deepseek-ai/dsh-client-ui-slots` (client side, includes slot types)
-- `@deepseek-ai/cordis` (peer, `^4.0.1`)
-- `@deepseek-ai/schemastery` (peer, `^3.18.1`)
+- `@deepseek-ai/dsh-client-ui-renderer` (client side; provides `ctx.slots`)
+- `@deepseek-ai/dsh-client-ui-settings` (client side, includes `settingsScope` service
+  and the `SettingsScope` type)
+- `@deepseek-ai/dsh-client-ui-slots` (client side, types only — the slot map)
+- `@deepseek-ai/dsh-client-ui-chat` / `-conversation` / `-tool` (client side, tool cards)
+- `@deepseek-ai/cordis` (peer, `^4.0.4`)
+- `@deepseek-ai/schemastery` (peer, `^3.18.4`)
 
 A `pnpm install` against a host at a different rc level will fail or
 silently use the wrong type contracts.
+
+### Non-DSH dependency policy
+
+The toolchain is kept at latest: `typescript` (7.x), `vitest` (5.x),
+`@types/node` (26.x). Two deliberate exceptions, both to match the running
+host:
+
+- **React stays on 18.x** (`react@^18.3.1`, `@types/react@~18.3.31`,
+  `@types/react-dom@~18.3.7`). The 0.1.5 client runtime is built against
+  React 18 (`dsh-client-ui-renderer` devDepends on `react ^18.2.0`), and the
+  browser bundle resolves `react` from the host page. React 19 typings would
+  typecheck against a runtime the host does not have.
+- **`@earendil-works/pi-ai` is pinned to the host's copy** (`0.85.1`, the
+  version `dsh-llm-pi-ai` depends on). A different minor changes the
+  `Model`/`Provider`/`AssistantMessageEvent` contracts the adapter is
+  written against.
+
+### TypeScript 7 and the client tsconfig
+
+TS 7 **removed** `moduleResolution: node` (`node10`). The client projects
+emit CommonJS on purpose (the browser module loader hands the bundle a
+`require`), so they cannot move to `nodenext`/`bundler`. Omit
+`moduleResolution` entirely in `tsconfig.client.json` — TS 7 then resolves
+the `@deepseek-ai/dsh-client-*/client` subpaths through the `paths` map while
+still emitting the CommonJS bundle the loader expects. `tsconfig.json`
+(server) stays on `module: NodeNext` / `moduleResolution: NodeNext`.
 
 ### Bundle install contract
 
@@ -195,6 +236,12 @@ dsh-plugins/
 ├── package.json            # pnpm workspace root
 ├── pnpm-workspace.yaml
 ├── packages/
+│   ├── llm-provider/
+│   │   ├── AGENT.md       # architecture + design rules
+│   │   ├── src/
+│   │   ├── tests/
+│   │   ├── cordis.patch.yml
+│   │   └── package.json
 │   ├── web-search/
 │   │   ├── AGENT.md       # architecture + design rules
 │   │   ├── LESSONS.md      # session history + debugging deep-dives
@@ -202,11 +249,6 @@ dsh-plugins/
 │   │   ├── tests/
 │   │   ├── cordis.patch.yml
 │   │   └── package.json
-│   ├── vision/
-│   │   ├── AGENT.md
-│   │   ├── LESSONS.md
-│   │   └── ...
-│   ├── ui-mobile/
 │   └── lsp/
 └── node_modules/           # workspace-level deps
 ```
@@ -214,7 +256,7 @@ dsh-plugins/
 ## Resume / dev workflow
 
 1. `cd dsh-plugins && pnpm install` (resolves workspace deps)
-2. For each package you want to touch: `cd packages/<name> && pnpm typecheck && pnpm test && pnpm build` (22/22 tests green, typecheck clean)
+2. For each package you want to touch: `cd packages/<name> && pnpm typecheck && pnpm test && pnpm build` (2026-10: 166 tests green across web-search/lsp/llm-provider, typecheck clean)
 3. `cd ~/.dsh/profiles/web && rm -rf node_modules/<your-package> && pnpm install --offline` (refresh the worker)
 4. Open a new browser tab; the rebuilt bundle is picked up by the
    `__DSH_BOOT__` script.
@@ -224,8 +266,8 @@ dsh-plugins/
 
 Per-package AGENT.md / LESSONS.md:
 
+- `packages/llm-provider/AGENT.md` — provider-route design, OpenCode Go
+  transport facts, `x-opencode-session` contract
 - `packages/web-search/AGENT.md` — chained-fallback search provider design
 - `packages/web-search/LESSONS.md` — session history, the "click does
   nothing" root cause, DSH Settings Card pitfalls, no-restart policy
-- `packages/vision/AGENT.md` — vision / paste extension design
-- `packages/vision/LESSONS.md` — session history + RESCAN context

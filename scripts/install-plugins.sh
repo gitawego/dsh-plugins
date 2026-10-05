@@ -6,7 +6,7 @@
 #
 # Defaults to $DSH_HOME/profiles/web (or ~/.dsh/profiles/web).
 # PKG filters to a single package (name or directory under packages/), e.g.
-#   bash scripts/install-plugins.sh "" ui-mobile
+#   bash scripts/install-plugins.sh "" llm-provider
 #   bash scripts/install-plugins.sh ~/.dsh/profiles/web lsp
 # The script is idempotent: running it twice changes nothing unless a package
 # was added or removed from packages/.
