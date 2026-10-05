@@ -3,7 +3,7 @@
     "target": "ES2022",
     "module": "commonjs",
     "jsx": "react-jsx",
-    "rootDir": "src/client",
+    "rootDir": "src",
     "outDir": ".client-build",
     "declaration": true,
     "declarationDir": "lib/types/client",

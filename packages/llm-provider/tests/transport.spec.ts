@@ -43,7 +43,7 @@ function fakeCatalog(models: readonly Model<Api>[]) {
 
 /** A profile set with the shipped defaults for every served route. */
 function profiles(over: Partial<ProviderSettings[string]> = {}): ProviderSettings {
-    return { 'opencode-go': { ...defaultProfile(OPENCODE_GO), ...over } }
+    return { [OPENCODE_GO.id]: { ...defaultProfile(OPENCODE_GO), ...over } }
 }
 
 describe('withAttribution', () => {
@@ -64,21 +64,21 @@ describe('createGatewayTransport', () => {
     it('advertises the catalog in order', () => {
         const { factory } = fakeCatalog([model('a'), model('b')])
         const transport = createGatewayTransport(GATEWAYS, profiles(), { 'opencode-go': factory })
-        expect(transport.listModels('opencode-go').map((entry) => entry.id)).toEqual(['a', 'b'])
-        expect(transport.getModel('opencode-go', 'b')?.id).toBe('b')
+        expect(transport.listModels(OPENCODE_GO.id).map((entry) => entry.id)).toEqual(['a', 'b'])
+        expect(transport.getModel(OPENCODE_GO.id, 'b')?.id).toBe('b')
     })
 
     it('restricts the catalog to an allowlist when the profile sets one', () => {
         const { factory } = fakeCatalog([model('a'), model('b')])
         const transport = createGatewayTransport(GATEWAYS, profiles({ models: ['b'] }), { 'opencode-go': factory })
-        expect(transport.listModels('opencode-go').map((entry) => entry.id)).toEqual(['b'])
-        expect(transport.getModel('opencode-go', 'a')).toBeUndefined()
+        expect(transport.listModels(OPENCODE_GO.id).map((entry) => entry.id)).toEqual(['b'])
+        expect(transport.getModel(OPENCODE_GO.id, 'a')).toBeUndefined()
     })
 
     it('stamps the session header and attribution on every dispatch', () => {
         const { factory, calls } = fakeCatalog([model('a')])
         const transport = createGatewayTransport(GATEWAYS, profiles(), { 'opencode-go': factory })
-        transport.stream('opencode-go', 'a', { messages: [] }, { sessionId: 'sess-7', apiKey: 'k' })
+        transport.stream(OPENCODE_GO.id, 'a', { messages: [] }, { sessionId: 'sess-7', apiKey: 'k' })
         const headers = calls[0]?.options?.['headers'] as Record<string, string> | undefined
         expect(headers?.[OPENCODE_SESSION_HEADER]).toBe('sess-7')
         expect(headers?.['user-agent']).toBeTruthy()
@@ -88,7 +88,7 @@ describe('createGatewayTransport', () => {
     it('sends no session header when the request has no session identity', () => {
         const { factory, calls } = fakeCatalog([model('a')])
         const transport = createGatewayTransport(GATEWAYS, profiles(), { 'opencode-go': factory })
-        transport.stream('opencode-go', 'a', { messages: [] }, {})
+        transport.stream(OPENCODE_GO.id, 'a', { messages: [] }, {})
         const headers = calls[0]?.options?.['headers'] as Record<string, string> | undefined
         expect(headers?.[OPENCODE_SESSION_HEADER]).toBeUndefined()
         expect(headers?.['user-agent']).toBeTruthy()
@@ -97,8 +97,8 @@ describe('createGatewayTransport', () => {
     it('routes models under the route key pi-ai dispatches on', () => {
         const { factory, calls } = fakeCatalog([model('a')])
         const transport = createGatewayTransport(GATEWAYS, profiles(), { 'opencode-go': factory })
-        transport.stream('opencode-go', 'a', { messages: [] }, {})
-        expect(calls[0]?.model.provider).toBe('opencode-go')
+        transport.stream(OPENCODE_GO.id, 'a', { messages: [] }, {})
+        expect(calls[0]?.model.provider).toBe(OPENCODE_GO.id)
     })
 
     it('applies an endpoint override to the models it dispatches', () => {
@@ -106,7 +106,7 @@ describe('createGatewayTransport', () => {
         const transport = createGatewayTransport(GATEWAYS, profiles({ baseURL: 'https://proxy.example/v1' }), {
             'opencode-go': factory,
         })
-        expect(transport.getModel('opencode-go', 'a')?.baseUrl).toBe('https://proxy.example/v1')
+        expect(transport.getModel(OPENCODE_GO.id, 'a')?.baseUrl).toBe('https://proxy.example/v1')
     })
 
     it('rebuilds a route only when its profile actually moved', () => {
@@ -121,13 +121,13 @@ describe('createGatewayTransport', () => {
 
     it('serves nothing for a route this build has no catalog for', () => {
         const transport = createGatewayTransport(GATEWAYS, profiles(), {})
-        expect(transport.listModels('opencode-go')).toEqual([])
-        expect(() => transport.stream('opencode-go', 'a', { messages: [] }, {})).toThrow(/does not serve route/)
+        expect(transport.listModels(OPENCODE_GO.id)).toEqual([])
+        expect(() => transport.stream(OPENCODE_GO.id, 'a', { messages: [] }, {})).toThrow(/does not serve route/)
     })
 
     it('refuses a model the route does not advertise', () => {
         const { factory } = fakeCatalog([model('a')])
         const transport = createGatewayTransport(GATEWAYS, profiles(), { 'opencode-go': factory })
-        expect(() => transport.stream('opencode-go', 'zzz', { messages: [] }, {})).toThrow(/does not serve model/)
+        expect(() => transport.stream(OPENCODE_GO.id, 'zzz', { messages: [] }, {})).toThrow(/does not serve model/)
     })
 })

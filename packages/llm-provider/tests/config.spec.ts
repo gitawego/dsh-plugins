@@ -13,10 +13,13 @@ import { GATEWAYS, OPENCODE_GO, gatewayById } from '../src/gateways.ts'
 describe('gateway definitions', () => {
     it('ships OpenCode Go, the gateway whose missing header this plugin fixes', () => {
         expect(GATEWAYS[0]).toBe(OPENCODE_GO)
-        expect(OPENCODE_GO.id).toBe('opencode-go')
+        expect(OPENCODE_GO.id).toBe('opencode-go-session')
+        expect(OPENCODE_GO.catalogProvider).toBe('opencode-go')
         expect(OPENCODE_GO.sessionRouting).toBe(true)
         expect(OPENCODE_GO.apiKeyEnv).toBe('OPENCODE_API_KEY')
-        expect(gatewayById('opencode-go')).toBe(OPENCODE_GO)
+        expect(gatewayById('opencode-go-session')).toBe(OPENCODE_GO)
+        // The pi-ai catalog id is NOT a route this build serves.
+        expect(gatewayById('opencode-go')).toBeUndefined()
     })
 
     it('answers undefined for a route this build does not serve', () => {
@@ -78,22 +81,22 @@ describe('resolveProfile', () => {
 
 describe('resolveProfiles', () => {
     it('materializes one profile per served route', () => {
-        const profiles = resolveProfiles({ 'opencode-go': { apiKeyEnv: 'MY_KEY' } })
+        const profiles = resolveProfiles({ [OPENCODE_GO.id]: { apiKeyEnv: 'MY_KEY' } })
         expect(Object.keys(profiles)).toEqual(GATEWAYS.map((gateway) => gateway.id))
-        expect(profiles['opencode-go']?.apiKeyEnv).toBe('MY_KEY')
+        expect(profiles[OPENCODE_GO.id]?.apiKeyEnv).toBe('MY_KEY')
     })
 })
 
 describe('Config schema', () => {
     it('accepts an empty section and resolves every served route through its defaults', () => {
         const parsed = Config({}) as Record<string, unknown>
-        expect(resolveProfiles(parsed)['opencode-go']).toEqual(defaultProfile(OPENCODE_GO))
+        expect(resolveProfiles(parsed)[OPENCODE_GO.id]).toEqual(defaultProfile(OPENCODE_GO))
     })
 
     it('keeps a partial section resolvable', () => {
         // A stored section is partial by construction (the schema supplies the
         // rest), so the cast reflects how the seam hands it to the plugin.
-        const parsed = Config({ 'opencode-go': { reasoning: 'low' } } as never)
-        expect(resolveProfiles(parsed)['opencode-go']?.reasoning).toBe('low')
+        const parsed = Config({ [OPENCODE_GO.id]: { reasoning: 'low' } } as never)
+        expect(resolveProfiles(parsed)[OPENCODE_GO.id]?.reasoning).toBe('low')
     })
 })
