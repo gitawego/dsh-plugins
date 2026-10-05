@@ -21,6 +21,8 @@ import { LlmRuntime, type LlmConfigurableProvider } from '@deepseek-ai/dsh-llm'
 import { describe, expect, it, vi } from 'vitest'
 import { declareRoutes, describeSkips, type DirectoryHost } from '../src/directory.ts'
 import { GATEWAYS, OPENCODE_GO, gatewayById } from '../src/gateways.ts'
+import { mountSettings } from '../src/index.ts'
+import { resolveProfiles, type ProviderSettings } from '../src/config.ts'
 import { fetchModelsDevCatalog } from '../src/models-dev.ts'
 import { CATALOG_PROVIDERS } from '../src/catalog.ts'
 import { protocolFor } from '../src/gateways.ts'
@@ -125,6 +127,44 @@ describe('declareRoutes', () => {
     it('says nothing when nothing was skipped', () => {
         const { host: llm } = host()
         expect(describeSkips(declareRoutes(llm, GATEWAYS, NS))).toEqual([])
+    })
+})
+
+describe('settings layering', () => {
+    it('hands the deployment configuration to the namespace as its base layer', () => {
+        // The base layer is what makes a composition-supplied profile visible to
+        // the Models page (its dot) while staying out of the user layer (so the
+        // page offers no Delete for something the user did not add).
+        const calls: { ns: string; schema: unknown; options: unknown }[] = []
+        const settings = {
+            register: (ns: string, schema: unknown, options: unknown) => {
+                calls.push({ ns, schema, options })
+                return { get: () => ({}), watch: () => () => {}, update: async () => {}, replace: async () => {} }
+            },
+        }
+        const config = { [OPENCODE_GO.id]: { apiKeyEnv: 'MY_REFERENCE' } } as unknown as ProviderSettings
+        mountSettings(settings as never, config)
+        expect(calls).toHaveLength(1)
+        expect(calls[0]?.ns).toBe(NS)
+        expect(calls[0]?.options).toMatchObject({ applies: 'live', base: config })
+    })
+
+    it('defaults to an empty base, so a deployment that configures nothing still serves the route', () => {
+        const calls: unknown[] = []
+        const settings = { register: (_ns: string, _schema: unknown, options: unknown) => {
+            calls.push(options)
+            return { get: () => ({}), watch: () => () => {}, update: async () => {}, replace: async () => {} }
+        } }
+        mountSettings(settings as never, {})
+        expect(calls[0]).toMatchObject({ base: {} })
+    })
+
+    it('resolves a base-supplied reference through the profile resolver', () => {
+        // The plugin reads the *resolved* value, so a base-supplied profile is
+        // indistinguishable from a user-supplied one at request time.
+        const profiles = resolveProfiles({ [OPENCODE_GO.id]: { apiKeyEnv: 'BASE_REFERENCE' } })
+        expect(profiles[OPENCODE_GO.id]?.apiKeyEnv).toBe('BASE_REFERENCE')
+        expect(resolveProfiles({})[OPENCODE_GO.id]?.apiKeyEnv).toBe('OPENCODE_API_KEY')
     })
 })
 

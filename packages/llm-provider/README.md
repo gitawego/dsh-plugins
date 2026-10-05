@@ -158,6 +158,38 @@ llm-provider:
 Every field is optional and clamped: a malformed value degrades to the shipped
 default rather than taking the route offline.
 
+### Three layers, and why the Models page behaves the way it does
+
+A field resolves as **schema default → composition base → user document**. The
+plugin's own configuration is the base layer, so a deployment can carry a profile
+in its profile patch without claiming a user choice:
+
+```yaml
+# ~/.dsh/profiles/web/cordis.patch.yml
+- id: llm-provider
+  name: '@gitawego/dsh-llm-provider'
+  config:
+    opencode-go-session:
+      apiKeyEnv: OPENCODE_GO_CUSTOM_API_KEY
+```
+
+That placement matters on the **Models** page:
+
+- its status dot asks whether the credential named by the *resolved* profile —
+  or, when the profile names none, the **derived** name
+  `<ROUTE_ID_UPPERCASED>_API_KEY` — is stored. For this route the derived name is
+  `OPENCODE_GO_SESSION_API_KEY`. So an empty `llm-provider:` section plus a key
+  stored under some other name reads as **red**, even though the plugin works;
+- its **Delete** button appears only for a profile that exists in the *user*
+  document and nowhere else. A profile supplied by the base layer is composition,
+  not a user choice, so Delete is correctly absent — and a route a plugin
+  registers at boot cannot be deleted from that page at all: deleting the profile
+  removes your settings override, not the provider.
+
+Either name a reference in a layer the page can resolve (`settings.yaml`, or the
+base above), or store a key under the derived name. The card's **API key** field
+always stores under whatever reference the resolved profile names.
+
 ### Where the model list comes from
 
 Three sources, merged in this order of authority:

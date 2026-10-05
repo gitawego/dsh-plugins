@@ -102,8 +102,41 @@ export const CATALOG_TTL_MS = 6 * 60 * 60 * 1000
  * @returns a disposer releasing the settings watcher, the adapter routes, and
  *   the configurable-provider entries.
  */
-export function apply(ctx: Context): () => void {
-    const settings = ctx.settings.register(LLM_PROVIDER_SETTINGS_NAMESPACE, Config, { applies: 'live' })
+/**
+ * Register the settings namespace, with the plugin's own configuration as its
+ * composition base.
+ *
+ * The namespace resolves in three layers — schema defaults, then this base, then
+ * the user document (`settings.yaml`, or the card's writes). Putting a
+ * deployment's profile in the base is what the Models page calls *not yours to
+ * delete*: it offers Delete only for a profile that exists in the user layer
+ * and nowhere else, so a reference supplied by composition does not present as a
+ * removable user choice. It also means the page can see the profile's
+ * `apiKeyEnv` — and therefore report the credential as configured — without
+ * anyone having to write a settings section first.
+ *
+ * Exported as a function over an explicit settings face so the wiring (rather
+ * than the whole plugin) can be tested.
+ * @param settings - the settings service.
+ * @param config - the plugin's configuration, used as the base layer.
+ * @returns the namespace's owner scope.
+ */
+export function mountSettings(
+    settings: Pick<Context['settings'], 'register'>,
+    config: ProviderSettings,
+): ReturnType<Context['settings']['register']> {
+    return settings.register(LLM_PROVIDER_SETTINGS_NAMESPACE, Config, { applies: 'live', base: config })
+}
+
+/**
+ * Mount the provider routes.
+ * @param ctx - the plugin's context.
+ * @param config - deployment configuration, applied as the settings base layer.
+ * @returns a disposer releasing the settings watcher, the adapter routes, and
+ *   the configurable-provider entries.
+ */
+export function apply(ctx: Context, config: ProviderSettings = {}): () => void {
+    const settings = mountSettings(ctx.settings, config)
 
     let profiles: ProviderSettings = resolveProfiles(settings.get())
     const transport = createGatewayTransport(GATEWAYS, profiles)
