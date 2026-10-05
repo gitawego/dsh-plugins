@@ -208,6 +208,26 @@ The card also cannot read thinking levels: `LlmDiscoveredModel` carries id, name
 contextWindow, and maxTokens only, and that contract is the host's. Thinking
 levels live in the command and are asserted by `tests/surface.spec.ts`.
 
+## Design rule — the key is stored through the credentials domain, never in settings (NON-NEGOTIABLE)
+
+The card's **API key** field writes the literal with
+`remote.credentials.set(apiKeyEnv, value)`; the profile keeps only the reference
+name. Two reasons, both load-bearing:
+
+- a settings document is portable — copied between machines, pasted into issues
+  — so a literal key in it is a leak waiting to happen, and the host's own
+  provider forms route keys through the credentials domain for that reason;
+- the reference resolves through the seam's precedence (launch environment →
+  `$DSH_HOME/.credentials.yaml` → project `.env` → harness-home `.env`), so the
+  same profile works for someone who exports a variable and someone who saves a
+  key, without the plugin knowing which.
+
+The field is write-only by construction: a stored secret never rides a response,
+so it cannot be seeded, a blank draft writes nothing (blank means "keep the
+stored key", never "clear it"), and the control reports only `configured`. Do not
+"improve" this into a field that reads the key back — a response that carries a
+secret is the failure this design removes.
+
 ## Design rule — every live read degrades, never blanks
 
 Boot, refresh, and the discovery handler all reach the network. A failure must

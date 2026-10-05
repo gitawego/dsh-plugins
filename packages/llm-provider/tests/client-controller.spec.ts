@@ -67,11 +67,34 @@ const models = [
     { id: 'glm-5.3-flash', name: 'GLM-5.3-Flash', contextWindow: 1_000_000, maxTokens: 131_072 },
 ]
 
-function card(over: { sections?: ProviderSections; discover?: () => Promise<DiscoveredModel[]>; writable?: boolean } = {}) {
+function card(
+    over: {
+        sections?: ProviderSections
+        discover?: () => Promise<DiscoveredModel[]>
+        writable?: boolean
+        configured?: boolean
+        describeThrows?: boolean
+        writeFails?: string
+    } = {},
+) {
     const fake = fakeScope(over.sections ?? { 'opencode-go': { apiKeyEnv: 'KEY', sessionRouting: true } }, { writable: over.writable })
     const discover = vi.fn(over.discover ?? (async () => models))
-    const controller = createProviderCard({ scope: fake.scope, discover, route: 'opencode-go', now: () => 5_000 })
-    return { controller, fake, discover }
+    const describeCredential = vi.fn(async () => {
+        if (over.describeThrows === true) throw new Error('store unreachable')
+        return over.configured ?? false
+    })
+    const writeCredential = vi.fn(async () => {
+        if (over.writeFails !== undefined) throw new Error(over.writeFails)
+    })
+    const controller = createProviderCard({
+        scope: fake.scope,
+        discover,
+        describeCredential,
+        writeCredential,
+        route: 'opencode-go',
+        now: () => 5_000,
+    })
+    return { controller, fake, discover, describeCredential, writeCredential }
 }
 
 /**
@@ -101,7 +124,13 @@ describe('snapshot identity', () => {
 
     it('does not depend on the scope returning a stable reference', async () => {
         const fake = fakeScope({}, { unstableSnapshot: true })
-        const controller = createProviderCard({ scope: fake.scope, discover: async () => models, route: 'opencode-go' })
+        const controller = createProviderCard({
+            scope: fake.scope,
+            discover: async () => models,
+            describeCredential: async () => false,
+            writeCredential: async () => {},
+            route: 'opencode-go',
+        })
         const first = controller.getSnapshot()
         expect(controller.getSnapshot()).toBe(first)
         controller.edit('apiKeyEnv', 'NEXT')
@@ -153,7 +182,13 @@ describe('card identity', () => {
 
     it('stays writable while the scope is still loading, because a false flag means unread', () => {
         const fake = fakeScope({}, { status: 'loading', writable: false })
-        const controller = createProviderCard({ scope: fake.scope, discover: async () => models, route: 'opencode-go' })
+        const controller = createProviderCard({
+            scope: fake.scope,
+            discover: async () => models,
+            describeCredential: async () => false,
+            writeCredential: async () => {},
+            route: 'opencode-go',
+        })
         expect(controller.getSnapshot().writable).toBe(true)
     })
 
@@ -271,6 +306,78 @@ describe('advertising models', () => {
         await controller.togglePin('retired-model')
         expect(fake.ops[0]).toEqual([{ op: 'set', path: ['opencode-go', 'models'], value: [] }])
         expect(controller.getSnapshot().models.some((model) => model.id === 'retired-model')).toBe(false)
+    })
+})
+
+describe('storing the API key', () => {
+    it('asks the credential store about the profile reference and reports it', async () => {
+        const { controller, describeCredential } = card({ configured: true })
+        await controller.refreshApiKey()
+        expect(describeCredential).toHaveBeenCalledWith('KEY')
+        expect(controller.getSnapshot().apiKey).toMatchObject({ reference: 'KEY', configured: true, draft: '' })
+    })
+
+    it('stages a key without storing it, and never puts it in the settings document', () => {
+        const { controller, fake, writeCredential } = card()
+        controller.editApiKey('sk-secret')
+        expect(fake.ops).toHaveLength(0)
+        expect(writeCredential).not.toHaveBeenCalled()
+        expect(controller.getSnapshot().apiKey).toMatchObject({ draft: 'sk-secret', saved: false })
+    })
+
+    it('stores the key under the profile reference through the credential domain', async () => {
+        const { controller, writeCredential, describeCredential } = card()
+        // Construction probes the reference once; what matters is that storing
+        // a key needs no probe, because the write is the answer.
+        describeCredential.mockClear()
+        controller.editApiKey('  sk-secret  ')
+        await controller.saveApiKey()
+        expect(writeCredential).toHaveBeenCalledWith('KEY', 'sk-secret')
+        expect(describeCredential).not.toHaveBeenCalled()
+        expect(controller.getSnapshot().apiKey).toMatchObject({ configured: true, saved: true, draft: '', error: undefined })
+    })
+
+    it('writes nothing for a blank draft, because blank means "leave it alone"', async () => {
+        const { controller, writeCredential } = card()
+        await controller.saveApiKey()
+        expect(writeCredential).not.toHaveBeenCalled()
+    })
+
+    it('refuses to store a key with no reference to store it under', async () => {
+        const { controller, writeCredential } = card({ sections: { 'opencode-go': {} } })
+        controller.editApiKey('sk-secret')
+        await controller.saveApiKey()
+        expect(writeCredential).not.toHaveBeenCalled()
+        expect(controller.getSnapshot().apiKey.error).toMatch(/Name a credential reference/)
+    })
+
+    it('reports a refused write and keeps the draft so it can be retried', async () => {
+        const { controller } = card({ writeFails: 'credentials-rejected' })
+        controller.editApiKey('sk-secret')
+        await controller.saveApiKey()
+        expect(controller.getSnapshot().apiKey).toMatchObject({ error: 'credentials-rejected', draft: 'sk-secret', saved: false })
+    })
+
+    it('stays quiet when the credential store cannot be reached', async () => {
+        const { controller } = card({ describeThrows: true })
+        await controller.refreshApiKey()
+        expect(controller.getSnapshot().apiKey.configured).toBeUndefined()
+        expect(controller.getSnapshot().apiKey.error).toBeUndefined()
+    })
+
+    it('re-reads the store when the reference name is edited', async () => {
+        const { controller, describeCredential } = card()
+        controller.edit('apiKeyEnv', 'ANOTHER_KEY')
+        await controller.refreshApiKey()
+        expect(describeCredential).toHaveBeenCalledWith('ANOTHER_KEY')
+    })
+
+    it('clears a previous success as soon as new text is typed', async () => {
+        const { controller } = card()
+        controller.editApiKey('one')
+        await controller.saveApiKey()
+        controller.editApiKey('two')
+        expect(controller.getSnapshot().apiKey).toMatchObject({ saved: false, draft: 'two' })
     })
 })
 

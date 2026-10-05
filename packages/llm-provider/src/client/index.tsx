@@ -28,6 +28,7 @@ import { useEffect, useRef, useState, useSyncExternalStore } from 'react'
 import type { Context as ClientContext } from '@deepseek-ai/cordis'
 import type { SettingsScope } from '@deepseek-ai/dsh-client-ui-settings/client'
 import type {} from '@deepseek-ai/dsh-api-remotes/client'
+import './remote-types.ts'
 import type {} from '@deepseek-ai/dsh-client-ui-renderer/client'
 import type {} from '@deepseek-ai/dsh-client-locale/client'
 import type { InjectFace, PropsRuntime, TranslateNS } from '@deepseek-ai/dsh-client-ui-slots'
@@ -83,6 +84,8 @@ interface OpenCodeGoCardFace {
     edit: (field: FieldName, text: string) => void
     discard: () => void
     save: () => void
+    editApiKey: (text: string) => void
+    saveApiKey: () => void
 }
 
 const CSS = `
@@ -125,6 +128,9 @@ const CSS = `
 .lp-field input,.lp-field select{width:100%;padding:6px 10px;border:1px solid var(--dsw-alias-border-l2);border-radius:8px;background:var(--dsw-alias-bg-layer-2);color:var(--dsw-alias-label-primary);font-size:13px}
 .lp-field input[aria-invalid="true"]{border-color:var(--dsw-alias-label-error)}
 .lp-field small{font-size:11px;color:var(--dsw-alias-label-tertiary)}
+.lp-keyrow{display:flex;gap:8px}
+.lp-keyrow input{flex:1}
+.lp-keyerror{color:var(--dsw-alias-label-error)!important}
 .lp-foot{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;border-top:1px solid var(--dsw-alias-border-l2);padding-top:12px}
 .lp-foot p{margin:0;font-size:11px;color:var(--dsw-alias-label-tertiary)}
 .lp-actions{display:flex;gap:8px}
@@ -211,6 +217,49 @@ function Select(props: {
                 ))}
             </select>
             {props.hint !== undefined ? <small>{props.hint}</small> : null}
+        </div>
+    )
+}
+
+/**
+ * The API key control.
+ *
+ * A stored key is a secret the browser never receives, so this field cannot be
+ * seeded: it starts blank, a blank draft writes nothing, and the only facts it
+ * shows are whether a key is configured and whether the last write landed.
+ */
+function ApiKeyField(props: {
+    t: Translate
+    state: CardSnapshot['apiKey']
+    disabled: boolean
+    onEdit: (text: string) => void
+    onSave: () => void
+}): JSX.Element {
+    const { t, state } = props
+    const status = state.configured === undefined ? t('apiKeyUnknown') : state.configured ? t('apiKeyStored') : t('apiKeyMissing')
+    const canSave = !props.disabled && !state.saving && state.draft.trim().length > 0 && state.reference.length > 0
+    return (
+        <div className="lp-field">
+            <label htmlFor="lp-api-key">{t('apiKey')}</label>
+            <div className="lp-keyrow">
+                <input
+                    id="lp-api-key"
+                    type="password"
+                    autoComplete="off"
+                    spellCheck={false}
+                    value={state.draft}
+                    disabled={props.disabled || state.saving}
+                    placeholder={state.configured === true ? '••••••••' : ''}
+                    onChange={(event) => { props.onEdit(event.target.value) }}
+                />
+                <button type="button" className="lp-btn" disabled={!canSave} onClick={props.onSave}>
+                    {state.saving ? t('apiKeySaving') : t('apiKeySave')}
+                </button>
+            </div>
+            <small className={state.error !== undefined ? 'lp-keyerror' : undefined}>
+                {state.error ?? (state.saved ? `${t('apiKeyStoredNow')} ${status}` : status)}
+            </small>
+            <small>{t('apiKeyHint')}</small>
         </div>
     )
 }
@@ -365,6 +414,13 @@ export function OpenCodeGoCard(props: OpenCodeGoCardProps): JSX.Element {
             <details className="lp-cfg">
                 <summary>{t('configuration')}</summary>
                 <div className="lp-fields">
+                    <ApiKeyField
+                        t={t}
+                        state={snapshot.apiKey}
+                        disabled={!snapshot.writable}
+                        onEdit={props.editApiKey}
+                        onSave={props.saveApiKey}
+                    />
                     <Field
                         id="lp-credential"
                         label={t('credential')}
@@ -459,9 +515,24 @@ export function OpenCodeGoCard(props: OpenCodeGoCardProps): JSX.Element {
 
 /** Bring the card's face to the component, keyed by the settings namespace. */
 export function createFace(ctx: ClientContext, scope: SettingsScope<ProviderSections>): OpenCodeGoCardFace {
+    /** The credentials domain, resolved lazily for the same reason `remote` is. */
+    const credentials = () => ctx.get('remote')?.credentials
     const controller: ProviderCard = createProviderCard({
         scope,
         route: ROUTE,
+        describeCredential: async (reference) => {
+            const domain = credentials()
+            if (domain === undefined) throw new Error('the credentials domain is not available in this client')
+            const response = await domain.describe([reference])
+            if (!response.ok) throw new Error(response.error.message)
+            return response.value[reference]?.configured === true
+        },
+        writeCredential: async (reference, value) => {
+            const domain = credentials()
+            if (domain === undefined) throw new Error('the credentials domain is not available in this client')
+            const response = await domain.set(reference, value)
+            if (!response.ok) throw new Error(response.error.message)
+        },
         discover: async (route) => {
             const llm = ctx.get('remote')?.llm
             if (llm === undefined) throw new Error('the Remote carrier is not available in this client')
@@ -483,6 +554,8 @@ export function createFace(ctx: ClientContext, scope: SettingsScope<ProviderSect
         edit: (field, text) => { controller.edit(field, text) },
         discard: () => { controller.discard() },
         save: () => { void controller.save() },
+        editApiKey: (text) => { controller.editApiKey(text) },
+        saveApiKey: () => { void controller.saveApiKey() },
     }
 }
 

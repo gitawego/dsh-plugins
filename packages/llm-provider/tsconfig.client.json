@@ -61,6 +61,9 @@
       ],
       "@deepseek-ai/dsh-client-ui-slots": [
         "./node_modules/@deepseek-ai/dsh-client-ui-slots/lib/types/index.d.ts"
+      ],
+      "@deepseek-ai/dsh-credentials/types": [
+        "./node_modules/@deepseek-ai/dsh-credentials/lib/types/types.d.ts"
       ]
     },
     "allowImportingTsExtensions": true,
