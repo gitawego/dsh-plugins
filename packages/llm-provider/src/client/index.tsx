@@ -639,20 +639,37 @@ export function OpenCodeGoCard(props: OpenCodeGoCardProps): JSX.Element {
 
 /** Bring the card's face to the component, keyed by the settings namespace. */
 export function createFace(ctx: ClientContext, scope: SettingsScope<ProviderSections>): OpenCodeGoCardFace {
+    /**
+     * The Remote face, bound in a fiber that declares the scoped namespaces.
+     * Undefined until the carrier is up; every read reports that as a reason
+     * rather than as a failure.
+     */
+    let remote: ClientContext['remote'] | undefined
+    ctx.inject(['remote', 'remote.llm', 'remote.credentials'], (injected: ClientContext) => {
+        remote = injected.remote
+        return () => {
+            remote = undefined
+        }
+    })
+    const carrier = (): ClientContext['remote'] => {
+        if (remote === undefined) throw new Error('the Remote carrier is still connecting; try again in a moment')
+        return remote
+    }
+
     const controller: ProviderCard = createProviderCard({
         scope,
         route: ROUTE,
         describeCredential: async (reference) => {
-            const response = await ctx.remote.credentials.describe([reference])
+            const response = await carrier().credentials.describe([reference])
             if (!response.ok) throw new Error(response.error.message)
             return response.value[reference]?.configured === true
         },
         writeCredential: async (reference, value) => {
-            const response = await ctx.remote.credentials.set(reference, value)
+            const response = await carrier().credentials.set(reference, value)
             if (!response.ok) throw new Error(response.error.message)
         },
         discover: async (route) => {
-            const result = await ctx.remote.llm.discoverModels(NS, { provider: route })
+            const result = await carrier().llm.discoverModels(NS, { provider: route })
             if (!result.ok) throw new Error(result.error.message)
             return result.value.map((model) => ({
                 id: model.id,
@@ -682,21 +699,26 @@ export function createFace(ctx: ClientContext, scope: SettingsScope<ProviderSect
 }
 
 /**
- * Services this client half uses.
+ * Services that must be present before this card registers.
  *
- * Scoped Remote namespaces must be listed explicitly: cordis resolves
- * `ctx.remote.llm` through a service key of its own, and reading it without
- * declaring it throws
+ * Only the boot-time ones. The Remote namespaces are bound separately, in a
+ * child fiber (see `apply`), for two reasons:
  *
- * ```text
- * cannot get property "remote.llm" without inject
- * ```
+ * - **Order.** The Plugins tab renders cards in slot-registration order — a
+ *   `keyed` slot carries no `order` field, so a plugin cannot ask for a
+ *   position — and bundles load concurrently. Waiting on `remote.llm`, which
+ *   only exists once the Remote carrier has connected, made this card register
+ *   whenever the socket handshake happened to finish, so it moved between
+ *   reloads. Registering with the boot-time group is as stable as this host
+ *   allows.
+ * - **Availability.** A card that cannot register until the carrier is up is a
+ *   card the user cannot see, for as long as the carrier is down.
  *
- * — which is exactly how the model list and the API key field both failed.
- * Declaring them here is also what makes the carrier's scope legible: the card's
- * *registration* does not depend on them, but every read of them does.
+ * The scoped namespaces are still declared — in the fiber that reads them —
+ * because cordis refuses to resolve `ctx.remote.llm` from a context that has not
+ * declared it (`cannot get property "remote.llm" without inject`).
  */
-export const inject = ['slots', 'locale', 'settingsScope', 'remote', 'remote.llm', 'remote.credentials']
+export const inject = ['slots', 'locale', 'settingsScope']
 
 /**
  * Mount the card.

@@ -191,6 +191,24 @@ Two rules keep it fixed:
 - **Every new read of derived state needs a snapshot-identity test.** Field
   assertions pass happily while the card crashes in a browser.
 
+## Design rule — register the card with the boot-time group (NON-NEGOTIABLE)
+
+The Plugins tab renders cards in **slot-registration order**, and
+`settings.plugin.item` is a `keyed` slot whose options are `{ key, priority? }` —
+there is **no `order`** to ask for a position (unlike `list` slots). Client
+bundles are loaded concurrently, so that order is timing-dependent; a plugin's
+only lever is *when it registers*.
+
+So the exported `inject` lists only services that exist at boot (`slots`,
+`locale`, `settingsScope`). Anything later — the Remote carrier, which arrives
+with the socket handshake — is bound in a child fiber with `ctx.inject([...])`.
+That keeps the card's registration as stable as this host allows and lets it
+appear while the carrier is still connecting.
+
+Do not "simplify" this by listing `remote.*` in the exported `inject`: that
+delays registration until the handshake finishes, which is what made the card
+move between reloads (and disappear entirely when the carrier was slow).
+
 ## Design rule — declare every scoped Remote namespace you read (NON-NEGOTIABLE)
 
 `ctx.remote.llm` and `ctx.remote.credentials` are **services with their own
@@ -203,9 +221,9 @@ Could not read the provider: cannot get property "remote.llm" without inject
 
 That is how the model list and the API key field both failed. Two rules:
 
-- list every scoped namespace the client half reads in its exported `inject`
-  (`remote`, `remote.llm`, `remote.credentials`), exactly as the shipped
-  Models page does;
+- declare every scoped namespace the client half reads — in the *fiber that reads
+  it*, via `ctx.inject(['remote', 'remote.llm', 'remote.credentials'], cb)`, not
+  in the exported `inject` (see the ordering rule above);
 - read them as `ctx.remote.<ns>`, never through `ctx.get('remote')?.<ns>`. The
   accessor form bypasses the inject declaration and fails at the read, with no
   compile-time signal.
