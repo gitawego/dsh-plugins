@@ -231,6 +231,28 @@ The card also cannot read thinking levels: `LlmDiscoveredModel` carries id, name
 contextWindow, and maxTokens only, and that contract is the host's. Thinking
 levels live in the command and are asserted by `tests/surface.spec.ts`.
 
+## Design rule — deployment facts belong in the composition base, user choices above it (NON-NEGOTIABLE)
+
+The settings namespace resolves as schema default → **base** → user document, and
+the plugin's own Config *is* the base (`mountSettings`). Two consequences make
+this the right home for a deployment's profile (a credential reference, an
+endpoint override):
+
+- the Models page reports the credential for the *resolved* profile, so a
+  base-supplied profile makes that page truthful without anyone writing a
+  settings section first;
+- the same page offers Delete only for a profile present in the user layer and
+  absent from the base, so composition-supplied defaults do not present as
+  removable user choices.
+
+Corollary worth remembering when a user reports "the dot is red but it works":
+the page falls back to the derived reference
+`<ROUTE_ID_UPPERCASED>_API_KEY` when the profile names none. `opencode-go-session`
+therefore derives `OPENCODE_GO_SESSION_API_KEY`, which is *not* the gateway's
+documented `OPENCODE_API_KEY` and not whatever a machine happens to store. A red
+dot means "the name this page resolved is unset", not "this plugin is
+unconfigured" — check which reference is in play before changing code.
+
 ## Design rule — the key is stored through the credentials domain, never in settings (NON-NEGOTIABLE)
 
 The card's **API key** field writes the literal with
