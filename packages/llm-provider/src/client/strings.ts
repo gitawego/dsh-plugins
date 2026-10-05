@@ -12,6 +12,9 @@
 
 /** English copy. */
 export const en = {
+    sectionNav: 'LLM providers',
+    sectionTitle: 'LLM providers',
+    sectionIntro: 'Every provider route this plugin serves, with its live model catalog, its allowance, and its settings.',
     routeName: 'OpenCode Go',
     sessionOn: 'Session routing on',
     sessionOff: 'Session routing off',
@@ -78,6 +81,9 @@ export const en = {
 
 /** Chinese copy, keyed identically. */
 export const zh: Record<keyof typeof en, string> = {
+    sectionNav: 'LLM 提供方',
+    sectionTitle: 'LLM 提供方',
+    sectionIntro: '此插件提供的全部路由，含其实时模型目录、用量额度与设置。',
     routeName: 'OpenCode Go',
     sessionOn: '会话路由已开启',
     sessionOff: '会话路由已关闭',

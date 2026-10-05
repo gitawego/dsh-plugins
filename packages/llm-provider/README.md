@@ -49,14 +49,22 @@ one.
 | Surface | What you get |
 |---|---|
 | **Chat** | Every request carries `x-opencode-session`, so turns complete. The route serves **the provider's live catalog** (36 models), not the snapshot pi-ai shipped. |
-| **Card** — Settings → Plugins → Plugin configuration | The route's model decision: the live catalog with each model's context window and output cap, and the models this route may use. Plus the route's configuration. |
+| **Settings → LLM providers** | A section of its own (like LSP's), with one panel per served route: the live catalog with each model's context window and output cap, the models this route may use, the allowance meters, and the route's configuration. |
 | **Models page** | `opencode-go-session` appears as a configurable provider; its draft form lists live models with capacities. |
 | **`/llm-provider models\|quota\|refresh`** | The full spec sheet per model (including thinking levels) and the allowance windows. |
 | **`llm_quota` tool** | Lets the agent check the 5-hour / weekly / monthly windows before a long job. |
 
-## The card
+## The section
 
-Settings → Plugins → **OpenCode Go**.
+**Settings → LLM providers** — its own entry in the settings sidebar, beside
+General, Models, Plugins, Agent presets, and LSP.
+
+It is a section rather than a card in the plugin list for two reasons: the
+surface grows with every gateway this plugin learns to serve (one panel per
+route), and the plugin list is the wrong home for a configuration surface that
+will hold several providers. It also lands in a `list` slot, which carries an
+explicit `order`, so its position is stable — the keyed plugin slot has none.
+
 
 - **Models** — the live catalog, read from the provider endpoint and enriched from
   [models.dev](https://models.dev). Each row shows its context window and output
