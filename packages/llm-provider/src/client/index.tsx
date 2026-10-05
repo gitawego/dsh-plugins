@@ -701,38 +701,18 @@ export function ProviderPanel(props: {
 }
 
 /**
- * Build one route's actions over the shared settings scope and Remote carrier.
- * @param ctx - the client context.
- * @param scope - the bound `llm-provider` settings scope.
- * @param route - the route this controller edits.
+ * The actions for one already-built controller.
+ *
+ * Takes the controller rather than building one: the section renders one
+ * controller's snapshot and drives it through these actions, and two
+ * constructions per route means the buttons act on a controller nobody is
+ * looking at — which is exactly how the allowance and the catalog both went
+ * blank (an orphan controller answered `refresh()` while the rendered one stayed
+ * idle).
+ * @param controller - the route's controller.
  * @returns that route's actions.
  */
-export function createFace(ctx: ClientContext, scope: SettingsScope<ProviderSections>, route: string): ProviderActions {
-    const carrier = carrierOf(ctx)
-    const controller: ProviderCard = createProviderCard({
-        scope,
-        route,
-        readQuota: createQuotaReader(),
-        describeCredential: async (reference) => {
-            const response = await carrier().credentials.describe([reference])
-            if (!response.ok) throw new Error(response.error.message)
-            return response.value[reference]?.configured === true
-        },
-        writeCredential: async (reference, value) => {
-            const response = await carrier().credentials.set(reference, value)
-            if (!response.ok) throw new Error(response.error.message)
-        },
-        discover: async (route) => {
-            const result = await carrier().llm.discoverModels(NS, { provider: route })
-            if (!result.ok) throw new Error(result.error.message)
-            return result.value.map((model) => ({
-                id: model.id,
-                ...(model.name !== undefined ? { name: model.name } : {}),
-                ...(model.contextWindow !== undefined ? { contextWindow: model.contextWindow } : {}),
-                ...(model.maxTokens !== undefined ? { maxTokens: model.maxTokens } : {}),
-            }))
-        },
-    })
+export function actionsFor(controller: ProviderCard): ProviderActions {
     return {
         refresh: () => { void controller.refresh() },
         togglePin: (modelId) => { void controller.togglePin(modelId) },
@@ -810,19 +790,33 @@ export function createSectionFace(
     const byRoute: Record<string, ProviderActions> = {}
     const controllers: { route: string; card: ProviderCard }[] = []
     for (const route of routes) {
-        byRoute[route] = createFace(ctx, scope, route)
-        controllers.push({ route, card: createProviderCard({
+        // ONE controller per route: the snapshot below and the actions above are
+        // two views of the same object. Building it twice is how the catalog and
+        // the allowance both went blank.
+        const controller = createProviderCard({
             scope,
             route,
             readQuota: createQuotaReader(),
             describeCredential: credentialDescriber(ctx),
             writeCredential: credentialWriter(ctx),
             discover: modelDiscovery(ctx),
-        }) })
+        })
+        controllers.push({ route, card: controller })
+        byRoute[route] = actionsFor(controller)
     }
 
     let cached: ProvidersSnapshot | undefined
     let stale = true
+    const listeners = new Set<() => void>()
+    // Subscribe at construction, not per consumer: staleness has to be tracked
+    // whether or not anyone is watching, or a read taken between subscriptions
+    // serves a cached snapshot that no longer matches its panels.
+    for (const entry of controllers) {
+        entry.card.subscribe(() => {
+            stale = true
+            for (const listener of listeners) listener()
+        })
+    }
     const compute = (): ProvidersSnapshot => ({
         providers: controllers.map((entry) => ({ route: entry.route, card: entry.card.getSnapshot() })),
     })
@@ -834,12 +828,9 @@ export function createSectionFace(
             return cached
         },
         subscribe: (listener: () => void): (() => void) => {
-            const offs = controllers.map((entry) => entry.card.subscribe(() => {
-                stale = true
-                listener()
-            }))
+            listeners.add(listener)
             return () => {
-                for (const off of offs) off()
+                listeners.delete(listener)
             }
         },
     }

@@ -171,6 +171,25 @@ requires, only host externals, registered under the package name, and no path
 collision with the server's `lib/index.js`. That last claim is the lsp incident
 from the root AGENT.md, encoded.
 
+## Design rule — one controller per route, shared by actions and snapshot (NON-NEGOTIABLE)
+
+The section's face exposes two things per route: the actions (`byRoute[route]`)
+and the rendered state (the snapshot's `providers[].card`). They must be **two
+views of one controller**. Building the controller twice — once to wire the
+actions, once to project the snapshot — leaves the buttons driving an object
+nobody renders, and the symptom is silent: the allowance reads "Not read yet"
+and every pinned model says "no longer served", because the rendered controller
+never ran a read.
+
+`actionsFor(controller)` takes an existing controller for exactly this reason;
+it must never construct one. `tests/section-face.spec.ts` drives the face the way
+the UI does and then reads the snapshot the UI renders, so a divergence fails a
+test instead of a screenshot.
+
+The section also tracks its own staleness from **construction** (one subscription
+per controller, kept for the life of the face) rather than per consumer: a
+snapshot read between two subscriptions would otherwise be served stale.
+
 ## Design rule — `getSnapshot()` must be referentially stable (NON-NEGOTIABLE)
 
 `useSyncExternalStore` compares snapshots with `Object.is`, so a `getSnapshot()`
