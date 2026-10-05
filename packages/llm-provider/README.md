@@ -35,6 +35,33 @@ change per conversation, or every conversation lands in one lane and loses
 prompt-cache affinity. Only an adapter sees the session id, so this plugin owns
 one.
 
+## What it does
+
+| Surface | What you get |
+|---|---|
+| **Chat** | Every request carries `x-opencode-session`, so turns complete. The route serves **the provider's live catalog** (36 models), not the snapshot pi-ai shipped. |
+| **Card** — Settings → Plugins → Plugin configuration | The route's model decision: the live catalog with each model's context window and output cap, and the models this route may use. Plus the route's configuration. |
+| **Models page** | `opencode-go` appears as a configurable provider; its draft form lists live models with capacities. |
+| **`/llm-provider models\|quota\|refresh`** | The full spec sheet per model (including thinking levels) and the allowance windows. |
+| **`llm_quota` tool** | Lets the agent check the 5-hour / weekly / monthly windows before a long job. |
+
+## The card
+
+Settings → Plugins → **OpenCode Go**.
+
+- **Models** — the live catalog, read from the provider endpoint and enriched from
+  [models.dev](https://models.dev). Each row shows its context window and output
+  cap. **Pin** the models this route may use: nothing pinned means every model the
+  provider serves is available; pinning one or more narrows the route to those.
+  A pinned model the provider stops serving stays visible and marked, so the pin
+  can be removed instead of hiding.
+- **Configuration** — credential reference, endpoint, session routing, default
+  thinking effort, and the image budgets. One **Save** writes every staged field
+  as a path-addressed settings mutation.
+- **Allowance** is not in the card: the browser has no path to the provider's
+  usage endpoint, and the card says so rather than drawing a gauge it cannot
+  fill. Run `/llm-provider quota`, or ask the agent (it has the `llm_quota` tool).
+
 ## Install
 
 ```bash
@@ -57,14 +84,27 @@ agent-default-model:
 
 ## Credential
 
-The route resolves `OPENCODE_API_KEY` through the harness credential seam
-(`ctx.credentials`), so the key can live in the credential store, a `.env`
-line, or the shell environment. Nothing is stored by this plugin. If the
-reference resolves to nothing, pi-ai's own ambient provider auth is tried.
+The route resolves a credential **reference name** through the harness
+credential seam (`ctx.credentials`), so the key can live in the credential
+store, a `.env` line, or the shell environment. Nothing is stored by this
+plugin, and no literal key ever enters `settings.yaml`. The default reference is
+the gateway's own environment name (`OPENCODE_API_KEY`); a store keyed by
+another name sets `apiKeyEnv` in the profile:
+
+```yaml
+llm-provider:
+  opencode-go:
+    apiKeyEnv: OPENCODE_GO_CUSTOM_API_KEY
+```
+
+If the reference resolves to nothing, pi-ai's own ambient provider auth is
+tried, and a genuinely missing key fails with an authenticated-request error
+rather than a silent downgrade.
 
 ## Configuration
 
-Settings namespace `llm-provider`, one section per served route:
+Settings namespace `llm-provider`, one section per served route (all editable
+from the card):
 
 ```yaml
 llm-provider:
@@ -87,13 +127,25 @@ llm-provider:
 Every field is optional and clamped: a malformed value degrades to the shipped
 default rather than taking the route offline.
 
-### Declared models
+### Where the model list comes from
 
-The catalog goes stale between pi-ai releases. `extraModels` is how a route
-serves a model released after the installed build — `deepseek-v4.1-flash` above
-is exactly that case. A declared id the catalog knows is corrected field by
-field; an unknown id is built from the profile's defaults. `models` narrows the
-catalog only: declaring a model is itself the decision to serve it.
+Three sources, merged in this order of authority:
+
+1. **the provider endpoint** (`GET {baseURL}/models`) — which ids this
+   credential can call right now, including models released after this build;
+2. **[models.dev](https://models.dev)** — context window, output cap, thinking
+   levels, modalities, and cost for those ids;
+3. **the installed pi-ai catalog** — the offline baseline, and the source of the
+   wire-compat switches (a new `deepseek-*` model inherits its surveyed
+   relative's `thinkingFormat: deepseek` rather than guessing).
+
+The read happens at boot and on demand; a failed read leaves the installed
+catalog serving, so a provider outage costs freshness, not availability.
+
+`extraModels` is the override of last resort: a model the provider serves but
+models.dev does not describe, or one whose capacities you want to correct. A
+declared id wins over both other sources, field by field. `models` is the
+allowlist (`[]` = everything), which the card writes when you pin models.
 
 ## Routes
 

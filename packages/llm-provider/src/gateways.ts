@@ -33,6 +33,25 @@ export interface GatewayDefinition {
      * plugin exists to remove.
      */
     sessionRouting: boolean
+    /**
+     * Which wire protocol each model speaks, for models the installed catalog
+     * does not describe.
+     *
+     * A gateway is not uniform: `opencode.ai/zen/go` serves `gpt-*`,
+     * `grok-*`, and `muse-spark-*` over `/v1/responses`, `minimax-m2.7`/`m3`
+     * and the `qwen3.7-plus`/`qwen3.8-*` tier over `/v1/messages`, and what
+     * remains over `/v1/chat/completions` — which is the gateway's own
+     * documented endpoint table, not a guess. A model the installed catalog
+     * already describes never consults this table, and a model it does not must
+     * land on a protocol *here* or on `default`; silently sending the wrong
+     * protocol to a live endpoint is the failure this table exists to prevent.
+     */
+    protocols: {
+        /** Protocol by exact model id. */
+        byId: Readonly<Record<string, string>>
+        /** Protocol for every other model on the route. */
+        default: string
+    }
 }
 
 /** OpenCode Go — `https://opencode.ai/zen/go`. */
@@ -43,6 +62,25 @@ export const OPENCODE_GO: GatewayDefinition = {
     baseURL: 'https://opencode.ai/zen/go/v1',
     apiKeyEnv: 'OPENCODE_API_KEY',
     sessionRouting: true,
+    protocols: {
+        // The gateway's own endpoint table (`https://opencode.ai/docs/go/#endpoints`).
+        // Everything it does not list — including models released after this
+        // build — speaks the OpenAI-compatible chat-completions protocol.
+        byId: {
+            'grok-4.6': 'openai-responses',
+            'grok-4.7': 'openai-responses',
+            'gpt-5.6-luna': 'openai-responses',
+            'gpt-6-luna': 'openai-responses',
+            'muse-spark-1.2-contributor': 'openai-responses',
+            'muse-spark-1.3-contributor': 'openai-responses',
+            'minimax-m2.7': 'anthropic-messages',
+            'minimax-m3': 'anthropic-messages',
+            'qwen3.7-plus': 'anthropic-messages',
+            'qwen3.8-flash': 'anthropic-messages',
+            'qwen3.8-max': 'anthropic-messages',
+        },
+        default: 'openai-completions',
+    },
 }
 
 /**
@@ -58,4 +96,14 @@ export const GATEWAYS: readonly GatewayDefinition[] = [OPENCODE_GO]
  */
 export function gatewayById(id: string): GatewayDefinition | undefined {
     return GATEWAYS.find((gateway) => gateway.id === id)
+}
+
+/**
+ * The wire protocol one model on a gateway speaks.
+ * @param gateway - the gateway serving the model.
+ * @param modelId - exact model id.
+ * @returns the protocol the gateway publishes for that id, or its default.
+ */
+export function protocolFor(gateway: GatewayDefinition, modelId: string): string {
+    return gateway.protocols.byId[modelId] ?? gateway.protocols.default
 }

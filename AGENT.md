@@ -161,6 +161,17 @@ host:
   `Model`/`Provider`/`AssistantMessageEvent` contracts the adapter is
   written against.
 
+### Client halves with more than one module must bundle
+
+The browser module system wraps ONE entry file in a `factory(require)` whose
+`require` answers only the host's externals, so a relative `require` inside the
+shipped bundle is a boot-time crash. A client written as a single source file
+(`web-search`, `lsp`) can ship tsc output directly; one written as several
+modules (`llm-provider`) must bundle. `packages/llm-provider/scripts/build-client.mjs`
+is the reference: esbuild, `platform: browser`, `react*` external, output wrapped
+in `window.__ModuleLoader__.load({ id: <pkg name>, factory })`, and
+`packages/llm-provider/tests/bundle.spec.ts` is the guard that proves it.
+
 ### TypeScript 7 and the client tsconfig
 
 TS 7 **removed** `moduleResolution: node` (`node10`). The client projects

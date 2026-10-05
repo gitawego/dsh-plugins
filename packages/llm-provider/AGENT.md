@@ -126,6 +126,58 @@ routes; the config schema is generated from it, so a new gateway cannot ship
 without a settings section. Adding a gateway is one entry there plus a catalog
 factory in `catalog.ts` — never a new adapter.
 
+## Design rule — the client half is one bundled file (NON-NEGOTIABLE)
+
+`src/client/` is several modules (`controller.ts`, `strings.ts`, `index.tsx`)
+because the logic must be testable without a DOM. The **bundle** is not: the
+browser module system wraps one entry file in a `factory(require)` whose
+`require` answers only the host's externals, so a surviving
+`require('./controller.js')` is a boot-time crash. `scripts/build-client.mjs`
+therefore bundles with esbuild and treats `react*` as external — bundling React
+would hand the card its own React instance and break hooks.
+
+`tests/bundle.spec.ts` asserts the built artifact: self-contained, no relative
+requires, only host externals, registered under the package name, and no path
+collision with the server's `lib/index.js`. That last claim is the lsp incident
+from the root AGENT.md, encoded.
+
+## Design rule — no card that cannot be filled (NON-NEGOTIABLE)
+
+The card shows what the browser can actually read: the settings namespace, and
+the live catalog through `remote.llm.discoverModels` — which our own host
+discovery answers with provider ids plus models.dev capacities.
+
+It does **not** show the allowance windows. In 0.1.5 a profile plugin cannot
+forward its own events (`TypertRemoteEventSelection`'s value lives in the host's
+`dsh-api-remotes`) and cannot add a Remote namespace (the host lists those), so
+the browser has no path to `GET /usage`. The card states that and points at
+`/llm-provider quota` instead of drawing a gauge it cannot fill. If a future host
+exposes a client path, the quota belongs here — wire it, don't fake it.
+
+The card also cannot read thinking levels: `LlmDiscoveredModel` carries id, name,
+contextWindow, and maxTokens only, and that contract is the host's. Thinking
+levels live in the command and are asserted by `tests/surface.spec.ts`.
+
+## Design rule — every live read degrades, never blanks
+
+Boot, refresh, and the discovery handler all reach the network. A failure must
+leave the previous answer standing and say what failed:
+
+- the catalog feed keeps the installed pi-ai catalog and records `error`;
+- the card keeps the last model list and shows `readFailed` with the reason;
+- quota reports an explainable empty snapshot (`usage endpoint answered 429`).
+
+An empty screen is indistinguishable from "this route serves nothing", which is
+the one thing these reads must never imply.
+
+## Design rule — the allowlist is a decision, and the card says which one (NON-NEGOTIABLE)
+
+`models: []` means *every* model the provider serves; a non-empty list means
+*exactly these*. The card renders the rule in words above the list, and it keeps
+a pinned id the provider no longer serves on screen (flagged) so a dead pin can
+be removed — `tests/client-controller.spec.ts` pins both behaviours. Do not
+"simplify" an empty allowlist into "none selected".
+
 ## Testing contract
 
 `vitest run` in this package. The suite is split by the claim each file makes:
@@ -139,6 +191,12 @@ factory in `catalog.ts` — never a new adapter.
 | `transport.spec.ts` | catalog/allowlist/endpoint merge, and which options reach a dispatch |
 | `adapter.spec.ts` | adapter policy: model/effort resolution, credential lookup, refusals |
 | `wire.spec.ts` | **the outgoing HTTP request** — header, attribution, body, and terminal event |
+| `models-dev.spec.ts` | the models.dev contract: capacities, effort levels, modalities, and failure degradation |
+| `gateway-api.spec.ts` | the gateway contract: id list, quota windows, clamping, and explainable failures |
+| `catalog-feed.spec.ts` | the merge: live ∪ installed ∪ declared, protocol and compat resolution, feed snapshots |
+| `surface.spec.ts` | what a human and the agent are actually told, for models and quota |
+| `client-controller.spec.ts` | card logic with no DOM: catalog reads, allowlist writes, staged edits, rejected saves |
+| `bundle.spec.ts` | the built artifacts: self-contained client bundle, ESM server entry, no path collision |
 
 `wire.spec.ts` is the file that would have caught the original bug. Any change to
 the header path must keep it green; a change that only updates
