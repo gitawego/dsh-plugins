@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest'
 import type { Api, Model } from '@earendil-works/pi-ai'
 import { createCatalogFeed, mergeCatalog, thinkingLevelMapFor, type LiveCatalog } from '../src/catalog-feed.ts'
 import { defaultProfile, resolveProfiles, type GatewayProfile } from '../src/config.ts'
-import { GATEWAYS, OPENCODE_GO, protocolFor } from '../src/gateways.ts'
+import { GATEWAYS, OPENCODE_GO, protocolFor, type GatewayDefinition } from '../src/gateways.ts'
 import type { ModelMetadata } from '../src/models-dev.ts'
 import type { ProviderSettings } from '../src/config.ts'
 
@@ -75,7 +75,7 @@ describe('mergeCatalog', () => {
     it('serves the installed catalog when nothing live is available', () => {
         const models = mergeCatalog({ gateway: OPENCODE_GO, profile: profile(), installed: [model('a'), model('b')] })
         expect(models.map((entry) => entry.id)).toEqual(['a', 'b'])
-        expect(models[0]?.provider).toBe('opencode-go')
+        expect(models[0]?.provider).toBe(OPENCODE_GO.id)
     })
 
     it('adds the ids the gateway reports beyond the installed catalog', () => {
@@ -220,7 +220,7 @@ describe('createCatalogFeed', () => {
         expect(applied).toHaveLength(1)
         expect(applied[0]?.live.ids).toEqual(['a', 'fresh'])
         expect(applied[0]?.live.metadata.get('fresh')?.contextWindow).toBe(500_000)
-        expect(snapshot).toMatchObject({ route: 'opencode-go', liveCount: 2, modelCount: 2, metadataLoaded: true, fetchedAt: 4_242 })
+        expect(snapshot).toMatchObject({ route: OPENCODE_GO.id, liveCount: 2, modelCount: 2, metadataLoaded: true, fetchedAt: 4_242 })
     })
 
     it('names the models the installed catalog does not know — the point of the refresh', async () => {
@@ -240,17 +240,17 @@ describe('createCatalogFeed', () => {
 
     it('fetches only the requested route', async () => {
         const { catalog } = feed()
-        const snapshots = await catalog.refresh('opencode-go')
-        expect(snapshots.map((entry) => entry.route)).toEqual(['opencode-go'])
+        const snapshots = await catalog.refresh(OPENCODE_GO.id)
+        expect(snapshots.map((entry) => entry.route)).toEqual([OPENCODE_GO.id])
         expect(await catalog.refresh('not-a-route')).toEqual([])
     })
 
     it('reports the last snapshot without fetching again', async () => {
         const { catalog, fetchImpl } = feed()
-        expect(catalog.snapshot('opencode-go')).toBeUndefined()
+        expect(catalog.snapshot(OPENCODE_GO.id)).toBeUndefined()
         await catalog.refresh()
         const calls = fetchImpl.mock.calls.length
-        expect(catalog.snapshot('opencode-go')?.liveCount).toBe(2)
+        expect(catalog.snapshot(OPENCODE_GO.id)?.liveCount).toBe(2)
         expect(catalog.snapshots()).toHaveLength(1)
         expect(fetchImpl.mock.calls.length).toBe(calls)
     })
@@ -262,7 +262,7 @@ describe('createCatalogFeed', () => {
             if (url.includes('models.dev')) return new Response('{"opencode-go":{"models":{}}}', { status: 200 })
             return new Response(JSON.stringify({ object: 'list', data: [{ id: 'a' }] }), { status: 200 })
         })
-        const two: typeof GATEWAYS = [GATEWAYS[0]!, { ...GATEWAYS[0]!, id: 'second', catalogProvider: 'opencode-go' }]
+        const two: readonly GatewayDefinition[] = [GATEWAYS[0]!, { ...GATEWAYS[0]!, id: 'second' }]
         const catalog = createCatalogFeed({
             gateways: two,
             profileOf: () => profile(),
@@ -272,7 +272,7 @@ describe('createCatalogFeed', () => {
             fetch: fetchImpl as unknown as typeof fetch,
         })
         const snapshots = await catalog.refresh()
-        expect(snapshots.map((entry) => entry.route)).toEqual(['opencode-go', 'second'])
+        expect(snapshots.map((entry) => entry.route)).toEqual([OPENCODE_GO.id, 'second'])
         expect(fetchImpl.mock.calls.filter(([input]) => String(input).includes('models.dev'))).toHaveLength(1)
     })
 })

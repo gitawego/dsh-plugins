@@ -26,7 +26,7 @@ const LIVE_MODEL = 'deepseek-v4.1-flash'
 
 function profiles(): ProviderSettings {
     return {
-        'opencode-go': {
+        [OPENCODE_GO.id]: {
             ...defaultProfile(OPENCODE_GO),
             // The catalog ships `deepseek-v4-flash`; the gateway serves
             // `deepseek-v4.1-flash`. A profile declares what the catalog
@@ -93,7 +93,7 @@ describe('OpenCode Go wire request', () => {
         const { requests, impl } = recordingFetch()
         const transport = createGatewayTransport(GATEWAYS, profiles())
         const events = transport.stream(
-            'opencode-go',
+            OPENCODE_GO.id,
             LIVE_MODEL,
             { messages: [{ role: 'user', content: 'hi', timestamp: 0 }] },
             { apiKey: 'test-key', sessionId: 'sess-wire-1', fetch: impl },
@@ -110,7 +110,7 @@ describe('OpenCode Go wire request', () => {
         const transport = createGatewayTransport(GATEWAYS, profiles())
         await drain(
             transport.stream(
-                'opencode-go',
+                OPENCODE_GO.id,
                 LIVE_MODEL,
                 { messages: [{ role: 'user', content: 'hi', timestamp: 0 }] },
                 { apiKey: 'test-key', sessionId: 'sess-wire-2', fetch: impl },
@@ -122,9 +122,9 @@ describe('OpenCode Go wire request', () => {
 
     it('declares the model the catalog does not, so the live configuration is servable', () => {
         const transport = createGatewayTransport(GATEWAYS, profiles())
-        expect(transport.getModel('opencode-go', LIVE_MODEL)?.contextWindow).toBe(1_000_000)
+        expect(transport.getModel(OPENCODE_GO.id, LIVE_MODEL)?.contextWindow).toBe(1_000_000)
         // ...without losing the catalog models.
-        expect(transport.listModels('opencode-go').some((model) => model.id === 'deepseek-v4-flash')).toBe(true)
+        expect(transport.listModels(OPENCODE_GO.id).some((model) => model.id === 'deepseek-v4-flash')).toBe(true)
     })
 
     it('reports the turn as a normal completion, so a fixed request is a working turn', async () => {
@@ -132,7 +132,7 @@ describe('OpenCode Go wire request', () => {
         const transport = createGatewayTransport(GATEWAYS, profiles())
         const events = await drain(
             transport.stream(
-                'opencode-go',
+                OPENCODE_GO.id,
                 LIVE_MODEL,
                 { messages: [{ role: 'user', content: 'hi', timestamp: 0 }] },
                 { apiKey: 'test-key', sessionId: 'sess-wire-3', fetch: impl },
@@ -148,7 +148,7 @@ describe('OpenCode Go wire request', () => {
         const transport = createGatewayTransport(GATEWAYS, profiles())
         await drain(
             transport.stream(
-                'opencode-go',
+                OPENCODE_GO.id,
                 LIVE_MODEL,
                 { messages: [{ role: 'user', content: 'hi', timestamp: 0 }] },
                 { apiKey: 'test-key', fetch: impl },
@@ -164,7 +164,7 @@ describe('OpenCode Go wire request', () => {
         const transport = createGatewayTransport(GATEWAYS, profiles())
         await drain(
             transport.stream(
-                'opencode-go',
+                OPENCODE_GO.id,
                 LIVE_MODEL,
                 {
                     messages: [
@@ -190,7 +190,7 @@ describe('OpenCode Go wire request', () => {
         const transport = createGatewayTransport(GATEWAYS, profiles())
         await drain(
             transport.stream(
-                'opencode-go',
+                OPENCODE_GO.id,
                 LIVE_MODEL,
                 { messages: [{ role: 'user', content: 'hi', timestamp: 0 }] },
                 { apiKey: 'k', sessionId: '01a10c8e-0898-77d8-9c28-5ff69e4529a9', fetch: impl },

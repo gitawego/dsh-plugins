@@ -3,6 +3,15 @@
 First-party LLM provider routes for DeepSeek Harness, at the `ctx.llm` adapter
 seam. The first route it ships is **OpenCode Go** (`opencode.ai/zen/go`).
 
+> **Route key:** `opencode-go-session`.
+>
+> Not `opencode-go` — that key belongs to `dsh-llm-pi-ai`, which declares a
+> configurable-provider entry for every provider in pi-ai's catalog, and pi-ai
+> ships `opencode-go`. Two plugins cannot own one route key, and the collision
+> is a hard boot failure (`configurable provider "opencode-go" is already
+> declared`). The pi-ai entry stays what it is: the catalog provider that does
+> not send the session header. Use `opencode-go-session`.
+
 ## Why it exists
 
 OpenCode Go routes a conversation to a backend lane by a header the client must
@@ -41,7 +50,7 @@ one.
 |---|---|
 | **Chat** | Every request carries `x-opencode-session`, so turns complete. The route serves **the provider's live catalog** (36 models), not the snapshot pi-ai shipped. |
 | **Card** — Settings → Plugins → Plugin configuration | The route's model decision: the live catalog with each model's context window and output cap, and the models this route may use. Plus the route's configuration. |
-| **Models page** | `opencode-go` appears as a configurable provider; its draft form lists live models with capacities. |
+| **Models page** | `opencode-go-session` appears as a configurable provider; its draft form lists live models with capacities. |
 | **`/llm-provider models\|quota\|refresh`** | The full spec sheet per model (including thinking levels) and the allowance windows. |
 | **`llm_quota` tool** | Lets the agent check the 5-hour / weekly / monthly windows before a long job. |
 
@@ -93,7 +102,7 @@ another name sets `apiKeyEnv` in the profile:
 
 ```yaml
 llm-provider:
-  opencode-go:
+  opencode-go-session:
     apiKeyEnv: OPENCODE_GO_CUSTOM_API_KEY
 ```
 
@@ -108,7 +117,7 @@ from the card):
 
 ```yaml
 llm-provider:
-  opencode-go:
+  opencode-go-session:
     apiKeyEnv: OPENCODE_API_KEY      # credential reference name
     baseURL: ''                      # '' = each model's catalog endpoint
     models: []                       # allowlist over the catalog; [] = all
@@ -151,7 +160,7 @@ allowlist (`[]` = everything), which the card writes when you pin models.
 
 | Route | Endpoint | Protocols | Session header |
 |---|---|---|---|
-| `opencode-go` | `opencode.ai/zen/go` | openai-completions, openai-responses, anthropic-messages | required |
+| `opencode-go-session` | `opencode.ai/zen/go` | openai-completions, openai-responses, anthropic-messages | required |
 
 Adding a gateway is one entry in `src/gateways.ts` plus a catalog factory in
 `src/catalog.ts` — the settings schema is generated from the gateway table.

@@ -41,9 +41,12 @@ import {
     type ProviderSections,
 } from './controller.ts'
 import { en, zh } from './strings.ts'
+// The route key comes from the same table the adapter registers, so a rename
+// cannot leave the card editing a section nothing serves.
+import { OPENCODE_GO } from '../gateways.ts'
 
 const NS = 'llm-provider'
-const ROUTE = 'opencode-go'
+const ROUTE = OPENCODE_GO.id
 
 /* Pure-type augmentation for the `settings.plugin.item` slot, mirroring
  * `dsh-client-ui-settings-plugins/lib/types/client/slot-contract.d.ts`. The

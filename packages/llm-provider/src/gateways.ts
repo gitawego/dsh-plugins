@@ -54,9 +54,27 @@ export interface GatewayDefinition {
     }
 }
 
-/** OpenCode Go — `https://opencode.ai/zen/go`. */
+/**
+ * OpenCode Go — `https://opencode.ai/zen/go`.
+ *
+ * The route id is deliberately NOT the catalog provider id. `dsh-llm-pi-ai`
+ * declares a configurable-provider directory entry for **every** provider in
+ * pi-ai's installed catalog, and pi-ai ships `opencode-go`; a route claiming
+ * that exact key collides at boot with
+ *
+ * ```text
+ * LlmError: configurable provider "opencode-go" is already declared
+ * ```
+ *
+ * and, worse, clicking that row in the Models page would configure the generic
+ * pi-ai adapter for the same route — leaving two plugins registering one route
+ * and a boot that fails outright. A route key is a contract with the harness's
+ * provider topology, so this plugin takes one of its own and lets the pi-ai
+ * entry stay what it is: the dormantly-declared catalog provider that does not
+ * send the session header.
+ */
 export const OPENCODE_GO: GatewayDefinition = {
-    id: 'opencode-go',
+    id: 'opencode-go-session',
     displayName: 'OpenCode Go',
     catalogProvider: 'opencode-go',
     baseURL: 'https://opencode.ai/zen/go/v1',

@@ -59,6 +59,7 @@ import {
     resolveProfiles,
     type ProviderSettings,
 } from './config.ts'
+import { declareRoutes, describeSkips } from './directory.ts'
 import { fetchModelIds, fetchQuota, type QuotaSnapshot } from './gateway-api.ts'
 import { GATEWAYS, gatewayById, type GatewayDefinition } from './gateways.ts'
 import { fetchModelsDevCatalog } from './models-dev.ts'
@@ -84,6 +85,7 @@ export { Config, LLM_PROVIDER_SETTINGS_NAMESPACE, GATEWAYS, type ProviderSetting
 export { OPENCODE_SESSION_HEADER, withSessionHeader } from './session-header.ts'
 export { createGatewayTransport } from './transport.ts'
 export { createCatalogFeed, mergeCatalog, thinkingLevelMapFor } from './catalog-feed.ts'
+export { declareRoutes, describeSkips } from './directory.ts'
 export { fetchModelIds, fetchQuota, formatQuota, parseModelIds, parseQuota } from './gateway-api.ts'
 export { fetchModelsDevCatalog, parseModelsDevCatalog } from './models-dev.ts'
 export { formatCatalog, formatModel, runProviderCommand, createQuotaTool } from './surface.ts'
@@ -155,17 +157,12 @@ export function apply(ctx: Context): () => void {
     })
 
     const registration = ctx.llm.registerAdapter([...ROUTES], adapter)
-    const directory = ctx.llm.registerConfigurableProviders(
-        GATEWAYS.map((gateway) => ({
-            provider: gateway.id,
-            displayName: gateway.displayName,
-            settingsNs: LLM_PROVIDER_SETTINGS_NAMESPACE,
-            settingsPath: [gateway.id],
-            // The adapter ships knowledge of this route; it is not a gateway a
-            // user hand-declared in settings.
-            declared: false,
-        })),
-    )
+    // A route key another plugin already declared is left to that plugin: the
+    // directory is a presentation surface, and a collision there must not take
+    // the boot down. See `directory.ts`.
+    const outcome = declareRoutes(ctx.llm, GATEWAYS, LLM_PROVIDER_SETTINGS_NAMESPACE)
+    const log = ctx.logger(name)
+    for (const line of describeSkips(outcome)) log.warn('%s', line)
 
     // A draft provider in the Models page has no stored route to name, so the
     // request carries its endpoint and one-shot credential directly.
@@ -249,7 +246,6 @@ export function apply(ctx: Context): () => void {
         boot.abort('llm-provider unloaded')
         watch()
         discovery()
-        directory()
         registration()
     }
 }

@@ -93,6 +93,36 @@ The other peers (`@deepseek-ai/dsh-llm`, `-settings`, `-credentials`,
 monorepo-wide rule in the root `AGENT.md`: peers at the host's exact version,
 never profile-local copies.
 
+## Design rule — never claim a route key another plugin owns (NON-NEGOTIABLE)
+
+The route key is a contract with the harness's provider topology, and it is a
+single shared namespace. `dsh-llm-pi-ai` declares a configurable-provider entry
+for **every** provider in pi-ai's installed catalog, so any route whose key
+equals a catalog provider id is already taken:
+
+```text
+Error: dsh: plugin tree failed to load: failed to apply loader entry
+  llm-provider (@gitawego/dsh-llm-provider):
+  configurable provider "opencode-go" is already declared
+```
+
+That is why `OPENCODE_GO.id` is `opencode-go-session` while
+`OPENCODE_GO.catalogProvider` stays `opencode-go`. The catalog provider id
+selects the catalog and the wire implementations; the route key is what requests
+name. They are related and must never be assumed equal —
+`tests/directory.spec.ts` asserts that no served route key exists in
+`CATALOG_PROVIDERS`, so a future gateway cannot reintroduce this.
+
+Two consequences worth keeping:
+
+- **Declaring a directory entry is best-effort.** `declareRoutes()` skips keys
+  another registration owns and reports them, because a taken presentation row
+  must never be a dead boot. The route still serves requests; only its Models
+  page row belongs to the plugin that declared it first.
+- **Do not register the adapter for a key pi-ai could activate.** If the user
+  configured that pi-ai provider, its adapter would register the same route and
+  the seam refuses the second one — a boot failure from a settings edit.
+
 ## Design rule — a route never goes dark because of settings
 
 `resolveProfile()` clamps rather than throws: a hand-edited `settings.yaml`
