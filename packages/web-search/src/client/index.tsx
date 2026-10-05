@@ -72,8 +72,13 @@ const CSS = `
 .wss-tag{padding:1px 6px;border:1px solid var(--dsw-alias-border-l2);border-radius:999px;font-size:10px;letter-spacing:.04em;text-transform:uppercase;color:var(--dsw-alias-label-tertiary)}
 .wss-note{margin:0;font-size:11px;color:var(--dsw-alias-label-tertiary)}
 .wss-url{margin:0;font-family:var(--dsw-font-family-mono,ui-monospace,SFMono-Regular,Menlo,monospace);font-size:11px;color:var(--dsw-alias-label-secondary);overflow-wrap:anywhere;user-select:all}
-.wss-fields{display:grid;gap:10px;grid-template-columns:repeat(auto-fit,minmax(200px,1fr))}
-.wss-field{display:grid;gap:4px;min-width:0}
+.wss-fields{display:grid;gap:12px 14px;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));align-items:start}
+/* A field's own rows must keep their natural height: a stretched cell with a
+ * hint redistributes its extra space and pushes its input out of line with the
+ * input beside it. */
+.wss-field{display:grid;gap:4px;min-width:0;align-content:start}
+/* An endpoint, a credential name, or a model id is longer than half a column. */
+.wss-field--wide{grid-column:1/-1}
 .wss-field label{font-size:12px;color:var(--dsw-alias-label-secondary)}
 .wss-field input,.wss-field select{width:100%;padding:6px 10px;border:1px solid var(--dsw-alias-border-l2);border-radius:8px;background:var(--dsw-alias-bg-layer-1);color:var(--dsw-alias-label-primary);font-size:13px}
 .wss-field input[aria-invalid="true"]{border-color:var(--dsw-alias-label-error)}
@@ -113,10 +118,12 @@ function Field(props: {
     hint?: string
     invalid?: boolean
     disabled: boolean
+    /** Claim the full grid width; for values longer than half a column. */
+    wide?: boolean
     onChange: (text: string) => void
 }): JSX.Element {
     return (
-        <div className="wss-field">
+        <div className={props.wide === true ? 'wss-field wss-field--wide' : 'wss-field'}>
             <label htmlFor={props.id}>{props.label}</label>
             <input
                 id={props.id}
@@ -206,15 +213,15 @@ export function WebSearchSection(props: PropsRuntime<'settings.section'> & Injec
                                             onChange={(text) => { controller.editLlm('protocol', text) }}
                                         />
                                         <Field
-                                            id="wss-llm-baseurl" label={t('baseUrl')} hint={t('baseUrlHint')} disabled={disabled}
+                                            wide id="wss-llm-baseurl" label={t('baseUrl')} hint={t('baseUrlHint')} disabled={disabled}
                                             value={draft.llm.baseUrl} onChange={(text) => { controller.editLlm('baseUrl', text) }}
                                         />
                                         <Field
-                                            id="wss-llm-credential" label={t('credential')} hint={t('credentialHint')} disabled={disabled}
+                                            wide id="wss-llm-credential" label={t('credential')} hint={t('credentialHint')} disabled={disabled}
                                             value={draft.llm.credential} onChange={(text) => { controller.editLlm('credential', text) }}
                                         />
                                         <Field
-                                            id="wss-llm-model" label={t('model')} hint={t('modelHint')} disabled={disabled}
+                                            wide id="wss-llm-model" label={t('model')} hint={t('modelHint')} disabled={disabled}
                                             value={draft.llm.model} onChange={(text) => { controller.editLlm('model', text) }}
                                         />
                                         <Field
@@ -239,7 +246,7 @@ export function WebSearchSection(props: PropsRuntime<'settings.section'> & Injec
                             <p className="wss-note">{t('goNote')}</p>
                             <div className="wss-fields">
                                 <Field
-                                    id="wss-go-credential" label={t('goCredential')} hint={t('goCredentialHint')} disabled={disabled}
+                                    wide id="wss-go-credential" label={t('goCredential')} hint={t('goCredentialHint')} disabled={disabled}
                                     value={draft.llm.credential === '' ? '' : draft.llm.credential}
                                     onChange={(text) => { controller.editLlm('credential', text) }}
                                 />
@@ -260,7 +267,7 @@ export function WebSearchSection(props: PropsRuntime<'settings.section'> & Injec
                                 <p className="wss-url">{server.url}</p>
                                 <div className="wss-fields">
                                     <Field
-                                        id={`wss-${server.id}-token`}
+                                        wide id={`wss-${server.id}-token`}
                                         label={t('token')}
                                         hint={t('tokenHint')}
                                         disabled={disabled}
@@ -289,7 +296,7 @@ export function WebSearchSection(props: PropsRuntime<'settings.section'> & Injec
                                     <div className="wss-server" key={server.id}>
                                         <div className="wss-fields">
                                             <Field
-                                                id={`wss-server-${server.id}-url`} label={t('serverUrl')} disabled={disabled}
+                                                wide id={`wss-server-${server.id}-url`} label={t('serverUrl')} disabled={disabled}
                                                 invalid={invalid.has(`free.servers.${index}.url`)}
                                                 value={server.url} onChange={(text) => { controller.editServer(server.id, 'url', text) }}
                                             />
@@ -298,7 +305,7 @@ export function WebSearchSection(props: PropsRuntime<'settings.section'> & Injec
                                                 value={server.label} onChange={(text) => { controller.editServer(server.id, 'label', text) }}
                                             />
                                             <Field
-                                                id={`wss-server-${server.id}-token`} label={t('token')} hint={t('tokenHint')} disabled={disabled}
+                                                wide id={`wss-server-${server.id}-token`} label={t('token')} hint={t('tokenHint')} disabled={disabled}
                                                 value={server.credential} onChange={(text) => { controller.editServer(server.id, 'credential', text) }}
                                             />
                                             <Field
