@@ -183,6 +183,22 @@ export function createProviderCard(options: CardOptions): ProviderCard {
     const now = options.now ?? Date.now
     const route = options.route
     const listeners = new Set<() => void>()
+    /**
+     * The memoized snapshot and what it was derived from.
+     *
+     * `useSyncExternalStore` compares snapshots by identity, so a `getSnapshot()`
+     * that builds a fresh object on every call reads as "the store changed" on
+     * every render and loops until React throws (#185, maximum update depth).
+     * Invalidation is OURS, not the scope's: `publish()` marks the cache stale
+     * (every mutation path calls it, as does the scope's own subscription), and
+     * the namespace revision is a second signal for a change that arrived
+     * without a notification. Depending on the scope's snapshot being a stable
+     * reference would work against the real implementation and break against
+     * any double that is not — the contract we must not rely on.
+     */
+    let cached: CardSnapshot | undefined
+    let cachedRevision: number | undefined
+    let stale = true
     let drafts = new Map<FieldName, string>()
     /** Discovered models, before the allowlist projection. */
     let models: Omit<ModelRow, 'advertised' | 'pinned' | 'served'>[] = []
@@ -215,6 +231,9 @@ export function createProviderCard(options: CardOptions): ProviderCard {
 
     const snapshot = (): CardSnapshot => {
         const raw = options.scope.getSnapshot()
+        if (cached !== undefined && !stale && raw.revision === cachedRevision) return cached
+        cachedRevision = raw.revision
+        stale = false
         const current = section()
         const rows = buildRows()
         const pinnedCount = rows.filter((row) => row.pinned).length
@@ -224,7 +243,7 @@ export function createProviderCard(options: CardOptions): ProviderCard {
             if (spec.kind === 'number' && text.trim().length > 0 && !Number.isFinite(Number(text))) invalid[field] = true
             if (spec.kind === 'enum' && !(REASONING_LEVELS as readonly string[]).includes(text)) invalid[field] = true
         }
-        return {
+        cached = {
             status: raw.status,
             // A scope that is still loading reports `writable: false` before the
             // describe read lands; only a ready, explicitly read-only document
@@ -246,11 +265,12 @@ export function createProviderCard(options: CardOptions): ProviderCard {
             saveFailed,
             revision: raw.revision,
         }
+        return cached
     }
 
+    /** Announce a change: the next `getSnapshot()` recomputes once, then caches. */
     const publish = (): void => {
-        // Listeners read `getSnapshot()`, which recomputes from live state, so
-        // there is nothing to cache — only to notify.
+        stale = true
         for (const listener of listeners) listener()
     }
 

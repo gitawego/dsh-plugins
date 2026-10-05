@@ -8,11 +8,24 @@ import {
 } from '../src/client/controller.ts'
 
 /** A settings scope with just enough behaviour to drive the card. */
-function fakeScope(initial: ProviderSections = {}, over: { writable?: boolean; status?: 'loading' | 'ready' | 'unavailable' } = {}) {
+function fakeScope(
+    initial: ProviderSections = {},
+    over: { writable?: boolean; status?: 'loading' | 'ready' | 'unavailable'; unstableSnapshot?: boolean } = {},
+) {
     let value = initial
+    let revision = 7
     const listeners = new Set<() => void>()
     const ops: SettingsPathOp[][] = []
     let reject: string | undefined
+    // The real seam returns one reference until something changes; a double that
+    // rebuilt it every call would hide a broken dependency on that stability,
+    // which is what `unstableSnapshot` exercises on purpose.
+    let snapshot = { status: over.status ?? 'ready', value, writable: over.writable ?? true, revision }
+    const republish = () => {
+        revision += 1
+        snapshot = { status: over.status ?? 'ready', value, writable: over.writable ?? true, revision }
+        for (const listener of listeners) listener()
+    }
     return {
         ops,
         failWith: (message: string | undefined) => {
@@ -20,15 +33,12 @@ function fakeScope(initial: ProviderSections = {}, over: { writable?: boolean; s
         },
         setValue: (next: ProviderSections) => {
             value = next
-            for (const listener of listeners) listener()
+            republish()
         },
         scope: {
-            getSnapshot: () => ({
-                status: over.status ?? 'ready',
-                value,
-                writable: over.writable ?? true,
-                revision: 7,
-            }),
+            getSnapshot: () => (over.unstableSnapshot === true
+                ? { status: over.status ?? 'ready', value, writable: over.writable ?? true, revision }
+                : snapshot),
             subscribe: (listener: () => void) => {
                 listeners.add(listener)
                 return () => listeners.delete(listener)
@@ -37,6 +47,7 @@ function fakeScope(initial: ProviderSections = {}, over: { writable?: boolean; s
                 ops.push([...mutateOps])
                 if (reject !== undefined) throw new Error(reject)
                 opApply(mutateOps)
+                republish()
             },
         } as SettingsScopeLike<ProviderSections>,
     }
@@ -62,6 +73,67 @@ function card(over: { sections?: ProviderSections; discover?: () => Promise<Disc
     const controller = createProviderCard({ scope: fake.scope, discover, route: 'opencode-go', now: () => 5_000 })
     return { controller, fake, discover }
 }
+
+/**
+ * `useSyncExternalStore` compares snapshots by identity. A `getSnapshot()` that
+ * returns a fresh object on every call therefore reads as "the store changed" on
+ * every render, and React loops until it throws #185 (maximum update depth).
+ * That is exactly how this card shipped broken: the slot renderer caught the
+ * crash and drew nothing, so the card was simply absent from Settings → Plugins.
+ */
+describe('snapshot identity', () => {
+    it('returns the same reference while nothing changed', async () => {
+        const { controller } = card()
+        await controller.refresh()
+        const first = controller.getSnapshot()
+        expect(controller.getSnapshot()).toBe(first)
+        expect(controller.getSnapshot()).toBe(first)
+    })
+
+    it('returns a new reference after a change, exactly once', () => {
+        const { controller } = card()
+        const first = controller.getSnapshot()
+        controller.edit('apiKeyEnv', 'NEXT')
+        const second = controller.getSnapshot()
+        expect(second).not.toBe(first)
+        expect(controller.getSnapshot()).toBe(second)
+    })
+
+    it('does not depend on the scope returning a stable reference', async () => {
+        const fake = fakeScope({}, { unstableSnapshot: true })
+        const controller = createProviderCard({ scope: fake.scope, discover: async () => models, route: 'opencode-go' })
+        const first = controller.getSnapshot()
+        expect(controller.getSnapshot()).toBe(first)
+        controller.edit('apiKeyEnv', 'NEXT')
+        expect(controller.getSnapshot()).not.toBe(first)
+        expect(controller.getSnapshot()).toBe(controller.getSnapshot())
+    })
+
+    it('notices a settings change that the scope reports as a new snapshot', async () => {
+        const { controller, fake } = card()
+        const first = controller.getSnapshot()
+        fake.setValue({ 'opencode-go': { apiKeyEnv: 'CHANGED' } })
+        const second = controller.getSnapshot()
+        expect(second).not.toBe(first)
+        expect(second.credential).toBe('CHANGED')
+    })
+
+    it('keeps the reference stable across every read of one publish', async () => {
+        const { controller } = card()
+        await controller.refresh()
+        const seen = new Set<unknown>()
+        controller.subscribe(() => { seen.add(controller.getSnapshot()) })
+        controller.edit('baseURL', 'https://x/v1')
+        expect(seen.size).toBe(1)
+    })
+
+    it('reuses the reference when a mutation changes nothing observable', async () => {
+        const { controller } = card()
+        await controller.refresh()
+        controller.discard()
+        expect(controller.getSnapshot()).toBe(controller.getSnapshot())
+    })
+})
 
 describe('card identity', () => {
     it('shows the route, its endpoint, and its credential reference', () => {
