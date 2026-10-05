@@ -4,6 +4,10 @@
  * `llm.credential` is a DSH credential-ref NAME (never a literal secret).
  */
 import z from '@deepseek-ai/schemastery'
+import type Schema from '@deepseek-ai/schemastery'
+import { BUILTIN_MCP_SERVERS, type McpServerEntry } from './mcp-servers.ts'
+
+export { BUILTIN_MCP_SERVERS, type BuiltinMcpServer, type McpServerEntry } from './mcp-servers.ts'
 
 /** Settings namespace key. Spelled as a plain literal: the seam's
  *  `SettingsNamespace` brand is applied by `ctx.settings.register`'s generic,
@@ -23,12 +27,12 @@ export interface LlmBackendConfig {
 }
 
 export interface FreeBackendConfig {
-  parallelUrl: string
-  exaUrl: string
   /** Credential-reference name for the Parallel token; undefined = anonymous. */
   parallelCredential: string | undefined
   /** Credential-reference name for the Exa token; undefined = anonymous. */
   exaCredential: string | undefined
+  /** Servers the user added; tried after the shipped ones, in this order. */
+  servers: McpServerEntry[]
   timeoutMs: number
   snippetMaxChars: number
   maxResults: number
@@ -42,18 +46,17 @@ export interface WebSearchConfig {
 export const DEFAULT_CONFIG: WebSearchConfig = {
   llm: { enabled: false, protocol: 'anthropic', baseUrl: undefined, credential: undefined, model: 'deepseek-v4.1-flash', timeoutMs: 20_000 },
   free: {
-    parallelUrl: 'https://search.parallel.ai/mcp',
-    exaUrl: 'https://mcp.exa.ai/mcp',
-    // Both endpoints are free anonymously; a token raises the rate limits.
+    // Both shipped endpoints are free anonymously; a token raises the limits.
     parallelCredential: undefined,
     exaCredential: undefined,
+    servers: [],
     timeoutMs: 15_000,
     snippetMaxChars: 300,
     maxResults: 8,
   },
 }
 
-export const Config = z.object({
+export const Config: Schema<WebSearchConfig> = z.object({
   llm: z.object({
     enabled: z.boolean().default(false),
     protocol: z.union([...LLM_PROTOCOLS] as const).default('anthropic'),
@@ -63,10 +66,19 @@ export const Config = z.object({
     timeoutMs: z.number().default(DEFAULT_CONFIG.llm.timeoutMs),
   }),
   free: z.object({
-    parallelUrl: z.string().default(DEFAULT_CONFIG.free.parallelUrl),
-    exaUrl: z.string().default(DEFAULT_CONFIG.free.exaUrl),
     parallelCredential: z.string().default(''),
     exaCredential: z.string().default(''),
+    servers: z
+      .array(
+        z.object({
+          id: z.string(),
+          label: z.string(),
+          url: z.string(),
+          credential: z.string(),
+          tool: z.string(),
+        }),
+      )
+      .default([]),
     timeoutMs: z.number().default(DEFAULT_CONFIG.free.timeoutMs),
     snippetMaxChars: z.number().default(DEFAULT_CONFIG.free.snippetMaxChars),
     maxResults: z.number().default(DEFAULT_CONFIG.free.maxResults),
@@ -90,10 +102,15 @@ export function createResolvedConfig(input: Partial<WebSearchConfig> = {}): WebS
     },
     free: {
       ...free,
-      parallelUrl: free.parallelUrl?.trim() || '',
-      exaUrl: free.exaUrl?.trim() || '',
       parallelCredential: normOpt(free.parallelCredential),
       exaCredential: normOpt(free.exaCredential),
+      servers: (free.servers ?? []).filter((entry) => entry.url.trim().length > 0).map((entry) => ({
+        ...entry,
+        label: entry.label.trim() || entry.url.trim(),
+        url: entry.url.trim(),
+        credential: entry.credential.trim(),
+        tool: entry.tool.trim() || 'web_search',
+      })),
       timeoutMs: free.timeoutMs || DEFAULT_CONFIG.free.timeoutMs,
       snippetMaxChars: free.snippetMaxChars || DEFAULT_CONFIG.free.snippetMaxChars,
       maxResults: free.maxResults || DEFAULT_CONFIG.free.maxResults,

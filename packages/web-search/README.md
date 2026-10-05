@@ -26,6 +26,35 @@ snippets on the free path than the stock opencode-Go result (which yields only
 url + title). It never modifies DSH source or the stock
 `dsh-web-search-deepseek` plugin.
 
+## The section
+
+**Settings → Web search** — its own entry beside Models, Plugins, LSP and LLM
+providers, not a card in the plugin list.
+
+The layout *is* the fallback chain, because the order is what a search provider
+means. Each step carries its position:
+
+| # | Backend | Endpoint | Token |
+|---|---|---|---|
+| 1 | Custom LLM endpoint | yours | credential reference |
+| 2 | OpenCode Go | shipped | credential reference |
+| 3 | Parallel | shipped, **read-only** | optional |
+| 4 | Exa | shipped, **read-only** | optional |
+| 5 | Your MCP servers | yours, added or removed | optional |
+
+A shipped endpoint is read-only on purpose: it is the address this plugin was
+tested against, and an editable one turns a working free backend into a typo that
+silently falls through the chain. Each token sits on the same row as its
+endpoint — the previous layout separated them with unrelated fields.
+
+### Adding an MCP server
+
+**Add server** appends an entry with its own endpoint, label, token, and MCP tool
+name (default `web_search`). Added servers are tried after the shipped ones, in
+the order listed. Each is called as JSON-RPC `tools/call`, and its reply is read
+with both shipped parsers — Parallel's JSON envelope, then Exa's
+`Title:/URL:/Highlights:` block — so a re-host of either family works.
+
 ## Install / Uninstall contract (the `cordis.patch.yml`)
 
 Adding this package to a profile's `dsh.profile.bundles` (via `dsh plugin`)

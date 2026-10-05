@@ -7,8 +7,10 @@
  *      `deepseek-v4.1-flash` and the `OPENCODE_GO_API_KEY` credential-ref name.
  *      Always tried as the next candidate (independent of `llm.enabled`), but
  *      silently skipped when the credential isn't configured.
- *   3. **Free backends** — Parallel, then Exa. Both work anonymously; each
- *      accepts an optional credential reference that raises its rate limits.
+ *   3. **Shipped MCP servers** — Parallel, then Exa, at their fixed endpoints.
+ *      Both work anonymously; each accepts an optional credential reference
+ *      that raises its rate limits.
+ *   4. **Added MCP servers** — whatever the user listed, in their order.
  *
  * Each stage is attempted in order; the first successful, non-empty result
  * wins. Throws a WebError only when every backend fails. Honours the abort
@@ -19,6 +21,8 @@ import type { WebSearchConfig } from './config.ts'
 import { dedupeAndCap, type RawSource } from './normalize.ts'
 import { parallelSearch } from './backends/parallel.ts'
 import { exaSearch } from './backends/exa.ts'
+import { mcpSearch } from './backends/mcp.ts'
+import { BUILTIN_MCP_SERVERS } from './config.ts'
 import { llmSearch, type LlmBackendOptions } from './backends/llm.ts'
 
 export const PROVIDER_ID = 'opencode-enhanced'
@@ -38,6 +42,8 @@ export interface ProviderRuntime {
   resolveParallelApiKey?: () => Promise<string | undefined>
   /** Resolve the Exa token (undefined = the anonymous free path). */
   resolveExaApiKey?: () => Promise<string | undefined>
+  /** Resolve one added server's token by its credential reference. */
+  resolveServerApiKey?: (ref: string) => Promise<string | undefined>
   /** Inject fake fetch in tests; omitted in production. */
   fetchImpl?: typeof fetch
 }
@@ -69,8 +75,9 @@ export function createSearchProvider(getConfig: () => WebSearchConfig, runtime: 
     available() {
       const cfg = getConfig()
       const customLlmUsable = cfg.llm.enabled === true && cfg.llm.baseUrl !== undefined && cfg.llm.baseUrl.length > 0
-      const freeUsable = cfg.free.parallelUrl.length > 0 || cfg.free.exaUrl.length > 0
-      return customLlmUsable || freeUsable
+      // The shipped servers are always present; the question is whether any
+      // candidate can answer at all.
+      return customLlmUsable || BUILTIN_MCP_SERVERS.length > 0 || cfg.free.servers.length > 0
     },
     async search(request: WebSearchRequest, signal?: AbortSignal): Promise<WebSearchResult> {
       const cfg = getConfig()
@@ -110,18 +117,31 @@ export function createSearchProvider(getConfig: () => WebSearchConfig, runtime: 
       })
 
       // Step 3: free backends.
-      if (cfg.free.parallelUrl.length > 0) {
+      // Step 3: the shipped MCP servers, at their fixed endpoints. A token is
+      // optional at both: resolving to undefined is the anonymous free path, not
+      // a failure, so the call proceeds either way.
+      for (const server of BUILTIN_MCP_SERVERS) {
         candidates.push(async () => {
-          // A token is optional at both endpoints: resolving to undefined is the
-          // anonymous free path, not a failure, so the call proceeds either way.
-          const apiKey = cfg.free.parallelCredential === undefined ? undefined : await runtime.resolveParallelApiKey?.()
-          return parallelSearch(request.query, { url: cfg.free.parallelUrl, ...freeOpts(cfg), ...(apiKey !== undefined ? { apiKey } : {}) }, signal)
+          const ref = cfg.free[server.credentialField]
+          const apiKey = ref === undefined
+            ? undefined
+            : await (server.id === 'parallel' ? runtime.resolveParallelApiKey?.() : runtime.resolveExaApiKey?.())
+          const opts = { url: server.url, ...freeOpts(cfg), ...(apiKey !== undefined ? { apiKey } : {}) }
+          return server.shape === 'exa'
+            ? exaSearch(request.query, opts, signal)
+            : parallelSearch(request.query, opts, signal)
         })
       }
-      if (cfg.free.exaUrl.length > 0) {
+
+      // Step 4: servers the user added, in the order they listed them.
+      for (const server of cfg.free.servers) {
         candidates.push(async () => {
-          const apiKey = cfg.free.exaCredential === undefined ? undefined : await runtime.resolveExaApiKey?.()
-          return exaSearch(request.query, { url: cfg.free.exaUrl, ...freeOpts(cfg), ...(apiKey !== undefined ? { apiKey } : {}) }, signal)
+          const apiKey = server.credential.length === 0 ? undefined : await runtime.resolveServerApiKey?.(server.credential)
+          return mcpSearch(
+            request.query,
+            { url: server.url, tool: server.tool, ...freeOpts(cfg), ...(apiKey !== undefined ? { apiKey } : {}) },
+            signal,
+          )
         })
       }
 

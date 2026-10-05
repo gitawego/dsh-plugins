@@ -2,6 +2,7 @@ import { describe, it, expect, vi } from 'vitest'
 import { createResolvedConfig } from '../src/config.ts'
 import type { WebSearchConfig } from '../src/config.ts'
 import { createSearchProvider, type ProviderRuntime } from '../src/provider.ts'
+import { DEFAULT_CONFIG } from '../src/config.ts'
 import type { WebSearchProvider } from '@deepseek-ai/dsh-web'
 
 type FetchThunk = ((url: string, init: RequestInit) => Response | Promise<Response>) | (() => Response | Promise<Response>)
@@ -21,7 +22,7 @@ function textResponse(body: string): Response {
 
 const cfg = () => createResolvedConfig({
   llm: { enabled: true, protocol: 'anthropic' as const, baseUrl: 'https://opencode.ai/zen/go/v1', credential: 'OPENCODE_GO_API_KEY', model: 'deepseek-v4.1-flash', timeoutMs: 2000 },
-  free: { parallelUrl: 'https://search.parallel.ai/mcp', exaUrl: 'https://mcp.exa.ai/mcp', parallelCredential: undefined, exaCredential: undefined, timeoutMs: 1500, snippetMaxChars: 300, maxResults: 5 },
+  free: { parallelCredential: undefined, exaCredential: undefined, servers: [], timeoutMs: 1500, snippetMaxChars: 300, maxResults: 5 },
 })
 
 const parallelOk = () => jsonResponse({ jsonrpc: '2.0', id: 1, result: { content: [{ type: 'text', text: JSON.stringify({ search_id: 's', results: [{ url: 'https://p.com', title: 'P', publish_date: null, excerpts: ['pp'] }] }) }] } })
@@ -90,9 +91,11 @@ describe('provider (chained fallback)', () => {
     await expect(p.search({ query: 'q' })).rejects.toThrow()
   })
 
-  it('available() is false when no free url and no go credential', async () => {
-    const p = createSearchProvider(() => createResolvedConfig({ llm: { baseUrl: undefined, credential: undefined }, free: { parallelUrl: '', exaUrl: '', timeoutMs: 0, snippetMaxChars: 0, maxResults: 0 } } as Partial<WebSearchConfig>), {} as any)
-    expect(p.available()).toBe(false)
+  it('available() is true with no keys at all, because the shipped MCP servers are free', async () => {
+    // The endpoints are constants now, so "is any backend configured?" is always
+    // yes: the anonymous free chain exists without a credential.
+    const p = createSearchProvider(() => createResolvedConfig({}), {} as any)
+    expect(p.available()).toBe(true)
   })
 
   it('falls through to opencode-go default when custom LLM fails', async () => {
@@ -113,7 +116,7 @@ describe('provider (chained fallback)', () => {
   it('skips opencode-go default silently when its credential is missing', async () => {
     // Custom LLM is unset, opencode-go has no key; the chain must continue
     // to the free backends without throwing the "no credential" error.
-    const customDisabled = createResolvedConfig({ llm: { enabled: false }, free: { parallelUrl: 'https://search.parallel.ai/mcp', exaUrl: 'https://mcp.exa.ai/mcp' } } as Partial<WebSearchConfig>)
+    const customDisabled = createResolvedConfig({ llm: { ...DEFAULT_CONFIG.llm, enabled: false }, free: { ...DEFAULT_CONFIG.free } })
     const fetchImpl = fakeFetch([parallelOk]) // opencode-go never called
     const p = createSearchProvider(() => customDisabled, {
       fetchImpl,

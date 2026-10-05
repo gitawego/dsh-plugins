@@ -3,7 +3,7 @@
     "target": "ES2022",
     "module": "commonjs",
     "jsx": "react-jsx",
-    "rootDir": "src/client",
+    "rootDir": "src",
     "outDir": ".client-build",
     "declaration": true,
     "declarationDir": "lib/types/client",
@@ -44,7 +44,9 @@
       "@deepseek-ai/dsh-client-ui-renderer/client": [
         "./node_modules/@deepseek-ai/dsh-client-ui-renderer/lib/types/client/index.d.ts"
       ]
-    }
+    },
+    "allowImportingTsExtensions": true,
+    "rewriteRelativeImportExtensions": true
   },
   "include": [
     "src/client/**/*.ts",
