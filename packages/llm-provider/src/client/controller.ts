@@ -88,6 +88,21 @@ export interface ModelRow {
     served: boolean
 }
 
+/** The API key control's state. The literal never appears here — only the user's own typing. */
+export interface ApiKeyState {
+    /** Reference name the route resolves, from the profile. */
+    reference: string
+    /** Whether the credential store holds a value for that reference; undefined until it answers. */
+    configured: boolean | undefined
+    /** The key being typed. Blank means "write nothing", never "clear the stored key". */
+    draft: string
+    saving: boolean
+    /** The last write succeeded. */
+    saved: boolean
+    /** Why the last write was refused or failed. */
+    error: string | undefined
+}
+
 /** Everything the view renders. */
 export interface CardSnapshot {
     /** Settings-namespace sync state. */
@@ -123,6 +138,8 @@ export interface CardSnapshot {
     saveFailed: boolean
     /** The namespace revision the last write was fenced against. */
     revision: number | undefined
+    /** The API key control. */
+    apiKey: ApiKeyState
 }
 
 /** Editable fields, and how their text maps to the stored value. */
@@ -148,6 +165,18 @@ export interface CardOptions {
     scope: SettingsScopeLike<ProviderSections>
     /** Ask the host to read the provider's model list. */
     discover: (route: string) => Promise<DiscoveredModel[]>
+    /**
+     * Whether the credential store holds a value for one reference.
+     *
+     * The literal key belongs in the credential store, not in `settings.yaml`:
+     * a settings document is portable (it gets copied between machines and
+     * pasted into issues) and the host's own provider forms write keys through
+     * the credentials domain for exactly that reason. The reference name is the
+     * only part this card stores.
+     */
+    describeCredential: (reference: string) => Promise<boolean>
+    /** Store a literal key under one reference, through the credentials domain. */
+    writeCredential: (reference: string, value: string) => Promise<void>
     /** Route this card edits. */
     route: string
     /** Clock, injectable for deterministic tests. */
@@ -172,6 +201,12 @@ export interface ProviderCard {
     discard(): void
     /** Write every staged edit. */
     save(): Promise<void>
+    /** Stage a key to store. Blank stages nothing. */
+    editApiKey(text: string): void
+    /** Store the staged key under the profile's credential reference. */
+    saveApiKey(): Promise<void>
+    /** Ask the credential store whether the reference is configured. */
+    refreshApiKey(): Promise<void>
 }
 
 /**
@@ -205,6 +240,11 @@ export function createProviderCard(options: CardOptions): ProviderCard {
     let catalog: CatalogRead = { state: 'idle' }
     let saving = false
     let saveFailed = false
+    let keyDraft = ''
+    let keyConfigured: boolean | undefined
+    let keySaving = false
+    let keySaved = false
+    let keyError: string | undefined
 
     /** The resolved section for this route. */
     const section = (): GatewaySection => options.scope.getSnapshot().value?.[route] ?? {}
@@ -244,6 +284,14 @@ export function createProviderCard(options: CardOptions): ProviderCard {
             if (spec.kind === 'enum' && !(REASONING_LEVELS as readonly string[]).includes(text)) invalid[field] = true
         }
         cached = {
+            apiKey: {
+                reference: current.apiKeyEnv ?? '',
+                configured: keyConfigured,
+                draft: keyDraft,
+                saving: keySaving,
+                saved: keySaved,
+                error: keyError,
+            },
             status: raw.status,
             // A scope that is still loading reports `writable: false` before the
             // describe read lands; only a ready, explicitly read-only document
@@ -288,7 +336,26 @@ export function createProviderCard(options: CardOptions): ProviderCard {
         }
     }
 
+    /** Ask the store about one reference, ignoring a reply for a reference we have left. */
+    const refreshKey = async (reference: string): Promise<void> => {
+        if (reference.length === 0) {
+            keyConfigured = undefined
+            return
+        }
+        try {
+            const configured = await options.describeCredential(reference)
+            if ((section().apiKeyEnv?.trim() ?? '') !== reference) return
+            keyConfigured = configured
+        } catch {
+            // An unreachable credential store is "unknown", not "absent": the
+            // field stays quiet rather than claiming a key is missing.
+            keyConfigured = undefined
+        }
+        publish()
+    }
+
     options.scope.subscribe(() => publish())
+    void refreshKey(section().apiKeyEnv?.trim() ?? '')
 
     return {
         getSnapshot: snapshot,
@@ -337,7 +404,44 @@ export function createProviderCard(options: CardOptions): ProviderCard {
         },
         edit(field, text) {
             drafts.set(field, text)
+            if (field === 'apiKeyEnv') void refreshKey(text.trim())
             publish()
+        },
+        async refreshApiKey() {
+            await refreshKey(section().apiKeyEnv?.trim() ?? '')
+        },
+        editApiKey(text) {
+            keyDraft = text
+            keySaved = false
+            keyError = undefined
+            publish()
+        },
+        async saveApiKey() {
+            const reference = section().apiKeyEnv?.trim() ?? ''
+            const value = keyDraft.trim()
+            if (value.length === 0) return
+            if (reference.length === 0) {
+                keyError = 'Name a credential reference before storing a key.'
+                publish()
+                return
+            }
+            keySaving = true
+            keyError = undefined
+            publish()
+            try {
+                await options.writeCredential(reference, value)
+                // The literal is dropped from this process as soon as it is
+                // stored: nothing else needs it, and keeping it would leak it
+                // into the next render.
+                keyDraft = ''
+                keyConfigured = true
+                keySaved = true
+            } catch (error) {
+                keyError = error instanceof Error ? error.message : String(error)
+            } finally {
+                keySaving = false
+                publish()
+            }
         },
         discard() {
             drafts = new Map()

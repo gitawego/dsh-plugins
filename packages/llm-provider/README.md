@@ -93,18 +93,40 @@ agent-default-model:
 
 ## Credential
 
-The route resolves a credential **reference name** through the harness
-credential seam (`ctx.credentials`), so the key can live in the credential
-store, a `.env` line, or the shell environment. Nothing is stored by this
-plugin, and no literal key ever enters `settings.yaml`. The default reference is
-the gateway's own environment name (`OPENCODE_API_KEY`); a store keyed by
-another name sets `apiKeyEnv` in the profile:
+The profile stores a **reference name**, never the key. `apiKeyEnv` is not an
+environment variable in the strict sense — it is a reference the harness
+credential seam resolves, in this order:
+
+1. the launch environment (what `dsh` was started with),
+2. the credential store, `$DSH_HOME/.credentials.yaml`,
+3. the project's `.env`,
+4. the harness home's `.env`.
+
+So `apiKeyEnv: OPENCODE_API_KEY` works with either
+
+```bash
+export OPENCODE_API_KEY=sk-...          # 1
+```
+or a store entry
 
 ```yaml
-llm-provider:
-  opencode-go-session:
-    apiKeyEnv: OPENCODE_GO_CUSTOM_API_KEY
+# ~/.dsh/.credentials.yaml
+refs:
+  OPENCODE_API_KEY: sk-...
 ```
+
+**From the card:** the **API key** field in Configuration stores the literal for
+you, through the harness credentials domain
+(`remote.credentials.set(apiKeyEnv, value)`) — the same call the Models page
+makes for its providers. It is write-only: a stored key never rides a response,
+so the field starts blank, reports only whether a reference is configured, and a
+blank field writes nothing.
+
+**Never put the key in `settings.yaml`.** That document is portable — it gets
+copied between machines and pasted into issues — which is why the host's own
+provider forms route keys through the credentials domain and why this plugin
+keeps only the reference. `tests/client-controller.spec.ts` asserts a staged key
+produces no settings mutation.
 
 If the reference resolves to nothing, pi-ai's own ambient provider auth is
 tried, and a genuinely missing key fails with an authenticated-request error
