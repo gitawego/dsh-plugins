@@ -171,6 +171,27 @@ requires, only host externals, registered under the package name, and no path
 collision with the server's `lib/index.js`. That last claim is the lsp incident
 from the root AGENT.md, encoded.
 
+## Design rule — the Models page cannot be navigated from, so act there instead (NON-NEGOTIABLE)
+
+The shipped Models section cannot configure this route: its `layoutOf()`
+recognises only `llm-deepseek` and `llm-pi-ai` (everything else renders "Other
+fields live in settings.yaml" with Apply disabled), and its model validation
+reads `models` as model objects where ours is an allowlist of ids — hence "Model
+1: Model ID is required".
+
+Do **not** promise a link to the settings screen: the dialog's open state and
+active section are component-local React state in
+`dsh-client-ui-settings-general` (`useState` for both; no store, no service, no
+hash handling), so no plugin can navigate it. What the host does offer is the
+`settings.models.provider-card` seat — "the two seats through which a plugin
+distributed outside this repository adds UI to the Models settings section
+without editing it".
+
+So that seat carries: the exact location in words, why the page's own fields stay
+empty, the state summary, and the **API key** control. The card reads the SAME
+controller as the section, so the counts cannot disagree; `providerSummary()` is
+pure so its wording is tested.
+
 ## Design rule — one controller per route, shared by actions and snapshot (NON-NEGOTIABLE)
 
 The section's face exposes two things per route: the actions (`byRoute[route]`)

@@ -126,6 +126,19 @@ describe('client bundle', () => {
         expect(module.inject).toEqual(['slots', 'locale', 'settingsScope'])
     })
 
+    it('extends the Models page for its own provider row', () => {
+        // The shipped Models section renders `settings.models.provider-card` for
+        // every provider row, keyed by the settings namespace that owns it —
+        // documented as the seat for plugins distributed outside the harness.
+        // This route needs it: the section's own editor cannot configure us.
+        const source = readFileSync(bundle, 'utf8')
+        expect(source).toContain('settings.models.provider-card')
+        // The copy names the location; the arrow survives bundling as an escape,
+        // so assert the halves rather than the whole line.
+        expect(source).toContain('Models, allowance, and endpoint are configured in')
+        expect(source).toContain('LLM providers')
+    })
+
     it('binds the scoped Remote namespaces in a fiber that declares them', () => {
         // cordis refuses to resolve `ctx.remote.llm` from a context that has not
         // declared it ("cannot get property ... without inject"). A child fiber

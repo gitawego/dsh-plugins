@@ -79,6 +79,12 @@
       ],
       "@deepseek-ai/dsh-commands/*": [
         "./node_modules/@deepseek-ai/dsh-commands/lib/types/*"
+      ],
+      "@deepseek-ai/dsh-client-ui-settings-models/client": [
+        "./node_modules/@deepseek-ai/dsh-client-ui-settings-models/lib/types/client/index.d.ts"
+      ],
+      "@deepseek-ai/dsh-client-ui-settings-models": [
+        "./node_modules/@deepseek-ai/dsh-client-ui-settings-models/lib/types/client/index.d.ts"
       ]
     },
     "allowImportingTsExtensions": true,

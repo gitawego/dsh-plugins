@@ -32,32 +32,32 @@ import './remote-types.ts'
 import type {} from '@deepseek-ai/dsh-client-ui-renderer/client'
 import type {} from '@deepseek-ai/dsh-client-locale/client'
 import type {} from '@deepseek-ai/dsh-client-ui-tool/client'
+import type {} from '@deepseek-ai/dsh-client-ui-settings-models/client'
 import type { InjectFace, PropsRuntime, TranslateNS } from '@deepseek-ai/dsh-client-ui-slots'
+import { FIELDS, REASONING_LEVELS, type CardSnapshot, type FieldName, type ProviderSections } from './controller.ts'
 import {
-    createProviderCard,
-    FIELDS,
-    type DiscoveredModel,
-    REASONING_LEVELS,
-    type CardSnapshot,
-    type FieldName,
-    type ProviderCard,
-    type ProviderSections,
-} from './controller.ts'
+    NS,
+    createSectionFace,
+    type LlmProvidersFace,
+    type ProviderActions,
+    type ProvidersSnapshot,
+    type Translate,
+} from './section-face.ts'
+import { providerSummary } from './models-page.ts'
 import { en, zh } from './strings.ts'
 import { QUOTA_CSS, QuotaGauges, QuotaToolView } from './quota-view.tsx'
-import { createQuotaReader } from './quota-client.ts'
 // The route key comes from the same table the adapter registers, so a rename
 // cannot leave the card editing a section nothing serves.
 import { GATEWAYS } from '../gateways.ts'
 
-const NS = 'llm-provider'
 /** Routes this build serves, in gateway order — one panel each. */
 const ROUTES: readonly string[] = GATEWAYS.map((gateway) => gateway.id)
 
 
-/* Pure-type augmentation for the `settings.plugin.item` slot, mirroring
- * `dsh-client-ui-settings-plugins/lib/types/client/slot-contract.d.ts`. The
- * tab owns the slot; this plugin contributes one keyed entry. */
+/* Pure-type augmentation for the locale namespace this plugin registers, so a
+ * missing translation is a compile error rather than a key shown to the user.
+ * The slot types it contributes to (`settings.section`,
+ * `settings.models.provider-card`) are declared by their owning packages. */
 declare module '@deepseek-ai/dsh-client-ui-slots' {
     interface SlotMap {
         'settings.plugin.item': {
@@ -72,45 +72,6 @@ declare module '@deepseek-ai/dsh-client-ui-slots' {
     interface LocaleNamespaceMap {
         'llm-provider': keyof typeof en
     }
-}
-
-type Translate = (key: keyof typeof en) => string
-
-/** One route's actions, as the section's face exposes them. */
-interface ProviderActions {
-    refresh: () => void
-    togglePin: (modelId: string) => void
-    useAll: () => void
-    edit: (field: FieldName, text: string) => void
-    discard: () => void
-    save: () => void
-    editApiKey: (text: string) => void
-    saveApiKey: () => void
-    refreshQuota: () => void
-    openPicker: () => void
-    closePicker: () => void
-    togglePickerModel: (modelId: string) => void
-    selectAllModels: () => void
-    clearSelection: () => void
-    applyPicker: () => void
-}
-
-/** One route's rendered panel state, as the section's snapshot carries it. */
-export interface ProviderEntry {
-    route: string
-    card: CardSnapshot
-}
-
-/** The section's snapshot: one entry per served route. */
-export interface ProvidersSnapshot {
-    providers: ProviderEntry[]
-}
-
-/** What the section's slot entry injects. */
-interface LlmProvidersFace {
-    hooks: { providers: { getSnapshot: () => ProvidersSnapshot; subscribe: (listener: () => void) => () => void } }
-    t: Translate
-    byRoute: Record<string, ProviderActions>
 }
 
 const CSS = `
@@ -166,6 +127,8 @@ ${QUOTA_CSS}
 .lpp-title{margin:0;font-size:16px;font-weight:600;letter-spacing:.01em}
 .lpp-intro{margin:0;font-size:12px;color:var(--dsw-alias-label-tertiary);max-width:60ch}
 .lpp .lp-card{background:var(--dsw-alias-bg-layer-2)}
+.lp-models-page{display:flex;flex-direction:column;gap:8px;margin-top:4px;padding-top:10px;border-top:1px solid var(--dsw-alias-border-l2)}
+.lp-path{padding:1px 6px;border:1px solid var(--dsw-alias-border-l2);border-radius:6px;background:var(--dsw-alias-bg-layer-3);color:var(--dsw-alias-label-secondary);font-size:11px;white-space:nowrap}
 .lpq-dialog{width:min(560px,92vw);max-height:80vh;padding:16px;border:1px solid var(--dsw-alias-border-l2);border-radius:14px;background:var(--dsw-alias-bg-layer-1);color:var(--dsw-alias-label-primary)}
 .lpq-dialog::backdrop{background:#0009}
 .lpq-dialog .lp-dialog-head{display:flex;align-items:baseline;justify-content:space-between;gap:10px;margin-bottom:10px}
@@ -270,6 +233,8 @@ function ApiKeyField(props: {
     disabled: boolean
     onEdit: (text: string) => void
     onSave: () => void
+    /** Copy variant: the section has the reference field above it, the Models page does not. */
+    hint?: string
 }): JSX.Element {
     const { t, state } = props
     const status = state.configured === undefined ? t('apiKeyUnknown') : state.configured ? t('apiKeyStored') : t('apiKeyMissing')
@@ -295,7 +260,7 @@ function ApiKeyField(props: {
             <small className={state.error !== undefined ? 'lp-keyerror' : undefined}>
                 {state.error ?? (state.saved ? `${t('apiKeyStoredNow')} ${status}` : status)}
             </small>
-            <small>{t('apiKeyHint')}</small>
+            <small>{props.hint ?? t('apiKeyHint')}</small>
         </div>
     )
 }
@@ -402,6 +367,56 @@ function ModelPicker(props: {
                 </div>
             </div>
         </dialog>
+    )
+}
+
+/**
+ * The extension card the Models page renders inside our provider's row.
+ *
+ * The section's own editor cannot configure this route — its `layoutOf()`
+ * recognises only `llm-deepseek` and `llm-pi-ai`, so it shows "Other fields live
+ * in settings.yaml" and disables Apply, and it reports "Model 1: Model ID is
+ * required" because our `models` is an allowlist of ids where it expects model
+ * objects. So this card answers the two questions that page leaves open: where
+ * the rest of the settings live, and how to set the key.
+ *
+ * A *link* to the settings screen is not available: the dialog's open state and
+ * active section are component-local React state in the shell, with no store,
+ * service, or hash route for a plugin to drive. The location is therefore named
+ * exactly, and the one control that page exists for is offered here.
+ *
+ * It reads the SAME controller as the section, so the counts here and there
+ * cannot disagree.
+ */
+export function ModelsProviderCard(
+    props: PropsRuntime<'settings.models.provider-card'> & InjectFace<LlmProvidersFace>,
+): JSX.Element | null {
+    const t = props.t
+    const snapshot = props.useProviders((value) => value)
+    const entry = snapshot.providers[0]
+    if (entry === undefined) return null
+    const card = entry.card
+    const face = props.byRoute[entry.route]
+    if (face === undefined) return null
+    return (
+        <div className="lp-models-page">
+            <p className="lp-hint">
+                {t('modelsPageWhere')} <span className="lp-path">{t('modelsPageSection')}</span>
+            </p>
+            <p className="lp-hint">{t('modelsPageManaged')}</p>
+            <p className="lp-state">{providerSummary(card, t)}</p>
+            <p className="lp-hint">
+                {t('modelsPageRef')}: <span className="lp-id">{card.apiKey.reference.length > 0 ? card.apiKey.reference : t('modelsPageNoRef')}</span>
+            </p>
+            <ApiKeyField
+                t={t}
+                state={card.apiKey}
+                disabled={!card.writable}
+                onEdit={face.editApiKey}
+                onSave={face.saveApiKey}
+                hint={t('apiKeyHintPage')}
+            />
+        </div>
     )
 }
 
@@ -701,38 +716,6 @@ export function ProviderPanel(props: {
 }
 
 /**
- * The actions for one already-built controller.
- *
- * Takes the controller rather than building one: the section renders one
- * controller's snapshot and drives it through these actions, and two
- * constructions per route means the buttons act on a controller nobody is
- * looking at — which is exactly how the allowance and the catalog both went
- * blank (an orphan controller answered `refresh()` while the rendered one stayed
- * idle).
- * @param controller - the route's controller.
- * @returns that route's actions.
- */
-export function actionsFor(controller: ProviderCard): ProviderActions {
-    return {
-        refresh: () => { void controller.refresh() },
-        togglePin: (modelId) => { void controller.togglePin(modelId) },
-        useAll: () => { void controller.useAll() },
-        edit: (field, text) => { controller.edit(field, text) },
-        discard: () => { controller.discard() },
-        save: () => { void controller.save() },
-        editApiKey: (text) => { controller.editApiKey(text) },
-        saveApiKey: () => { void controller.saveApiKey() },
-        refreshQuota: () => { void controller.refreshQuota() },
-        openPicker: () => { controller.openPicker() },
-        closePicker: () => { controller.closePicker() },
-        togglePickerModel: (modelId) => { controller.togglePickerModel(modelId) },
-        selectAllModels: () => { controller.selectAllModels() },
-        clearSelection: () => { controller.clearSelection() },
-        applyPicker: () => { void controller.applyPicker() },
-    }
-}
-
-/**
  * The LLM providers section: one panel per served route.
  *
  * A section rather than a card in the plugin list, because this is a
@@ -769,75 +752,6 @@ export function LlmProvidersSection(props: PropsRuntime<'settings.section'> & In
 }
 
 /**
- * Build the section's face: one controller per route, projected through a single
- * memoized snapshot.
- *
- * One store rather than one hook per panel: a slot component gets exactly one
- * injected hook, and a snapshot that rebuilt itself per call would re-render
- * forever (`useSyncExternalStore` compares by identity — React error #185, the
- * failure this card already shipped once).
- * @param ctx - the client context.
- * @param scope - the bound `llm-provider` settings scope.
- * @param routes - routes to render a panel for.
- * @returns the section's injected face.
- */
-export function createSectionFace(
-    ctx: ClientContext,
-    scope: SettingsScope<ProviderSections>,
-    routes: readonly string[],
-): LlmProvidersFace {
-    const t = ctx.locale.bind(NS) as unknown as Translate
-    const byRoute: Record<string, ProviderActions> = {}
-    const controllers: { route: string; card: ProviderCard }[] = []
-    for (const route of routes) {
-        // ONE controller per route: the snapshot below and the actions above are
-        // two views of the same object. Building it twice is how the catalog and
-        // the allowance both went blank.
-        const controller = createProviderCard({
-            scope,
-            route,
-            readQuota: createQuotaReader(),
-            describeCredential: credentialDescriber(ctx),
-            writeCredential: credentialWriter(ctx),
-            discover: modelDiscovery(ctx),
-        })
-        controllers.push({ route, card: controller })
-        byRoute[route] = actionsFor(controller)
-    }
-
-    let cached: ProvidersSnapshot | undefined
-    let stale = true
-    const listeners = new Set<() => void>()
-    // Subscribe at construction, not per consumer: staleness has to be tracked
-    // whether or not anyone is watching, or a read taken between subscriptions
-    // serves a cached snapshot that no longer matches its panels.
-    for (const entry of controllers) {
-        entry.card.subscribe(() => {
-            stale = true
-            for (const listener of listeners) listener()
-        })
-    }
-    const compute = (): ProvidersSnapshot => ({
-        providers: controllers.map((entry) => ({ route: entry.route, card: entry.card.getSnapshot() })),
-    })
-    const store = {
-        getSnapshot: (): ProvidersSnapshot => {
-            if (cached !== undefined && !stale) return cached
-            stale = false
-            cached = compute()
-            return cached
-        },
-        subscribe: (listener: () => void): (() => void) => {
-            listeners.add(listener)
-            return () => {
-                listeners.delete(listener)
-            }
-        },
-    }
-    return { hooks: { providers: store }, t, byRoute }
-}
-
-/**
  * Services that must be present before this card registers.
  *
  * Only the boot-time ones. The Remote namespaces are bound separately, in a
@@ -857,55 +771,6 @@ export function createSectionFace(
  * because cordis refuses to resolve `ctx.remote.llm` from a context that has not
  * declared it (`cannot get property "remote.llm" without inject`).
  */
-/** The Remote carrier, bound in a fiber that declares the scoped namespaces. */
-function carrierOf(ctx: ClientContext): () => ClientContext['remote'] {
-    let remote: ClientContext['remote'] | undefined
-    ctx.inject(['remote', 'remote.llm', 'remote.credentials'], (injected: ClientContext) => {
-        remote = injected.remote
-        return () => {
-            remote = undefined
-        }
-    })
-    return () => {
-        if (remote === undefined) throw new Error('the Remote carrier is still connecting; try again in a moment')
-        return remote
-    }
-}
-
-/** The credential read one route's profile names. */
-function credentialDescriber(ctx: ClientContext) {
-    const carrier = carrierOf(ctx)
-    return async (reference: string): Promise<boolean> => {
-        const response = await carrier().credentials.describe([reference])
-        if (!response.ok) throw new Error(response.error.message)
-        return response.value[reference]?.configured === true
-    }
-}
-
-/** The credential write behind the API key field. */
-function credentialWriter(ctx: ClientContext) {
-    const carrier = carrierOf(ctx)
-    return async (reference: string, value: string): Promise<void> => {
-        const response = await carrier().credentials.set(reference, value)
-        if (!response.ok) throw new Error(response.error.message)
-    }
-}
-
-/** The live catalog read. */
-function modelDiscovery(ctx: ClientContext) {
-    const carrier = carrierOf(ctx)
-    return async (route: string): Promise<DiscoveredModel[]> => {
-        const result = await carrier().llm.discoverModels(NS, { provider: route })
-        if (!result.ok) throw new Error(result.error.message)
-        return result.value.map((model) => ({
-            id: model.id,
-            ...(model.name !== undefined ? { name: model.name } : {}),
-            ...(model.contextWindow !== undefined ? { contextWindow: model.contextWindow } : {}),
-            ...(model.maxTokens !== undefined ? { maxTokens: model.maxTokens } : {}),
-        }))
-    }
-}
-
 export const inject = ['slots', 'locale', 'settingsScope']
 
 /**
@@ -936,6 +801,15 @@ export function apply(ctx: ClientContext): void {
         locale: NS,
         inject: () => face,
     }, LlmProvidersSection as never))
+    // The Models page renders this for our provider row, keyed by the settings
+    // namespace that owns it — the seat it documents as existing for plugins
+    // distributed outside the harness.
+    ctx.slots.inject('settings.models.provider-card', () => ctx.slots.register({
+        name: 'settings.models.provider-card',
+        key: NS,
+        locale: NS,
+        inject: () => face,
+    }, ModelsProviderCard as never))
 }
 
 export type { ProviderSections, CardSnapshot, FieldName }
