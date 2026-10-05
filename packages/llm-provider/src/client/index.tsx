@@ -48,6 +48,11 @@ import { OPENCODE_GO } from '../gateways.ts'
 const NS = 'llm-provider'
 const ROUTE = OPENCODE_GO.id
 
+// The card not appearing is indistinguishable from the client half never
+// loading, and the two need different fixes. One line makes it observable
+// without devtools guesswork.
+console.info('[dsh-llm-provider] client half loaded')
+
 /* Pure-type augmentation for the `settings.plugin.item` slot, mirroring
  * `dsh-client-ui-settings-plugins/lib/types/client/slot-contract.d.ts`. The
  * tab owns the slot; this plugin contributes one keyed entry. */
@@ -458,7 +463,9 @@ export function createFace(ctx: ClientContext, scope: SettingsScope<ProviderSect
         scope,
         route: ROUTE,
         discover: async (route) => {
-            const result = await ctx.remote.llm.discoverModels(NS, { provider: route })
+            const llm = ctx.get('remote')?.llm
+            if (llm === undefined) throw new Error('the Remote carrier is not available in this client')
+            const result = await llm.discoverModels(NS, { provider: route })
             if (!result.ok) throw new Error(result.error.message)
             return result.value.map((model) => ({
                 id: model.id,
@@ -479,8 +486,16 @@ export function createFace(ctx: ClientContext, scope: SettingsScope<ProviderSect
     }
 }
 
-/** Inject the services the card needs: slots, copy, the settings scope, and Remote. */
-export const inject = ['slots', 'locale', 'settingsScope', 'remote']
+/**
+ * Services that must exist before this client half may register its card.
+ *
+ * `remote` is deliberately NOT among them. The card needs it only when the user
+ * asks for the provider's model list, and gating registration on a service that
+ * is needed later turns a missing Remote carrier into an invisible card with no
+ * diagnostic. `createFace` resolves it lazily and reports a clear reason when it
+ * is absent.
+ */
+export const inject = ['slots', 'locale', 'settingsScope']
 
 /**
  * Mount the card.
