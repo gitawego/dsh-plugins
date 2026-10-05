@@ -51,6 +51,23 @@ export interface WebSearchDraft {
     free: FreeDraft
 }
 
+/**
+ * One credential reference's token state.
+ *
+ * The literal never appears here: a stored secret does not ride a response, so
+ * the control can only report whether one is set. `draft` is the user's own
+ * typing, cleared as soon as it is stored.
+ */
+export interface TokenState {
+    /** Whether the store holds a value for the reference; undefined until it answers. */
+    configured: boolean | undefined
+    /** The token being typed. Blank means "write nothing", never "clear it". */
+    draft: string
+    saving: boolean
+    saved: boolean
+    error: string | undefined
+}
+
 /** What the section renders. */
 export interface WebSearchSnapshot {
     status: 'loading' | 'ready' | 'unavailable'
@@ -63,6 +80,8 @@ export interface WebSearchSnapshot {
     invalid: readonly string[]
     saving: boolean
     failed: boolean
+    /** Token state by credential reference; absent entries are untouched. */
+    tokens: Readonly<Record<string, TokenState>>
 }
 
 /** Editable fields of the custom-LLM backend. */
@@ -88,6 +107,12 @@ export interface WebSearchSectionController {
     removeServer(id: string): void
     /** Edit one server's field. */
     editServer(id: string, field: ServerField, value: string): void
+    /** Stage a token for one reference. Blank stages nothing. */
+    editToken(reference: string, text: string): void
+    /** Store the staged token under its reference, through the credentials domain. */
+    saveToken(reference: string): Promise<void>
+    /** Ask the credential store about every reference the section names. */
+    refreshTokens(): Promise<void>
     /** Write the staged sub-sections. */
     save(): Promise<void>
     /** Drop every staged edit. */
@@ -181,12 +206,24 @@ export function createWebSearchSection(options: {
     scope: SettingsScopeLike<unknown>
     /** Id minter; injectable so a test can assert a stable id. */
     mintId?: () => string
+    /**
+     * Whether the credential store holds a value for one reference.
+     *
+     * A token belongs in the credential store, not in `settings.yaml`: that
+     * document is portable — copied between machines, pasted into issues — which
+     * is exactly where a pasted literal ends up when a field labelled "Token"
+     * asks for a credential *reference*.
+     */
+    describeCredential?: (reference: string) => Promise<boolean>
+    /** Store a literal token under one reference, through the credentials domain. */
+    writeCredential?: (reference: string, value: string) => Promise<void>
 }): WebSearchSectionController {
     const mintId = options.mintId ?? (() => `mcp-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`)
     const listeners = new Set<() => void>()
     let draft = draftOf(options.scope.getSnapshot().value)
     let saving = false
     let failed = false
+    const tokens = new Map<string, TokenState>()
 
     /** A fresh draft from the scope, discarding staged edits. */
     const reload = (): void => {
@@ -213,6 +250,7 @@ export function createWebSearchSection(options: {
         if (cached !== undefined && !stale) return cached
         stale = false
         cached = {
+            tokens: Object.fromEntries(tokens),
             status: raw.status,
             writable: raw.status === 'ready' ? raw.writable === true : true,
             draft,
@@ -245,6 +283,10 @@ export function createWebSearchSection(options: {
         reload()
         publish()
     })
+
+    /** The token state for one reference, defaulted when untouched. */
+    const tokenFor = (reference: string): TokenState =>
+        tokens.get(reference) ?? { configured: undefined, draft: '', saving: false, saved: false, error: undefined }
 
     /** Write both sub-sections; the wire accepts whole sub-section objects. */
     const write = async (): Promise<void> => {
@@ -299,6 +341,45 @@ export function createWebSearchSection(options: {
         },
         editFree(field, value) {
             setDraft({ ...draft, free: { ...draft.free, [field]: value } })
+        },
+        editToken(reference, text) {
+            tokens.set(reference, { ...tokenFor(reference), draft: text, saved: false, error: undefined })
+            publish()
+        },
+        async saveToken(reference) {
+            const value = tokenFor(reference).draft.trim()
+            if (value.length === 0) return
+            if (reference.trim().length === 0) {
+                tokens.set(reference, { ...tokenFor(reference), error: 'Name a credential reference before storing a token.' })
+                publish()
+                return
+            }
+            tokens.set(reference, { ...tokenFor(reference), saving: true, error: undefined })
+            publish()
+            try {
+                await options.writeCredential?.(reference.trim(), value)
+                // Drop the literal as soon as it is stored: nothing else needs it,
+                // and keeping it would leak it into the next render.
+                tokens.set(reference, { configured: true, draft: '', saving: false, saved: true, error: undefined })
+            } catch (error) {
+                tokens.set(reference, { ...tokenFor(reference), saving: false, error: error instanceof Error ? error.message : String(error) })
+            }
+            publish()
+        },
+        async refreshTokens() {
+            const references = [draft.free.parallelCredential, draft.free.exaCredential, ...draft.free.servers.map((server) => server.credential)]
+                .map((reference) => reference.trim())
+                .filter((reference) => reference.length > 0)
+            for (const reference of references) {
+                try {
+                    const configured = await options.describeCredential?.(reference)
+                    tokens.set(reference, { ...tokenFor(reference), configured: configured ?? undefined })
+                } catch {
+                    // An unreachable store is "unknown", not "absent".
+                    tokens.set(reference, { ...tokenFor(reference), configured: undefined })
+                }
+            }
+            publish()
         },
         addServer() {
             const id = mintId()
