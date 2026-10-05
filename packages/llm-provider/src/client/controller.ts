@@ -103,6 +103,16 @@ export interface ApiKeyState {
     error: string | undefined
 }
 
+/** The model-picker dialog's state. */
+export interface PickerState {
+    /** Whether the dialog is open. */
+    open: boolean
+    /** Ids checked in the dialog. Seeded from the effective allowlist. */
+    selected: readonly string[]
+    /** Number of models the provider serves. */
+    served: number
+}
+
 /** Everything the view renders. */
 export interface CardSnapshot {
     /** Settings-namespace sync state. */
@@ -119,8 +129,14 @@ export interface CardSnapshot {
     sessionRouting: boolean
     /** Whether the allowlist is empty (= every model is available). */
     advertisesAll: boolean
-    /** Advertised models, pinned first, then the rest by id. */
+    /** Every model the provider serves, pinned first, then the rest by id. */
     models: ModelRow[]
+    /** Only the models this route may use — what the card lists. */
+    advertisedModels: ModelRow[]
+    /** Models the provider serves that this route may not use. */
+    withheldCount: number
+    /** The picker dialog. */
+    picker: PickerState
     /** How many models the route may use. */
     advertisedCount: number
     /** How many the provider serves. */
@@ -197,6 +213,18 @@ export interface ProviderCard {
     useAll(): Promise<void>
     /** Stage text for one configuration field. */
     edit(field: FieldName, text: string): void
+    /** Open the model picker, seeded from the effective allowlist. */
+    openPicker(): void
+    /** Close the model picker without writing. */
+    closePicker(): void
+    /** Check or uncheck one model in the picker. */
+    togglePickerModel(modelId: string): void
+    /** Check every served model in the picker. */
+    selectAllModels(): void
+    /** Uncheck every model in the picker. */
+    clearSelection(): void
+    /** Write the picker's selection as the allowlist. */
+    applyPicker(): Promise<void>
     /** Drop every staged edit. */
     discard(): void
     /** Write every staged edit. */
@@ -245,6 +273,8 @@ export function createProviderCard(options: CardOptions): ProviderCard {
     let keySaving = false
     let keySaved = false
     let keyError: string | undefined
+    let pickerOpen = false
+    let pickerDraft = new Set<string>()
 
     /** The resolved section for this route. */
     const section = (): GatewaySection => options.scope.getSnapshot().value?.[route] ?? {}
@@ -277,6 +307,7 @@ export function createProviderCard(options: CardOptions): ProviderCard {
         const current = section()
         const rows = buildRows()
         const pinnedCount = rows.filter((row) => row.pinned).length
+        const advertisedRows = rows.filter((row) => row.advertised)
         const invalid: Record<string, boolean> = {}
         for (const [field, text] of drafts) {
             const spec = FIELDS[field]
@@ -303,6 +334,9 @@ export function createProviderCard(options: CardOptions): ProviderCard {
             sessionRouting: current.sessionRouting ?? true,
             advertisesAll: pinnedCount === 0,
             models: rows,
+            advertisedModels: advertisedRows,
+            withheldCount: rows.length - advertisedRows.length,
+            picker: { open: pickerOpen, selected: [...pickerDraft].sort(), served: rows.length },
             advertisedCount: pinnedCount === 0 ? rows.filter((row) => row.served).length : pinnedCount,
             servedCount: rows.length,
             catalog,
@@ -395,6 +429,48 @@ export function createProviderCard(options: CardOptions): ProviderCard {
             // Reflect the write locally at once: the namespace commit is
             // asynchronous, and a pin that appears to do nothing reads as broken.
             models = models.map((model) => ({ ...model, pinned: next.includes(model.id) }))
+            publish()
+        },
+        openPicker() {
+            // Seeded from the EFFECTIVE allowlist: with nothing pinned every
+            // served model is allowed, so every box starts checked. A picker
+            // that opened empty would misrepresent the current state and turn
+            // one Apply into an accidental narrowing.
+            const pinned = allowlist()
+            pickerDraft = new Set(pinned.length > 0 ? pinned : models.map((model) => model.id))
+            pickerOpen = true
+            publish()
+        },
+        closePicker() {
+            pickerOpen = false
+            publish()
+        },
+        togglePickerModel(modelId) {
+            if (pickerDraft.has(modelId)) pickerDraft.delete(modelId)
+            else pickerDraft.add(modelId)
+            publish()
+        },
+        selectAllModels() {
+            pickerDraft = new Set(models.map((model) => model.id))
+            publish()
+        },
+        clearSelection() {
+            pickerDraft = new Set()
+            publish()
+        },
+        async applyPicker() {
+            const served = models.map((model) => model.id)
+            const selected = [...pickerDraft].sort()
+            // Selecting everything is the same statement as "nothing pinned", so
+            // write it that way: the document stays minimal and the route keeps
+            // following the provider as it adds models.
+            const coversAll = served.length > 0 && served.every((id) => pickerDraft.has(id))
+            if (coversAll) await write([{ op: 'unset', path: [route, 'models'] }])
+            else await write([{ op: 'set', path: [route, 'models'], value: selected }])
+            if (!saveFailed) {
+                models = models.map((model) => ({ ...model, pinned: !coversAll && pickerDraft.has(model.id) }))
+                pickerOpen = false
+            }
             publish()
         },
         async useAll() {

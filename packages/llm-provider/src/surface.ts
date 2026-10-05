@@ -147,6 +147,11 @@ export function createQuotaTool(deps: SurfaceDeps): ToolDefinition {
                 properties: { text: { type: 'string', required: true }, details: { type: 'object', additionalProperties: true } },
             },
             render: (_args, value) => [{ type: 'text', text: (value as { text: string }).text }],
+            // The structured half of the result, for the tool's own view. A tool
+            // card reads `ToolResultNode.meta`, which only `presentationMeta`
+            // populates — without it the view would have to parse the rendered
+            // sentence back into numbers.
+            presentationMeta: (_args, value) => (value as { details: JsonValue }).details,
         },
         async execute(args) {
             // Tool arguments arrive from the model, so they are validated here

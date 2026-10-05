@@ -381,6 +381,98 @@ describe('storing the API key', () => {
     })
 })
 
+describe('the model picker', () => {
+    it('shows only the models the route may use', async () => {
+        const { controller } = card({ sections: { 'opencode-go': { models: ['glm-5.3-flash'] } } })
+        await controller.refresh()
+        const snapshot = controller.getSnapshot()
+        expect(snapshot.advertisedModels.map((row) => row.id)).toEqual(['glm-5.3-flash'])
+        expect(snapshot.models).toHaveLength(2)
+        expect(snapshot.withheldCount).toBe(1)
+    })
+
+    it('starts with every served model checked while nothing is pinned', async () => {
+        // Nothing pinned means every model is allowed, so an empty picker would
+        // misrepresent the state and make one Apply an accidental narrowing.
+        const { controller } = card({ sections: { 'opencode-go': {} } })
+        await controller.refresh()
+        controller.openPicker()
+        const picker = controller.getSnapshot().picker
+        expect(picker.open).toBe(true)
+        expect(picker.selected).toEqual(['deepseek-v4.1-flash', 'glm-5.3-flash'])
+    })
+
+    it('seeds from the allowlist when one exists', async () => {
+        const { controller } = card({ sections: { 'opencode-go': { models: ['glm-5.3-flash'] } } })
+        await controller.refresh()
+        controller.openPicker()
+        expect(controller.getSnapshot().picker.selected).toEqual(['glm-5.3-flash'])
+    })
+
+    it('toggles one model without writing anything yet', async () => {
+        const { controller, fake } = card({ sections: { 'opencode-go': {} } })
+        await controller.refresh()
+        controller.openPicker()
+        controller.togglePickerModel('glm-5.3-flash')
+        expect(fake.ops).toHaveLength(0)
+        expect(controller.getSnapshot().picker.selected).toEqual(['deepseek-v4.1-flash'])
+    })
+
+    it('writes the selection as the allowlist on apply', async () => {
+        const { controller, fake } = card({ sections: { 'opencode-go': {} } })
+        await controller.refresh()
+        controller.openPicker()
+        controller.clearSelection()
+        controller.togglePickerModel('glm-5.3-flash')
+        await controller.applyPicker()
+        expect(fake.ops[0]).toEqual([{ op: 'set', path: ['opencode-go', 'models'], value: ['glm-5.3-flash'] }])
+        const snapshot = controller.getSnapshot()
+        expect(snapshot.picker.open).toBe(false)
+        expect(snapshot.advertisedModels.map((row) => row.id)).toEqual(['glm-5.3-flash'])
+    })
+
+    it('unpins instead of listing everything, so the route keeps following the provider', async () => {
+        const { controller, fake } = card({ sections: { 'opencode-go': { models: ['glm-5.3-flash'] } } })
+        await controller.refresh()
+        controller.openPicker()
+        controller.selectAllModels()
+        await controller.applyPicker()
+        expect(fake.ops[0]).toEqual([{ op: 'unset', path: ['opencode-go', 'models'] }])
+        expect(controller.getSnapshot().advertisesAll).toBe(true)
+    })
+
+    it('leaves the allowlist alone when the dialog is closed', async () => {
+        const { controller, fake } = card({ sections: { 'opencode-go': { models: ['glm-5.3-flash'] } } })
+        await controller.refresh()
+        controller.openPicker()
+        controller.clearSelection()
+        controller.closePicker()
+        expect(fake.ops).toHaveLength(0)
+        expect(controller.getSnapshot().picker.open).toBe(false)
+        expect(controller.getSnapshot().advertisedModels.map((row) => row.id)).toEqual(['glm-5.3-flash'])
+    })
+
+    it('keeps the dialog open when the write is refused, so the choice is not lost', async () => {
+        const { controller, fake } = card({ sections: { 'opencode-go': {} } })
+        await controller.refresh()
+        controller.openPicker()
+        controller.clearSelection()
+        fake.failWith('settings-rejected')
+        await controller.applyPicker()
+        expect(controller.getSnapshot().picker.open).toBe(true)
+        expect(controller.getSnapshot().picker.selected).toEqual([])
+    })
+
+    it('keeps a pinned model the provider dropped visible in the picker', async () => {
+        const { controller } = card({ sections: { 'opencode-go': { models: ['retired-model'] } } })
+        await controller.refresh()
+        controller.openPicker()
+        const snapshot = controller.getSnapshot()
+        expect(snapshot.picker.selected).toEqual(['retired-model'])
+        expect(snapshot.models.some((row) => row.id === 'retired-model' && !row.served)).toBe(true)
+    })
+})
+
 describe('configuration edits', () => {
     it('stages text without writing it', () => {
         const { controller, fake } = card()

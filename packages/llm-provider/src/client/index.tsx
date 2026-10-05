@@ -31,6 +31,7 @@ import type {} from '@deepseek-ai/dsh-api-remotes/client'
 import './remote-types.ts'
 import type {} from '@deepseek-ai/dsh-client-ui-renderer/client'
 import type {} from '@deepseek-ai/dsh-client-locale/client'
+import type {} from '@deepseek-ai/dsh-client-ui-tool/client'
 import type { InjectFace, PropsRuntime, TranslateNS } from '@deepseek-ai/dsh-client-ui-slots'
 import {
     createProviderCard,
@@ -42,6 +43,7 @@ import {
     type ProviderSections,
 } from './controller.ts'
 import { en, zh } from './strings.ts'
+import { QUOTA_CSS, QuotaToolView } from './quota-view.tsx'
 // The route key comes from the same table the adapter registers, so a rename
 // cannot leave the card editing a section nothing serves.
 import { OPENCODE_GO } from '../gateways.ts'
@@ -82,6 +84,12 @@ interface OpenCodeGoCardFace {
     save: () => void
     editApiKey: (text: string) => void
     saveApiKey: () => void
+    openPicker: () => void
+    closePicker: () => void
+    togglePickerModel: (modelId: string) => void
+    selectAllModels: () => void
+    clearSelection: () => void
+    applyPicker: () => void
 }
 
 const CSS = `
@@ -127,10 +135,16 @@ const CSS = `
 .lp-keyrow{display:flex;gap:8px}
 .lp-keyrow input{flex:1}
 .lp-keyerror{color:var(--dsw-alias-label-error)!important}
+${QUOTA_CSS}
 .lp-foot{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;border-top:1px solid var(--dsw-alias-border-l2);padding-top:12px}
 .lp-foot p{margin:0;font-size:11px;color:var(--dsw-alias-label-tertiary)}
 .lp-actions{display:flex;gap:8px}
 .lp-note{margin:0;font-size:11px;color:var(--dsw-alias-label-tertiary)}
+.lpq-dialog{width:min(560px,92vw);max-height:80vh;padding:16px;border:1px solid var(--dsw-alias-border-l2);border-radius:14px;background:var(--dsw-alias-bg-layer-1);color:var(--dsw-alias-label-primary)}
+.lpq-dialog::backdrop{background:#0009}
+.lpq-dialog .lp-dialog-head{display:flex;align-items:baseline;justify-content:space-between;gap:10px;margin-bottom:10px}
+.lp-list--dialog{max-height:46vh;margin-top:8px}
+.lp-list--dialog .lp-model{grid-template-columns:auto 1fr auto auto auto}
 `
 
 /** Install the card's stylesheet once, and remove it with the plugin. */
@@ -272,6 +286,99 @@ function draftOf(snapshot: CardSnapshot, field: FieldName): string {
     }
 }
 
+/**
+ * The model picker.
+ *
+ * A native `<dialog>` rather than a hand-rolled overlay: focus containment, Esc,
+ * and stacking above the app are the platform's job, and a settings card inside
+ * a scrolling panel is exactly where a custom overlay gets those wrong.
+ *
+ * The dialog is the catalog browser; the card's own list is the decision. That
+ * split is what lets the card show only the models this route may use without
+ * hiding the ones it may not.
+ */
+function ModelPicker(props: {
+    t: Translate
+    state: CardSnapshot['picker']
+    models: CardSnapshot['models']
+    disabled: boolean
+    onToggle: (modelId: string) => void
+    onAll: () => void
+    onNone: () => void
+    onClose: () => void
+    onApply: () => void
+}): JSX.Element {
+    const { t, state } = props
+    const ref = useRef<HTMLDialogElement | null>(null)
+    const [filter, setFilter] = useState('')
+
+    useEffect(() => {
+        const dialog = ref.current
+        if (dialog === null) return
+        if (props.state.open && !dialog.open) dialog.showModal()
+        if (!props.state.open && dialog.open) dialog.close()
+    }, [props.state.open])
+
+    const selected = new Set(state.selected)
+    const needle = filter.trim().toLowerCase()
+    const visible = needle.length === 0
+        ? props.models
+        : props.models.filter((row) => row.id.toLowerCase().includes(needle) || row.name.toLowerCase().includes(needle))
+
+    return (
+        <dialog
+            ref={ref}
+            className="lpq-dialog"
+            aria-label={t('pickModels')}
+            onClose={props.onClose}
+            onCancel={props.onClose}
+        >
+            <div className="lp-dialog-head">
+                <h4 className="lp-title">{t('pickModels')}</h4>
+                <span className="lp-state">{t('pickerCount').replace('{n}', String(state.selected.length)).replace('{served}', String(state.served))}</span>
+            </div>
+            <div className="lp-row lp-row--head">
+                <input
+                    className="lp-filter"
+                    type="search"
+                    value={filter}
+                    placeholder={t('filterPlaceholder')}
+                    onChange={(event) => { setFilter(event.target.value) }}
+                />
+                <div className="lp-actions">
+                    <button type="button" className="lp-btn" onClick={props.onAll}>{t('pickAll')}</button>
+                    <button type="button" className="lp-btn" onClick={props.onNone}>{t('pickNone')}</button>
+                </div>
+            </div>
+            <ul className="lp-list lp-list--dialog">
+                {visible.length === 0
+                    ? <li className="lp-empty">{props.models.length === 0 ? t('noModels') : t('noMatch')}</li>
+                    : visible.map((row) => (
+                        <li className="lp-model" key={row.id} data-advertised={String(selected.has(row.id))} data-served={String(row.served)}>
+                            <input
+                                type="checkbox"
+                                aria-label={row.id}
+                                checked={selected.has(row.id)}
+                                onChange={() => { props.onToggle(row.id) }}
+                            />
+                            <span className="lp-id" title={row.id}>{row.id}</span>
+                            <span className="lp-num">{formatTokens(row.contextWindow)} ctx</span>
+                            <span className="lp-num">{formatTokens(row.maxTokens)} out</span>
+                            {row.served ? null : <span className="lp-num">{t('retired')}</span>}
+                        </li>
+                    ))}
+            </ul>
+            <div className="lp-foot">
+                <p>{t('pickerHint')}</p>
+                <div className="lp-actions">
+                    <button type="button" className="lp-btn" onClick={props.onClose}>{t('cancel')}</button>
+                    <button type="button" className="lp-btn lp-btn--primary" disabled={props.disabled} onClick={props.onApply}>{t('pickApply')}</button>
+                </div>
+            </div>
+        </dialog>
+    )
+}
+
 /** One model row: the pin control, the id, and its capacities. */
 function ModelRowView(props: {
     row: CardSnapshot['models'][number]
@@ -316,10 +423,13 @@ export function OpenCodeGoCard(props: OpenCodeGoCardProps): JSX.Element {
         props.refresh()
     }, [])
 
+    // The card lists what the route may use. What it may not lives in the
+    // picker, where the decision is made, so the list never doubles as a
+    // catalog browser.
     const needle = filter.trim().toLowerCase()
     const visible = needle.length === 0
-        ? snapshot.models
-        : snapshot.models.filter((row) => row.id.toLowerCase().includes(needle) || row.name.toLowerCase().includes(needle))
+        ? snapshot.advertisedModels
+        : snapshot.advertisedModels.filter((row) => row.id.toLowerCase().includes(needle) || row.name.toLowerCase().includes(needle))
 
     const stateLine = snapshot.catalog.state === 'loading'
         ? t('reading')
@@ -357,19 +467,22 @@ export function OpenCodeGoCard(props: OpenCodeGoCardProps): JSX.Element {
                             : t('catalogHint')}
                     </p>
                     <div className="lp-actions">
-                        {snapshot.models.length > 8
+                        {snapshot.advertisedModels.length > 8
                             ? (
                                 <button type="button" className="lp-btn" onClick={() => { setShowFilter((value) => !value) }}>
                                     {showFilter ? t('hideFilter') : t('filter')}
                                 </button>
                             )
                             : null}
+                        <button type="button" className="lp-btn" disabled={!snapshot.writable || busy} onClick={props.openPicker}>
+                            {t('pickModels')}
+                        </button>
                         <button type="button" className="lp-btn" disabled={snapshot.catalog.state === 'loading'} onClick={props.refresh}>
                             {t('refresh')}
                         </button>
                     </div>
                 </div>
-                {showFilter && snapshot.models.length > 8
+                {showFilter && snapshot.advertisedModels.length > 8
                     ? (
                         <input
                             className="lp-filter"
@@ -395,6 +508,9 @@ export function OpenCodeGoCard(props: OpenCodeGoCardProps): JSX.Element {
                             />
                         ))}
                 </ul>
+                {snapshot.withheldCount > 0
+                    ? <p className="lp-hint">{t('withheld').replace('{n}', String(snapshot.withheldCount))}</p>
+                    : null}
                 <p className="lp-hint">{t('allowlistRule')}</p>
                 {snapshot.advertisesAll
                     ? null
@@ -505,6 +621,18 @@ export function OpenCodeGoCard(props: OpenCodeGoCardProps): JSX.Element {
                     </button>
                 </div>
             </div>
+
+            <ModelPicker
+                t={t}
+                state={snapshot.picker}
+                models={snapshot.models}
+                disabled={!snapshot.writable || busy}
+                onToggle={props.togglePickerModel}
+                onAll={props.selectAllModels}
+                onNone={props.clearSelection}
+                onClose={props.closePicker}
+                onApply={props.applyPicker}
+            />
         </li>
     )
 }
@@ -544,6 +672,12 @@ export function createFace(ctx: ClientContext, scope: SettingsScope<ProviderSect
         save: () => { void controller.save() },
         editApiKey: (text) => { controller.editApiKey(text) },
         saveApiKey: () => { void controller.saveApiKey() },
+        openPicker: () => { controller.openPicker() },
+        closePicker: () => { controller.closePicker() },
+        togglePickerModel: (modelId) => { controller.togglePickerModel(modelId) },
+        selectAllModels: () => { controller.selectAllModels() },
+        clearSelection: () => { controller.clearSelection() },
+        applyPicker: () => { void controller.applyPicker() },
     }
 }
 
@@ -570,6 +704,14 @@ export const inject = ['slots', 'locale', 'settingsScope', 'remote', 'remote.llm
  */
 export function apply(ctx: ClientContext): void {
     ctx.effect(installStyles, 'dsh-llm-provider: card styles')
+    // The quota gauge rides the tool-card slot, keyed by the tool name, exactly
+    // as a diagnostics card rides it: one component per tool call.
+    ctx.slots.inject('tool.call.toolview', () => ctx.slots.register({
+        name: 'tool.call.toolview',
+        key: 'llm_quota',
+        locale: NS,
+        inject: () => ({}),
+    }, QuotaToolView as never))
     ctx.effect(() => ctx.locale.register(NS, { en, zh }), 'dsh-llm-provider: card locale')
     const scope = ctx.settingsScope.bind<ProviderSections>({ namespace: NS })
     const face = createFace(ctx, scope)
