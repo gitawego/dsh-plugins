@@ -5,9 +5,11 @@ plugin under the `@gitawego` npm scope.
 
 ## Packages
 
-- [packages/vision](packages/vision/) — `@gitawego/dsh-vision`: capability-aware
-  vision + paste extension (describe_image tool, delegation, paste markers,
-  data-driven settings page / tool card).
+- [packages/llm-provider](packages/llm-provider/) — `@gitawego/dsh-llm-provider`:
+  first-party LLM provider routes at the `ctx.llm` adapter seam. Ships the
+  **OpenCode Go** route with the `x-opencode-session` routing header the gateway
+  requires (missing it is the `400 MissingSessionID` failure), resolved per
+  request from the harness session id.
 - [packages/web-search](packages/web-search/) — `@gitawego/dsh-web-search`:
   enhanced web search provider. Works with **no API key** (free Parallel/Exa MCP
   backends) and optionally any LLM-backed web-search endpoint (Anthropic or
@@ -20,7 +22,7 @@ plugin under the `@gitawego` npm scope.
 
 - **pnpm workspace** (pnpm 12). Root `pnpm-workspace.yaml` declares
   `packages/*` and, importantly, the **`allowBuilds`** map for native
-  dependencies that need a postinstall (esbuild, sharp, rollup + their platform
+  dependencies that need a postinstall (esbuild, rollup + their platform
   binaries). When you add a package that brings one of these, extend
   `allowBuilds` — otherwise CI fails with `ERR_PNPM_IGNORED_BUILDS`.
 - Each package self-contains its `package.json`, `tsconfig*.json`,

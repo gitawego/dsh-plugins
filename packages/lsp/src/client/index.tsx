@@ -8,8 +8,11 @@
  *      \`ctx.settingsScope.bind({ namespace: 'lsp' })\` — the standard
  *      settings scope, accessed via the \`settingsScope\` host service. */
 import { useEffect, useState, useSyncExternalStore } from 'react'
-import type { ClientContext, ToolCallBlock, SettingsScope } from '@deepseek-ai/dsh-client-runtime/client'
-import type { SnapshotStore } from '@deepseek-ai/dsh-client-runtime/client'
+import type { Context as ClientContext } from '@deepseek-ai/cordis'
+import type { SnapshotStore } from '@deepseek-ai/dsh-client-store'
+import type { SettingsScope } from '@deepseek-ai/dsh-client-ui-settings/client'
+import type { ToolCallBlock } from '@deepseek-ai/dsh-client-ui-chat/client'
+import type {} from '@deepseek-ai/dsh-client-ui-renderer/client'
 import type {} from '@deepseek-ai/dsh-client-ui-settings/client'
 import type {} from '@deepseek-ai/dsh-client-locale/client'
 import type {} from '@deepseek-ai/dsh-client-ui-tool/client'

@@ -1,4 +1,5 @@
-import { defineTool, type JsonValue, type ToolRunContext } from '@deepseek-ai/dsh-tools'
+import { defineTool, type ToolRunContext } from '@deepseek-ai/dsh-tools'
+import type { JsonValue } from '@deepseek-ai/dsh-util-values'
 import path from 'node:path'
 import type { LspManager } from './manager.js'
 import { canonical, textBlock } from './output.js'

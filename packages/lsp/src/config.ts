@@ -5,11 +5,13 @@
  *  so malformed documented settings degrade to defaults instead of crashing. */
 import z from '@deepseek-ai/schemastery'
 import type Schema from '@deepseek-ai/schemastery'
-import { settingsNamespace } from '@deepseek-ai/dsh-settings'
 import { DEFAULT_SERVERS } from './catalog.js'
 import { managedBinDir } from './platform.js'
 
-export const LSP_SETTINGS_NAMESPACE = settingsNamespace('lsp')
+/** Settings namespace key. Spelled as a plain literal: the seam's
+ *  `SettingsNamespace` brand is applied by `ctx.settings.register`'s generic,
+ *  and `settingsNamespace()` (the old rc.7 helper) no longer exists. */
+export const LSP_SETTINGS_NAMESPACE = 'lsp'
 
 export const PROGRESS_INJECT_MODES = ['status', 'conversation', 'none'] as const
 export type ProgressInject = (typeof PROGRESS_INJECT_MODES)[number]

@@ -1,0 +1,157 @@
+# AGENT.md — dsh-llm-provider (architecture)
+
+The non-negotiable design rules for `@gitawego/dsh-llm-provider`. Session
+history and debugging deep-dives belong in `LESSONS.md`.
+
+## What this project is
+
+A `ctx.llm` **adapter plugin**: it registers provider routes the harness did
+not ship an adapter for, backed by pi-ai's installed catalogs and wire
+protocols. The first (and currently only) route is **OpenCode Go**.
+
+Its reason to exist is one header:
+
+```text
+400 {"type":"error","error":{"type":"MissingSessionID","message":
+  "Request is missing x-opencode-session and cannot be routed efficiently."}}
+```
+
+`opencode.ai/zen/go` pins a conversation to a backend lane by
+`x-opencode-session`. The harness already knows the value — it stamps
+`GenerateOptions.sessionId` on every loop-built request — but pi-ai 0.85.1 (the
+build `dsh-llm-pi-ai` depends on) only *forwards* the session id; it never turns
+it into a header. Upstream pi-ai 1.0.x wraps its built-in `opencode-go` provider
+with `withOpenCodeSessionHeader`; 0.85.1 predates it. An adapter is the only
+seam that sees the session id, so this plugin owns one.
+
+## Design rule — the header is per-conversation, so it cannot be configuration (NON-NEGOTIABLE)
+
+`dsh-llm-pi-ai` accepts static `headers` per provider profile. That is the right
+tool for a deployment fact (a proxy's routing key, a tenant header) and the
+wrong tool for this one: a single value shared by every conversation would
+defeat the gateway's routing and its prompt-cache affinity.
+
+Do not "simplify" this plugin by deleting the adapter and shipping a
+`settings.yaml` snippet with a fixed header. Verify with the live gateway before
+changing anything here: `tests/wire.spec.ts` asserts the header on the outgoing
+HTTP request through pi-ai's own pipeline, and `README.md` records the observed
+`400`/`200` pair.
+
+Consequences that follow from it:
+
+- The adapter must forward `options.sessionId` to pi-ai **and** the transport
+  must turn it into the header; a test that only checks the pi-ai options object
+  proves half the path.
+- The header is never invented. A request with no session id (a hand-built
+  one-shot) sends no header rather than a random one, because a random value
+  would silently create routing lanes that do not correspond to anything.
+
+## Design rule — attribution headers on every dispatch (NON-NEGOTIABLE)
+
+Every request carries `attributionHeaders()` merged **last**, dropping any
+caller header that collides case-insensitively. This is `dsh-llm-pi-ai`'s
+precedence, and it is what keeps a profile from replacing the harness's
+`user-agent`. The transport owns it in one place (`withAttribution`) so no route
+can forget it.
+
+## Design rule — reuse pi-ai, never re-implement the wire
+
+The plugin does not speak HTTP. pi-ai owns request bodies, compat switches,
+SSE parsing, and provider error text; this plugin owns the harness vocabulary
+conversion (`context.ts`, `stream.ts`), catalog/profile resolution, and policy
+(`adapter.ts`). If a gateway needs a protocol pi-ai does not implement, that is
+a pi-ai gap, not a reason to grow an HTTP client here.
+
+Two corollaries:
+
+- **No replay state.** The adapter keeps none, so assistant history is rebuilt
+  from durable content exactly as `dsh-llm-pi-ai` rebuilds a foreign message.
+  Unsigned reasoning therefore travels as thinking, which pi-ai's Anthropic
+  converter downgrades to text rather than sending a block the API would reject.
+  Adding replay is a real feature (native ids and signatures survive
+  compaction); it is not a refactor.
+- **pi-ai retries are disabled** (`maxRetries: 0`). The seam's retry policy
+  belongs to `dsh-llm-retry`, and two retry loops stacked behind one request
+  multiply attempts.
+
+## Design rule — pi-ai is a peer resolved from the host (NON-NEGOTIABLE)
+
+`@earendil-works/pi-ai` is pinned to `0.85.1` and declared as a
+**peerDependency**, never a regular dependency:
+
+- The version must match the one `dsh-llm-pi-ai` uses, because this adapter is
+  written against its `Model`/`Provider`/`AssistantMessageEvent` contracts.
+- It resolves from the host installation's dependency closure:
+  `dsh-app-boot` links the installation closure into
+  `$DSH_HOME/profiles/node_modules`, which Node's parent-walk reaches from any
+  profile plugin. Installing a profile-local copy would duplicate the module
+  (and trip pnpm's build-script gate for pi-ai's `@google/genai`/`protobufjs`
+  deps) to gain nothing.
+
+The other peers (`@deepseek-ai/dsh-llm`, `-settings`, `-credentials`,
+`-attachment`, `@deepseek-ai/cordis`, `@deepseek-ai/schemastery`) follow the
+monorepo-wide rule in the root `AGENT.md`: peers at the host's exact version,
+never profile-local copies.
+
+## Design rule — a route never goes dark because of settings
+
+`resolveProfile()` clamps rather than throws: a hand-edited `settings.yaml`
+with a typo'd `reasoning`, a non-numeric image budget, or a blank credential
+reference degrades that field to the shipped default. The narrow exceptions are
+deliberate and documented in code:
+
+- an unknown `api` on a declared model drops that model from the catalog (pi-ai
+  has no implementation for it, so advertising it would only produce a confusing
+  failure later);
+- a model the route does not serve fails the request with `UNKNOWN_MODEL`, and a
+  route whose catalog the installed pi-ai does not ship serves nothing.
+
+## Design rule — profile-declared models exist because catalogs go stale (NON-NEGOTIABLE)
+
+The route advertises the installed catalog **plus** `extraModels`. This is not a
+convenience: the live configuration runs `deepseek-v4.1-flash`, and pi-ai
+0.85.1's catalog ships `deepseek-v4-flash`. A catalog-only route would reject
+the model the user is actually running the day it lands.
+
+A declared id the catalog knows is corrected field by field (the catalog stays
+the base, so undeclared fields keep their surveyed values); a declared id the
+catalog does not know is built from the profile's defaults. The `models`
+allowlist narrows the catalog only — declaring a model *is* the decision to
+serve it.
+
+## Design rule — one gateway definition, one settings section
+
+`GATEWAYS` in `gateways.ts` is the single source of truth for the served
+routes; the config schema is generated from it, so a new gateway cannot ship
+without a settings section. Adding a gateway is one entry there plus a catalog
+factory in `catalog.ts` — never a new adapter.
+
+## Testing contract
+
+`vitest run` in this package. The suite is split by the claim each file makes:
+
+| File | Claim |
+|---|---|
+| `session-header.spec.ts` | the header logic: present, absent, never overridden, never mutating |
+| `config.spec.ts` | defaults, clamping, declaration normalization, schema/section agreement |
+| `context.spec.ts` | harness→pi-ai conversion: system prompt folding, tool results, refusal of assistant images |
+| `stream.spec.ts` | pi-ai→harness chunks, usage, finish reasons, error classification |
+| `transport.spec.ts` | catalog/allowlist/endpoint merge, and which options reach a dispatch |
+| `adapter.spec.ts` | adapter policy: model/effort resolution, credential lookup, refusals |
+| `wire.spec.ts` | **the outgoing HTTP request** — header, attribution, body, and terminal event |
+
+`wire.spec.ts` is the file that would have caught the original bug. Any change to
+the header path must keep it green; a change that only updates
+`transport.spec.ts` has not proven the fix.
+
+## Process restart policy (NON-NEGOTIABLE)
+
+Same as every package in this monorepo: never `pgrep`/`kill`/`pkill` the `dsh`
+process from an agent session. After
+
+```bash
+cd ~/.dsh/profiles/web && pnpm install --offline
+```
+
+open a new browser tab — the rebuilt bundle is picked up by the `__DSH_BOOT__`
+script. If dsh is wedged, ask the user to restart it in their own shell.

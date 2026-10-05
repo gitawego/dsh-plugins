@@ -1,0 +1,29 @@
+# @gitawego/dsh-llm-provider bundle patch: applied as one profile layer when
+# this package joins a profile's `dsh.profile.bundles` (installed via
+# `dsh plugin`).
+#
+# The patch does ONE thing and is the install/uninstall contract for the bundle:
+#
+#   1. insert this plugin into the loader tree, so its `apply()` runs at boot
+#      and registers the OpenCode Go route into ctx.llm.
+#
+# Why a plugin and not plain configuration: the route's required
+# `x-opencode-session` header is a PER-SESSION value (the gateway routes a
+# conversation to one backend lane by it), and `dsh-llm-pi-ai`'s provider
+# `headers` are static deployment facts. Only an adapter that sees
+# `GenerateOptions.sessionId` can stamp the right value on each request.
+#
+# Unlike a search-provider bundle this patch overrides NO config row: the route
+# it registers is additive — `opencode-go` is not owned by any shipped
+# adapter, so nothing has to be re-pinned for the route to be selectable.
+# Selecting it happens where every other provider is selected: the model
+# selector, or `agent-default-model.provider: opencode-go` in settings.yaml.
+#
+# Uninstall: the patch is a bundle LAYER, applied in `dsh.profile.bundles`
+# order. Removing this package removes the layer, so on the next boot the
+# plugin no longer inserts, `apply()` never runs, and the `opencode-go` route
+# (plus its `llm-provider` settings namespace and configurable-provider
+# directory entry) is gone. Nothing persists beyond the boot composition.
+- insert:
+    - id: llm-provider
+      name: '@gitawego/dsh-llm-provider'
