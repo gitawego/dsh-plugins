@@ -49,10 +49,37 @@ one.
 | Surface | What you get |
 |---|---|
 | **Chat** | Every request carries `x-opencode-session`, so turns complete. The route serves **the provider's live catalog** (36 models), not the snapshot pi-ai shipped. |
+| **Settings → Models** | The route's row carries a card naming where its settings live and offering the API key field, because the section's own editor cannot configure a plugin-owned provider (see below). |
 | **Settings → LLM providers** | A section of its own (like LSP's), with one panel per served route: the live catalog with each model's context window and output cap, the models this route may use, the allowance meters, and the route's configuration. |
 | **Models page** | `opencode-go-session` appears as a configurable provider; its draft form lists live models with capacities. |
 | **`/llm-provider models\|quota\|refresh`** | The full spec sheet per model (including thinking levels) and the allowance windows. |
 | **`llm_quota` tool** | Lets the agent check the 5-hour / weekly / monthly windows before a long job. |
+
+## What the Models page shows for this route
+
+**Settings → Models** lists every provider, and this route appears there. Its
+own editor cannot configure it: the shipped section's `layoutOf()` recognises
+only `llm-deepseek` and `llm-pi-ai`, so it prints *"Other fields live in
+settings.yaml; edit that section directly"* and disables Apply, and it reports
+*"Model 1: Model ID is required"* because our `models` is an allowlist of ids
+where it expects model objects.
+
+The page therefore renders a card of ours inside that row (the
+`settings.models.provider-card` seat, which exists for plugins distributed
+outside the harness), containing:
+
+- where the rest lives — **Settings → LLM providers**;
+- why the fields on that page stay empty — the model list comes from the
+  provider and is chosen in that section;
+- the state — *"2 of 36 models allowed · session routing on"*;
+- the credential reference in play, and the **API key** field.
+
+**A link that navigates there is not possible.** The settings dialog's open state
+and active section are component-local React state in the shell
+(`dsh-client-ui-settings-general`: `useState` for both, no store, no service, no
+hash route), so no plugin can drive it. Naming the location exactly, and putting
+the one control that page exists for right there, is what the host's own
+extension seat allows.
 
 ## The section
 

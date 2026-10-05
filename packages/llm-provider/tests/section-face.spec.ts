@@ -15,7 +15,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { Context as ClientContext } from '@deepseek-ai/cordis'
 import type { SettingsScope } from '@deepseek-ai/dsh-client-ui-settings/client'
-import { createSectionFace } from '../src/client/index.tsx'
+import { createSectionFace } from '../src/client/section-face.ts'
 import type { ProviderSections, SettingsPathOp, SettingsScopeLike } from '../src/client/controller.ts'
 import { QUOTA_ROUTE_PATH } from '../src/quota-path.ts'
 
