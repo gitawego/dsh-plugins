@@ -42,6 +42,20 @@ Two rules the previous card got wrong and this one must keep:
   endpoint`, `Parallel token`, `Exa token` in one flat list, so neither pair read
   as a unit.
 
+## Design rule — a field's own grid must not stretch (NON-NEGOTIABLE)
+
+The field grid shipped misaligned: a `.wss-field` is a grid of label / input /
+hint, and the *outer* grid stretched its cells to equal height, so a field with a
+hint redistributed that extra space and pushed its input out of line with the
+input beside it. Both `align-items: start` on the container and
+`align-content: start` on each field are required — dropping either one brings
+the ragged rows back.
+
+Long values claim the full width (`.wss-field--wide`: endpoints, credential
+references, model ids, tokens). Two columns are for short values — a protocol, a
+number, a label — because a URL in half a column of a settings panel is
+unreadable, and its hint then wraps to three lines.
+
 ## Design rule — the browser half never imports the schema (NON-NEGOTIABLE)
 
 `config.ts` imports schemastery. The shared data the browser needs — the shipped
