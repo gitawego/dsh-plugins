@@ -171,6 +171,26 @@ requires, only host externals, registered under the package name, and no path
 collision with the server's `lib/index.js`. That last claim is the lsp incident
 from the root AGENT.md, encoded.
 
+## Design rule — `getSnapshot()` must be referentially stable (NON-NEGOTIABLE)
+
+`useSyncExternalStore` compares snapshots with `Object.is`, so a `getSnapshot()`
+that builds a fresh object per call reports "changed" on every render and React
+loops until it throws #185 (maximum update depth). The slot renderer catches
+that crash and draws **nothing**, so the failure presents as a card that simply
+does not exist — no error the user can see, no console line from this package.
+
+This card shipped that way. The controller now caches its snapshot and
+invalidates it from `publish()` (every mutation path calls it, as does the
+settings-scope subscription), with the namespace revision as a second signal.
+Two rules keep it fixed:
+
+- **Invalidation is ours.** Do not depend on the settings scope returning a
+  stable reference; that is its documented behaviour, not something this card
+  may require. `client-controller.spec.ts` drives one double that rebuilds its
+  snapshot every call precisely to prove the card does not rely on stability.
+- **Every new read of derived state needs a snapshot-identity test.** Field
+  assertions pass happily while the card crashes in a browser.
+
 ## Design rule — no card that cannot be filled (NON-NEGOTIABLE)
 
 The card shows what the browser can actually read: the settings namespace, and
