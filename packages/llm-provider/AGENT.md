@@ -256,6 +256,28 @@ That is how the model list and the API key field both failed. Two rules:
 list, so a new Remote read without its declaration fails a test instead of a
 user's click.
 
+## Design rule — colour roles come from the host's own meter (NON-NEGOTIABLE)
+
+The allowance gauge shipped ugly in light mode: the track was
+`--dsw-alias-bg-layer-3`, which is invisible against a card's own layer, and the
+fill was `--dsw-alias-brand-primary`, which in that theme resolves to near-black
+— so the meters rendered as small dark stubs floating with no scale.
+
+Copy the shipped progress meter (`dsh-client-ui-attachment`) instead of guessing:
+
+- **track** — `--dsw-alias-fill-tertiary` (translucent neutral; reads on either
+  theme). Not a `bg-layer-*`: those are surfaces, not fills, and they disappear
+  against a card of the same layer.
+- **fill** — `--dsw-alias-state-success-primary`, and the matching
+  `state-warn-primary` / `state-error-primary` past the thresholds. `state-*`
+  tokens are the design system's semantic inks; `label-*` tokens are text
+  colours and read as mud when used as fills.
+- **fallbacks** — carry one (`#00000014`, `#2da44e`, `#bf8700`, `#d54941`) as
+  every shipped rule does, so a theme older than a token still renders.
+
+The percentage takes the same ink as its bar, so the number and the length cannot
+disagree. A sliver keeps `min-width: 2px` so 1% spent is still visible at 8px.
+
 ## Design rule — no card that cannot be filled (NON-NEGOTIABLE)
 
 The card shows what the browser can actually read: the settings namespace, and
