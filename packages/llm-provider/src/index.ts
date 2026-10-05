@@ -61,6 +61,7 @@ import {
 } from './config.ts'
 import { declareRoutes, describeSkips } from './directory.ts'
 import { fetchModelIds, fetchQuota, type QuotaSnapshot } from './gateway-api.ts'
+import { registerQuotaRoute } from './quota-route.ts'
 import { GATEWAYS, gatewayById, type GatewayDefinition } from './gateways.ts'
 import { fetchModelsDevCatalog } from './models-dev.ts'
 import { createQuotaTool, runProviderCommand, type SurfaceDeps } from './surface.ts'
@@ -88,6 +89,7 @@ export { createCatalogFeed, mergeCatalog, thinkingLevelMapFor } from './catalog-
 export { declareRoutes, describeSkips } from './directory.ts'
 export { fetchModelIds, fetchQuota, formatQuota, parseModelIds, parseQuota } from './gateway-api.ts'
 export { fetchModelsDevCatalog, parseModelsDevCatalog } from './models-dev.ts'
+export { QUOTA_ROUTE_PATH, createQuotaHandler, isTrustedLocalRequest, quotaPayload, registerQuotaRoute } from './quota-route.ts'
 export { formatCatalog, formatModel, runProviderCommand, createQuotaTool } from './surface.ts'
 export { GatewayAdapter } from './adapter.ts'
 export { resolveProfiles, resolveProfile, defaultProfile } from './config.ts'
@@ -236,6 +238,10 @@ export function apply(ctx: Context, config: ProviderSettings = {}): () => void {
             route,
         )
     }
+
+    // The browser's only path to a live allowance read. Guarded and read-only;
+    // see `quota-route.ts` for why this is a route rather than a seam.
+    registerQuotaRoute(ctx, { routes: ROUTES, quotaOf })
 
     const surfaces: SurfaceDeps = {
         routes: ROUTES,

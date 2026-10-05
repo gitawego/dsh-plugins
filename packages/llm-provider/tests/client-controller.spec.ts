@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
+import type { QuotaView } from '../src/client/quota-format.ts'
 import {
     createProviderCard,
     type DiscoveredModel,
@@ -75,6 +76,8 @@ function card(
         configured?: boolean
         describeThrows?: boolean
         writeFails?: string
+        quota?: QuotaView
+        quotaFails?: string
     } = {},
 ) {
     const fake = fakeScope(over.sections ?? { 'opencode-go': { apiKeyEnv: 'KEY', sessionRouting: true } }, { writable: over.writable })
@@ -86,15 +89,20 @@ function card(
     const writeCredential = vi.fn(async () => {
         if (over.writeFails !== undefined) throw new Error(over.writeFails)
     })
+    const readQuota = vi.fn(async () => {
+        if (over.quotaFails !== undefined) throw new Error(over.quotaFails)
+        return over.quota ?? { route: 'opencode-go', windows: [{ id: 'rolling', label: '5-hour', percentUsed: 3, percentRemaining: 97, status: 'ok', tone: 'ok' as const }] }
+    })
     const controller = createProviderCard({
         scope: fake.scope,
         discover,
         describeCredential,
         writeCredential,
+        readQuota,
         route: 'opencode-go',
         now: () => 5_000,
     })
-    return { controller, fake, discover, describeCredential, writeCredential }
+    return { controller, fake, discover, describeCredential, writeCredential, readQuota }
 }
 
 /**
@@ -129,6 +137,7 @@ describe('snapshot identity', () => {
             discover: async () => models,
             describeCredential: async () => false,
             writeCredential: async () => {},
+            readQuota: async () => ({ route: 'opencode-go', windows: [] }),
             route: 'opencode-go',
         })
         const first = controller.getSnapshot()
@@ -187,6 +196,7 @@ describe('card identity', () => {
             discover: async () => models,
             describeCredential: async () => false,
             writeCredential: async () => {},
+            readQuota: async () => ({ route: 'opencode-go', windows: [] }),
             route: 'opencode-go',
         })
         expect(controller.getSnapshot().writable).toBe(true)
@@ -378,6 +388,32 @@ describe('storing the API key', () => {
         await controller.saveApiKey()
         controller.editApiKey('two')
         expect(controller.getSnapshot().apiKey).toMatchObject({ saved: false, draft: 'two' })
+    })
+})
+
+describe('the allowance read', () => {
+    it('starts idle and reports what the host returned', async () => {
+        const { controller, readQuota } = card()
+        expect(controller.getSnapshot().quota).toEqual({ state: 'idle' })
+        await controller.refreshQuota()
+        expect(readQuota).toHaveBeenCalledWith('opencode-go')
+        const quota = controller.getSnapshot().quota
+        expect(quota.state).toBe('ready')
+        expect(quota.state === 'ready' && quota.view.windows[0]?.label).toBe('5-hour')
+        expect(quota.state === 'ready' && quota.at).toBe(5_000)
+    })
+
+    it('reports a refused or failed read instead of an empty gauge', async () => {
+        const { controller } = card({ quotaFails: 'quota read refused (403)' })
+        await controller.refreshQuota()
+        expect(controller.getSnapshot().quota).toEqual({ state: 'failed', reason: 'quota read refused (403)' })
+    })
+
+    it('keeps the card usable while the read is in flight', async () => {
+        const { controller } = card()
+        const pending = controller.refreshQuota()
+        expect(controller.getSnapshot().quota.state).toBe('loading')
+        await pending
     })
 })
 

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { formatCountdown, parseQuotaView, toneFor } from '../src/client/quota-view.tsx'
+import { formatCountdown, parseQuotaView, toneFor } from '../src/client/quota-format.ts'
 
 /** A tool result's meta, as the tool's `presentationMeta` produces it. */
 const meta = () => ({
