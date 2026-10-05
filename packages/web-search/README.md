@@ -8,7 +8,7 @@ Registers a `WebSearchProvider` (id `opencode-enhanced`) into `ctx.web` with
    on the card (Anthropic `web_search_20250305` server tool or OpenAI-compatible
    web-search). Tried first when **Enable the LLM backend** is on.
 2. **opencode Go default** — hardcoded `https://opencode.ai/zen/go/v1` with
-   `deepseek-v4-flash` and the `OPENCODE_GO_API_KEY` credential-ref name.
+   `deepseek-v4.1-flash` and the `OPENCODE_GO_API_KEY` credential-ref name.
    Always attempted as the next step; silently skipped when the credential is
    not configured.
 3. **Parallel** — free MCP endpoint (`search.parallel.ai/mcp`), **no API key**,
@@ -62,7 +62,7 @@ web-search-enhanced:
     protocol: anthropic            # anthropic | openai
     baseUrl: https://opencode.ai/zen/go/v1   # "" or omitted disables Go
     credential: OPENCODE_GO_API_KEY          # DSH credential-ref NAME
-    model: deepseek-v4-flash
+    model: deepseek-v4.1-flash
     timeoutMs: 20000
   free:
     parallelUrl: https://search.parallel.ai/mcp
@@ -82,8 +82,9 @@ OpenAI-compatible web-search shape when `protocol: openai`). The model
 must (a) be on a route that supports the chosen protocol and (b) have a
 gateway implementation that actually executes the web-search tool. The
 shipped `dsh-web-search-deepseek` validates (b) for `deepseek-v4-flash` on
-DeepSeek's Anthropic Messages endpoint — that's the default and the
-safest pick.
+DeepSeek's Anthropic Messages endpoint; this plugin's default is
+`deepseek-v4.1-flash` on the opencode Go route, which is the same server tool
+over the same protocol.
 
 If you want to try other Anthropic-format routes, things like
 `xiaomi/mimo-v2.5` (same $0.14/$0.28 input price on the

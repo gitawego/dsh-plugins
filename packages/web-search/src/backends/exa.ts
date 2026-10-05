@@ -3,11 +3,14 @@
  * endpoint at mcp.exa.ai/mcp using the `web_search_exa` tool, mirroring
  * opencode's mcp-websearch implementation.
  */
+import { bearerAuth } from './auth.ts'
 import { parseExaText, type RawSource } from '../normalize.ts'
 
 export interface ExaBackendOptions {
   url: string
   timeoutMs: number
+  /** Resolved API token; absent keeps the anonymous free path. */
+  apiKey?: string
   fetchImpl?: typeof fetch
 }
 
@@ -72,7 +75,11 @@ export async function exaSearch(query: string, opts: ExaBackendOptions, signal?:
     try {
       const res = await runFetch(opts.url, {
         method: 'POST',
-        headers: { 'content-type': 'application/json', accept: 'application/json, text/event-stream' },
+        headers: {
+          'content-type': 'application/json',
+          accept: 'application/json, text/event-stream',
+          ...bearerAuth(opts.apiKey),
+        },
         body: buildExaRequest(query, 8),
         signal: controller.signal,
       })
@@ -92,7 +99,11 @@ export async function exaSearch(query: string, opts: ExaBackendOptions, signal?:
     try {
       const res = await runFetch(opts.url, {
         method: 'POST',
-        headers: { 'content-type': 'application/json', accept: 'application/json, text/event-stream' },
+        headers: {
+          'content-type': 'application/json',
+          accept: 'application/json, text/event-stream',
+          ...bearerAuth(opts.apiKey),
+        },
         body: buildExaRequest(query, 8),
         signal: controller.signal,
       })

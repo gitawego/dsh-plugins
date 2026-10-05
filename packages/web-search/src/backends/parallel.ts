@@ -3,11 +3,14 @@
  * JSON-RPC endpoint at search.parallel.ai/mcp using the `web_search` tool,
  * mirroring opencode's mcp-websearch implementation.
  */
+import { bearerAuth } from './auth.ts'
 import { parseParallelText, type RawSource } from '../normalize.ts'
 
 export interface ParallelBackendOptions {
   url: string
   timeoutMs: number
+  /** Resolved API token; absent keeps the anonymous free path. */
+  apiKey?: string
   fetchImpl?: typeof fetch
 }
 
@@ -53,7 +56,11 @@ export async function parallelSearch(query: string, opts: ParallelBackendOptions
     try {
       const res = await runFetch(opts.url, {
         method: 'POST',
-        headers: { 'content-type': 'application/json', accept: 'application/json, text/event-stream' },
+        headers: {
+          'content-type': 'application/json',
+          accept: 'application/json, text/event-stream',
+          ...bearerAuth(opts.apiKey),
+        },
         body: buildParallelRequest(query),
         signal: controller.signal,
       })
@@ -73,7 +80,11 @@ export async function parallelSearch(query: string, opts: ParallelBackendOptions
     try {
       const res = await runFetch(opts.url, {
         method: 'POST',
-        headers: { 'content-type': 'application/json', accept: 'application/json, text/event-stream' },
+        headers: {
+          'content-type': 'application/json',
+          accept: 'application/json, text/event-stream',
+          ...bearerAuth(opts.apiKey),
+        },
         body: buildParallelRequest(query),
         signal: controller.signal,
       })

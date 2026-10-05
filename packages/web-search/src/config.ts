@@ -25,6 +25,10 @@ export interface LlmBackendConfig {
 export interface FreeBackendConfig {
   parallelUrl: string
   exaUrl: string
+  /** Credential-reference name for the Parallel token; undefined = anonymous. */
+  parallelCredential: string | undefined
+  /** Credential-reference name for the Exa token; undefined = anonymous. */
+  exaCredential: string | undefined
   timeoutMs: number
   snippetMaxChars: number
   maxResults: number
@@ -36,10 +40,13 @@ export interface WebSearchConfig {
 }
 
 export const DEFAULT_CONFIG: WebSearchConfig = {
-  llm: { enabled: false, protocol: 'anthropic', baseUrl: undefined, credential: undefined, model: 'deepseek-v4-flash', timeoutMs: 20_000 },
+  llm: { enabled: false, protocol: 'anthropic', baseUrl: undefined, credential: undefined, model: 'deepseek-v4.1-flash', timeoutMs: 20_000 },
   free: {
     parallelUrl: 'https://search.parallel.ai/mcp',
     exaUrl: 'https://mcp.exa.ai/mcp',
+    // Both endpoints are free anonymously; a token raises the rate limits.
+    parallelCredential: undefined,
+    exaCredential: undefined,
     timeoutMs: 15_000,
     snippetMaxChars: 300,
     maxResults: 8,
@@ -58,6 +65,8 @@ export const Config = z.object({
   free: z.object({
     parallelUrl: z.string().default(DEFAULT_CONFIG.free.parallelUrl),
     exaUrl: z.string().default(DEFAULT_CONFIG.free.exaUrl),
+    parallelCredential: z.string().default(''),
+    exaCredential: z.string().default(''),
     timeoutMs: z.number().default(DEFAULT_CONFIG.free.timeoutMs),
     snippetMaxChars: z.number().default(DEFAULT_CONFIG.free.snippetMaxChars),
     maxResults: z.number().default(DEFAULT_CONFIG.free.maxResults),
@@ -83,6 +92,8 @@ export function createResolvedConfig(input: Partial<WebSearchConfig> = {}): WebS
       ...free,
       parallelUrl: free.parallelUrl?.trim() || '',
       exaUrl: free.exaUrl?.trim() || '',
+      parallelCredential: normOpt(free.parallelCredential),
+      exaCredential: normOpt(free.exaCredential),
       timeoutMs: free.timeoutMs || DEFAULT_CONFIG.free.timeoutMs,
       snippetMaxChars: free.snippetMaxChars || DEFAULT_CONFIG.free.snippetMaxChars,
       maxResults: free.maxResults || DEFAULT_CONFIG.free.maxResults,
