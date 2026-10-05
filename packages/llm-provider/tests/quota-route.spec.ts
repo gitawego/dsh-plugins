@@ -5,7 +5,7 @@
  */
 import { describe, expect, it, vi } from 'vitest'
 import type { IncomingMessage, ServerResponse } from 'node:http'
-import { createQuotaHandler, isTrustedLocalRequest, quotaPayload } from '../src/quota-route.ts'
+import { QUOTA_ROUTE_PATH, createQuotaHandler, isTrustedLocalRequest, quotaPayload, registerQuotaRoute } from '../src/quota-route.ts'
 import { parseQuotaView } from '../src/client/quota-format.ts'
 import { parseQuota } from '../src/gateway-api.ts'
 
@@ -86,6 +86,52 @@ describe('quotaPayload', () => {
     it('parses with the same function the tool card uses', () => {
         const view = parseQuotaView(quotaPayload(snapshot))
         expect(view?.windows.map((window) => window.tone)).toEqual(['ok', 'warn'])
+    })
+})
+
+describe('registration', () => {
+    /**
+     * A context that behaves like cordis: `get` probes without declaring, while
+     * reading the service as a property throws unless the context declared it.
+     * That asymmetry is what crashed the boot, so it is what this double
+     * reproduces.
+     */
+    function contexts() {
+        const registered: { kind?: string; path?: string }[] = []
+        const deps: unknown[] = []
+        const inner = {
+            effect: (fn: () => unknown) => { fn(); return () => {} },
+            get webServer() {
+                return { register: (route: { kind?: string; path?: string }) => { registered.push(route); return () => {} } }
+            },
+        }
+        const outer = {
+            get: () => ({}),
+            get webServer(): never {
+                throw new Error('cannot get property "webServer" without inject')
+            },
+            inject: (names: unknown[], callback: (host: unknown) => unknown) => {
+                deps.push(names)
+                callback(inner)
+                return { dispose: () => {} }
+            },
+        }
+        return { outer, inner, registered, deps }
+    }
+
+    it('registers through an injected fiber, never through the property form', () => {
+        const { outer, registered, deps } = contexts()
+        registerQuotaRoute(outer as never, { routes: ['opencode-go-session'], quotaOf: async () => snapshot })
+        expect(deps).toEqual([['webServer']])
+        expect(registered).toMatchObject([{ kind: 'exact', path: QUOTA_ROUTE_PATH }])
+    })
+
+    it('does not require the service to exist up front, so a profile without a webserver still loads', () => {
+        // `ctx.inject` simply never runs the callback; nothing else in apply
+        // depends on the route.
+        const { outer, registered } = contexts()
+        expect(() => registerQuotaRoute(outer as never, { routes: [], quotaOf: async () => snapshot })).not.toThrow()
+        expect(registered).toHaveLength(1)
     })
 })
 

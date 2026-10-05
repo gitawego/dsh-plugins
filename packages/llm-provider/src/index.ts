@@ -183,12 +183,24 @@ export function apply(ctx: Context, config: ProviderSettings = {}): () => void {
         apply: (route: string, live: LiveCatalog) => transport.setCatalog(route, live),
     })
 
+    // Bound in an injected fiber for the same reason as the web server above:
+    // `ctx.attachments` is a declared-service read, not a probe. A composition
+    // without an attachment store simply never runs the callback, and an image
+    // request then reports UNSUPPORTED_CONTENT instead of throwing.
+    let attachments: AttachmentStore | undefined
+    ctx.inject(['attachments'], (host: Context) => {
+        attachments = host.attachments
+        return () => {
+            attachments = undefined
+        }
+    })
+
     const adapter = new GatewayAdapter({
         transport,
         displayName: (route) => gatewayById(route)?.displayName ?? route,
         profileOf: profileFor,
         resolveApiKey,
-        resolveAttachments: () => ctx.get('attachments') as AttachmentStore | undefined,
+        resolveAttachments: () => attachments,
     })
 
     const registration = ctx.llm.registerAdapter([...ROUTES], adapter)

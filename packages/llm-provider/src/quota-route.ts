@@ -173,12 +173,16 @@ export function createQuotaHandler(deps: QuotaRouteDeps) {
  * @param deps - served routes and the quota reader.
  */
 export function registerQuotaRoute(ctx: Context, deps: QuotaRouteDeps): void {
-    const register = (host: Context): void => {
+    // `ctx.inject` both waits for the service and hands back a context that
+    // DECLARES it, which is what makes `host.webServer` readable: cordis guards
+    // the property form (`cannot get property "webServer" without inject`) while
+    // `ctx.get(name)` is an unguarded probe. Probing with one and reading with
+    // the other is how this crashed the boot — the service existed, the
+    // declaration did not.
+    ctx.inject(['webServer'], (host: Context) => {
         host.effect(
             () => host.webServer.register({ kind: 'exact', path: QUOTA_ROUTE_PATH, handler: createQuotaHandler(deps) }),
             'llm-provider: quota route',
         )
-    }
-    if (ctx.get('webServer') === undefined) ctx.inject(['webServer'], register)
-    else register(ctx)
+    })
 }
