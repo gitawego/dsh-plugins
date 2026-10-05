@@ -64,6 +64,21 @@
       ],
       "@deepseek-ai/dsh-credentials/types": [
         "./node_modules/@deepseek-ai/dsh-credentials/lib/types/types.d.ts"
+      ],
+      "@deepseek-ai/dsh-client-ui-tool": [
+        "./node_modules/@deepseek-ai/dsh-client-ui-tool/lib/types/client/index.d.ts"
+      ],
+      "@deepseek-ai/dsh-client-ui-tool/client": [
+        "./node_modules/@deepseek-ai/dsh-client-ui-tool/lib/types/client/index.d.ts"
+      ],
+      "@deepseek-ai/dsh-client-ui-chat/client": [
+        "./node_modules/@deepseek-ai/dsh-client-ui-chat/lib/types/client/index.d.ts"
+      ],
+      "@deepseek-ai/dsh-client-ui-conversation/client": [
+        "./node_modules/@deepseek-ai/dsh-client-ui-conversation/lib/types/client/index.d.ts"
+      ],
+      "@deepseek-ai/dsh-commands/*": [
+        "./node_modules/@deepseek-ai/dsh-commands/lib/types/*"
       ]
     },
     "allowImportingTsExtensions": true,
