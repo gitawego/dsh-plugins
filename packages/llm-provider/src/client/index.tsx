@@ -49,10 +49,6 @@ import { OPENCODE_GO } from '../gateways.ts'
 const NS = 'llm-provider'
 const ROUTE = OPENCODE_GO.id
 
-// The card not appearing is indistinguishable from the client half never
-// loading, and the two need different fixes. One line makes it observable
-// without devtools guesswork.
-console.info('[dsh-llm-provider] client half loaded')
 
 /* Pure-type augmentation for the `settings.plugin.item` slot, mirroring
  * `dsh-client-ui-settings-plugins/lib/types/client/slot-contract.d.ts`. The
