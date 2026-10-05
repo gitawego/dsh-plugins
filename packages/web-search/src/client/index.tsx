@@ -63,7 +63,11 @@ const en = {
   credential: 'Credential reference',
   credentialHint: 'Name of a credential in the harness store (e.g. OPENCODE_GO_API_KEY). Not the DEEPSEEK_API_KEY used by the built-in DeepSeek search.',
   model: 'Model',
-  modelHint: 'Default: deepseek-v4-flash (the cheapest paid Anthropic-format model known to implement web_search_20250305). Other Anthropic routes (e.g. xiaomi/mimo-v2.5 at the same price) may work — depends on whether the gateway implements the server tool.',
+  modelHint: 'Default: deepseek-v4.1-flash (an Anthropic-format model that implements web_search_20250305). Other Anthropic routes may work — depends on whether the gateway implements the server tool.',
+  parallelCredential: 'Parallel token (optional)',
+  parallelCredentialHint: 'Credential reference for a Parallel API key. Blank keeps the free anonymous endpoint; a key raises its rate limits.',
+  exaCredential: 'Exa token (optional)',
+  exaCredentialHint: 'Credential reference for an Exa API key. Blank keeps the free anonymous endpoint; a key raises its rate limits.',
   timeoutMs: 'Timeout (ms)',
   freeTitle: 'Free backends (no API key)',
   parallelUrl: 'Parallel endpoint',
@@ -98,7 +102,11 @@ const zh: Record<keyof typeof en, string> = {
   credential: '凭据引用',
   credentialHint: '凭据库中的凭据名称（如 OPENCODE_GO_API_KEY）。非内置 DeepSeek 搜索使用的 DEEPSEEK_API_KEY。',
   model: '模型',
-  modelHint: '默认值 deepseek-v4-flash（已知实现 web_search_20250305 的最便宜付费 Anthropic 格式模型）。其他 Anthropic 路由（如同价的 xiaomi/mimo-v2.5）也可能可用 —— 取决于网关是否实现该服务端工具。',
+  modelHint: '默认值 deepseek-v4.1-flash（实现 web_search_20250305 的 Anthropic 格式模型）。其他 Anthropic 路由也可能可用 —— 取决于网关是否实现该服务端工具。',
+  parallelCredential: 'Parallel Token（可选）',
+  parallelCredentialHint: 'Parallel API Key 的凭据引用。留空则使用免费匿名端点；填写可提高速率上限。',
+  exaCredential: 'Exa Token（可选）',
+  exaCredentialHint: 'Exa API Key 的凭据引用。留空则使用免费匿名端点；填写可提高速率上限。',
   timeoutMs: '超时（ms）',
   freeTitle: '免费后端（无需 API key）',
   parallelUrl: 'Parallel 端点',
@@ -137,6 +145,8 @@ interface LlmSection {
 interface FreeSection {
   parallelUrl?: string
   exaUrl?: string
+  parallelCredential?: string
+  exaCredential?: string
   timeoutMs?: number
   snippetMaxChars?: number
   maxResults?: number
@@ -168,6 +178,8 @@ export interface WebSearchCardState {
   llmTimeoutMs: WebSearchFieldState
   parallelUrl: WebSearchFieldState
   exaUrl: WebSearchFieldState
+  parallelCredential: WebSearchFieldState
+  exaCredential: WebSearchFieldState
   freeTimeoutMs: WebSearchFieldState
   snippetMaxChars: WebSearchFieldState
   maxResults: WebSearchFieldState
@@ -231,6 +243,8 @@ const FIELDS = {
   llmTimeoutMs: numberField('llm', 'timeoutMs'),
   parallelUrl: textField('free', 'parallelUrl'),
   exaUrl: textField('free', 'exaUrl'),
+  parallelCredential: textField('free', 'parallelCredential'),
+  exaCredential: textField('free', 'exaCredential'),
   freeTimeoutMs: numberField('free', 'timeoutMs'),
   snippetMaxChars: numberField('free', 'snippetMaxChars'),
   maxResults: numberField('free', 'maxResults'),
@@ -249,12 +263,14 @@ function schemaDefaults(): WebSearchSection {
       protocol: 'anthropic',
       baseUrl: '',
       credential: '',
-      model: 'deepseek-v4-flash',
+      model: 'deepseek-v4.1-flash',
       timeoutMs: 20_000,
     },
     free: {
       parallelUrl: 'https://search.parallel.ai/mcp',
       exaUrl: 'https://mcp.exa.ai/mcp',
+      parallelCredential: '',
+      exaCredential: '',
       timeoutMs: 15_000,
       snippetMaxChars: 300,
       maxResults: 8,
@@ -409,6 +425,8 @@ export class WebSearchCardController {
       llmTimeoutMs: fieldStateOf(projected, userLayer, this.drafts, 'llmTimeoutMs'),
       parallelUrl: fieldStateOf(projected, userLayer, this.drafts, 'parallelUrl'),
       exaUrl: fieldStateOf(projected, userLayer, this.drafts, 'exaUrl'),
+      parallelCredential: fieldStateOf(projected, userLayer, this.drafts, 'parallelCredential'),
+      exaCredential: fieldStateOf(projected, userLayer, this.drafts, 'exaCredential'),
       freeTimeoutMs: fieldStateOf(projected, userLayer, this.drafts, 'freeTimeoutMs'),
       snippetMaxChars: fieldStateOf(projected, userLayer, this.drafts, 'snippetMaxChars'),
       maxResults: fieldStateOf(projected, userLayer, this.drafts, 'maxResults'),
@@ -727,6 +745,18 @@ export function WebSearchCard(props: WebSearchCardProps): JSX.Element | null {
           id="wsc-exa-url" label={tr('exaUrl')} resetLabel={tr('reset')} overriddenLabel={tr('unsaved')} invalidLabel={tr('invalidNumber')}
           numeric={false} disabled={!state.writable}
           state={state.exaUrl} onEdit={(text) => { props.edit('exaUrl', text) }} onReset={() => { props.resetField('exaUrl') }}
+        />
+        <ValueField
+          id="wsc-parallel-credential" label={tr('parallelCredential')} hint={tr('parallelCredentialHint')}
+          resetLabel={tr('reset')} overriddenLabel={tr('unsaved')} invalidLabel={tr('invalidNumber')}
+          numeric={false} disabled={!state.writable}
+          state={state.parallelCredential} onEdit={(text) => { props.edit('parallelCredential', text) }} onReset={() => { props.resetField('parallelCredential') }}
+        />
+        <ValueField
+          id="wsc-exa-credential" label={tr('exaCredential')} hint={tr('exaCredentialHint')}
+          resetLabel={tr('reset')} overriddenLabel={tr('unsaved')} invalidLabel={tr('invalidNumber')}
+          numeric={false} disabled={!state.writable}
+          state={state.exaCredential} onEdit={(text) => { props.edit('exaCredential', text) }} onReset={() => { props.resetField('exaCredential') }}
         />
         <ValueField
           id="wsc-free-timeout" label={tr('freeTimeoutMs')} resetLabel={tr('reset')} overriddenLabel={tr('unsaved')} invalidLabel={tr('invalidNumber')}

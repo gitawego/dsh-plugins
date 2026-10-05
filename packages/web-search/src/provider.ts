@@ -4,10 +4,11 @@
  *   1. **Custom LLM** — whatever the user configured in `llm.baseUrl` /
  *      `llm.model` / `llm.credential`. Tried first when `llm.enabled === true`.
  *   2. **opencode Go default** — hardcoded `https://opencode.ai/zen/go/v1` with
- *      `deepseek-v4-flash` and the `OPENCODE_GO_API_KEY` credential-ref name.
+ *      `deepseek-v4.1-flash` and the `OPENCODE_GO_API_KEY` credential-ref name.
  *      Always tried as the next candidate (independent of `llm.enabled`), but
  *      silently skipped when the credential isn't configured.
- *   3. **Free backends** — Parallel, then Exa (no API key).
+ *   3. **Free backends** — Parallel, then Exa. Both work anonymously; each
+ *      accepts an optional credential reference that raises its rate limits.
  *
  * Each stage is attempted in order; the first successful, non-empty result
  * wins. Throws a WebError only when every backend fails. Honours the abort
@@ -24,7 +25,7 @@ export const PROVIDER_ID = 'opencode-enhanced'
 
 /** opencode Go fallback constants — the shipped DSH default. Not user-configurable. */
 const OPENCODE_GO_BASE_URL = 'https://opencode.ai/zen/go/v1'
-const OPENCODE_GO_DEFAULT_MODEL = 'deepseek-v4-flash'
+const OPENCODE_GO_DEFAULT_MODEL = 'deepseek-v4.1-flash'
 const OPENCODE_GO_CREDENTIAL_NAME = 'OPENCODE_GO_API_KEY'
 
 /** Runtime dependencies the provider needs to perform a search. */
@@ -33,6 +34,10 @@ export interface ProviderRuntime {
   resolveGoApiKey: () => Promise<string | undefined>
   /** Resolve the opencode Go default API key (undefined = silently skip step 2). */
   resolveOpenCodeGoApiKey: () => Promise<string | undefined>
+  /** Resolve the Parallel token (undefined = the anonymous free path). */
+  resolveParallelApiKey?: () => Promise<string | undefined>
+  /** Resolve the Exa token (undefined = the anonymous free path). */
+  resolveExaApiKey?: () => Promise<string | undefined>
   /** Inject fake fetch in tests; omitted in production. */
   fetchImpl?: typeof fetch
 }
@@ -106,10 +111,18 @@ export function createSearchProvider(getConfig: () => WebSearchConfig, runtime: 
 
       // Step 3: free backends.
       if (cfg.free.parallelUrl.length > 0) {
-        candidates.push(() => parallelSearch(request.query, { url: cfg.free.parallelUrl, ...freeOpts(cfg) }, signal))
+        candidates.push(async () => {
+          // A token is optional at both endpoints: resolving to undefined is the
+          // anonymous free path, not a failure, so the call proceeds either way.
+          const apiKey = cfg.free.parallelCredential === undefined ? undefined : await runtime.resolveParallelApiKey?.()
+          return parallelSearch(request.query, { url: cfg.free.parallelUrl, ...freeOpts(cfg), ...(apiKey !== undefined ? { apiKey } : {}) }, signal)
+        })
       }
       if (cfg.free.exaUrl.length > 0) {
-        candidates.push(() => exaSearch(request.query, { url: cfg.free.exaUrl, ...freeOpts(cfg) }, signal))
+        candidates.push(async () => {
+          const apiKey = cfg.free.exaCredential === undefined ? undefined : await runtime.resolveExaApiKey?.()
+          return exaSearch(request.query, { url: cfg.free.exaUrl, ...freeOpts(cfg), ...(apiKey !== undefined ? { apiKey } : {}) }, signal)
+        })
       }
 
       let lastError: unknown

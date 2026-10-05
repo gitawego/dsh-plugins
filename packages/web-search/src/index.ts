@@ -44,6 +44,17 @@ export function apply(ctx: Context, config: Partial<WebSearchConfig> = {}): () =
     resolved = createResolvedConfig(next as WebSearchConfig)
   })
 
+  /** Resolve one optional free-backend credential reference. */
+  const resolveFreeToken = async (ref: string | undefined): Promise<string | undefined> => {
+    if (ref === undefined) return undefined
+    try {
+      const resolvedCred = await ctx.credentials.resolve(credentialRef(ref))
+      return resolvedCred?.value
+    } catch {
+      return undefined
+    }
+  }
+
   const provider = createSearchProvider(
     () => resolved,
     {
@@ -67,6 +78,10 @@ export function apply(ctx: Context, config: Partial<WebSearchConfig> = {}): () =
           return undefined
         }
       },
+      // Optional tokens for the hosted MCP endpoints: a reference that resolves
+      // to nothing keeps the anonymous free path rather than failing the search.
+      resolveParallelApiKey: async () => resolveFreeToken(resolved.free.parallelCredential),
+      resolveExaApiKey: async () => resolveFreeToken(resolved.free.exaCredential),
     },
   )
 

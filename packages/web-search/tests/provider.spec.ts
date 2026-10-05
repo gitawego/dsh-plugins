@@ -20,8 +20,8 @@ function textResponse(body: string): Response {
 }
 
 const cfg = () => createResolvedConfig({
-  llm: { enabled: true, protocol: 'anthropic' as const, baseUrl: 'https://opencode.ai/zen/go/v1', credential: 'OPENCODE_GO_API_KEY', model: 'deepseek-v4-flash', timeoutMs: 2000 },
-  free: { parallelUrl: 'https://search.parallel.ai/mcp', exaUrl: 'https://mcp.exa.ai/mcp', timeoutMs: 1500, snippetMaxChars: 300, maxResults: 5 },
+  llm: { enabled: true, protocol: 'anthropic' as const, baseUrl: 'https://opencode.ai/zen/go/v1', credential: 'OPENCODE_GO_API_KEY', model: 'deepseek-v4.1-flash', timeoutMs: 2000 },
+  free: { parallelUrl: 'https://search.parallel.ai/mcp', exaUrl: 'https://mcp.exa.ai/mcp', parallelCredential: undefined, exaCredential: undefined, timeoutMs: 1500, snippetMaxChars: 300, maxResults: 5 },
 })
 
 const parallelOk = () => jsonResponse({ jsonrpc: '2.0', id: 1, result: { content: [{ type: 'text', text: JSON.stringify({ search_id: 's', results: [{ url: 'https://p.com', title: 'P', publish_date: null, excerpts: ['pp'] }] }) }] } })

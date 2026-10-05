@@ -25,6 +25,33 @@ Each stage is attempted in order; the first non-empty result wins. Only
 throws `WebError` when every stage fails. Respects the abort signal and
 the request's `maxResults` bound.
 
+## Design rule — the free backends stay free, and their tokens are optional (NON-NEGOTIABLE)
+
+Both hosted MCP endpoints work anonymously and both accept an API key as a
+Bearer token for higher rate limits:
+
+- `search.parallel.ai/mcp` — "free to use anonymously at lower rate limits. Pass
+  a Parallel API key as a Bearer token to unlock higher limits";
+- `mcp.exa.ai/mcp` — the same shape and the same header.
+
+So `free.parallelCredential` / `free.exaCredential` are credential **references**
+(never literals, per the repo rule), absent by default, and their absence must
+leave the request byte-identical to the anonymous one: `bearerAuth()` returns
+`{}` for undefined, empty, or blank, and the provider does not even ask the
+credential seam when no reference is configured. A token that fails to resolve
+keeps the free path rather than failing the search — the endpoint is free, so a
+missing key is not an error.
+
+`tests/free-token.spec.ts` pins all of that, including that no `authorization`
+header is sent when no token is configured.
+
+## Design rule — the opencode Go step's model id is configuration, not folklore (NON-NEGOTIABLE)
+
+The hardcoded fallback step names a model id, and a stale one 404s silently
+against a gateway that has moved on. It is `deepseek-v4.1-flash`, matching
+`DEFAULT_CONFIG.llm.model`; `tests/free-token.spec.ts` asserts the id the step
+actually requests, so the two cannot drift.
+
 ## Design rule — install/uninstall contract (NON-NEGOTIABLE)
 
 The bundle's `cordis.patch.yml` is the entire install contract. It does
