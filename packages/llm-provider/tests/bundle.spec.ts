@@ -112,23 +112,25 @@ describe('client bundle', () => {
         expect(source).toContain('settings.plugin.item')
     })
 
-    it('declares every scoped Remote namespace it reads', () => {
-        // cordis resolves `ctx.remote.llm` through a service key of its own and
-        // throws "cannot get property "remote.llm" without inject" when the
-        // namespace is undeclared. The card's model list and key field both read
-        // those namespaces, so a missing declaration is a runtime failure with
-        // no compile-time signal.
+    it('gates registration only on boot-time services, so the card has a stable position', () => {
+        // The Plugins tab renders cards in slot-registration order, and a keyed
+        // slot carries no `order` field — so registering later than necessary is
+        // the only ordering mistake a plugin can make here. Waiting on the Remote
+        // carrier, which arrives with the socket handshake, made this card land
+        // wherever that handshake happened to finish.
         const module = materialize(bundle)
-        expect(module.inject).toContain('remote')
-        for (const scoped of ['remote.llm', 'remote.credentials']) {
-            expect(module.inject, `${scoped} is read but not declared`).toContain(scoped)
-        }
+        expect(module.inject).toEqual(['slots', 'locale', 'settingsScope'])
     })
 
-    it('reads the Remote carrier directly, because a lazy lookup is what broke it', () => {
-        // `ctx.get('remote')?.llm` bypasses the inject declaration and throws at
-        // read time; the direct property is the only form that works.
+    it('binds the scoped Remote namespaces in a fiber that declares them', () => {
+        // cordis refuses to resolve `ctx.remote.llm` from a context that has not
+        // declared it ("cannot get property ... without inject"). A child fiber
+        // declaring them satisfies that rule without delaying registration, and
+        // the lazy accessor form would bypass the declaration entirely.
         const source = readFileSync(bundle, 'utf8')
+        for (const scoped of ['remote.llm', 'remote.credentials']) {
+            expect(source, `${scoped} is read but never declared`).toContain(scoped)
+        }
         expect(source).not.toMatch(/get\(\s*["']remote["']\s*\)/)
     })
 })
