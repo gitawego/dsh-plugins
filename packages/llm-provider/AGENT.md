@@ -191,6 +191,30 @@ Two rules keep it fixed:
 - **Every new read of derived state needs a snapshot-identity test.** Field
   assertions pass happily while the card crashes in a browser.
 
+## Design rule — `ctx.get(name)` probes, `ctx.name` requires the declaration (NON-NEGOTIABLE)
+
+cordis guards the **property** form of service access:
+
+```text
+cannot get property "webServer" without inject
+```
+
+while `ctx.get(name)` is an unguarded probe that returns the service or
+`undefined`. Mixing them is a boot failure with no compile-time signal, and it
+has happened here three times:
+
+- the client card probed `ctx.get('remote')` and then read `.llm` (a *scoped*
+  service, guarded) — the model list failed at read time;
+- the quota route probed `ctx.get('webServer')` and then read `host.webServer` on
+  the same undeclared context — the whole plugin tree failed to load;
+- the adapter read `ctx.get('attachments')` the same way, which would have failed
+  on the first image request.
+
+The rule: use `ctx.inject([...], cb)` and read the service from the **callback's**
+context. That both waits for the service and hands back a context that declares
+it, and it is how the shipped `dsh-client-modules` registers its web route.
+`ctx.get` is for probing only — and if you probe, never touch the property.
+
 ## Design rule — register the card with the boot-time group (NON-NEGOTIABLE)
 
 The Plugins tab renders cards in **slot-registration order**, and

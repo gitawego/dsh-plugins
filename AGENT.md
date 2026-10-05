@@ -82,7 +82,14 @@ On Termux the in-place restart is fragile:
 The browser's `client.js` is loaded FRESH on each new tab via the
 `__DSH_BOOT__` script's URL. After `pnpm install --offline` in the profile
 directory (`~/.dsh/profiles/web`), **open a new browser tab** — the
-rebuilt bundle is picked up immediately. No process restart needed.
+rebuilt bundle is picked up immediately.
+
+**Host halves are different: they need a restart.** A plugin's server-side
+`apply()` runs at boot, so new host code (a route registration, an adapter
+change, a settings namespace) is invisible to an already-running `dsh` — the
+symptom is a 404 from a route that exists on disk, or a fix that appears not to
+work. Client bundles reload per tab; host code does not. Ask the user to restart
+in their own shell rather than restarting it from a session.
 
 If dsh is genuinely wedged (port unreachable, leaks, etc.), ask the user
 to restart it in their interactive shell. Do not start, kill, or
