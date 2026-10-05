@@ -38,9 +38,16 @@ means. Each step carries its position:
 |---|---|---|---|
 | 1 | Custom LLM endpoint | yours | credential reference |
 | 2 | OpenCode Go | shipped | credential reference |
-| 3 | Parallel | shipped, **read-only** | optional |
-| 4 | Exa | shipped, **read-only** | optional |
-| 5 | Your MCP servers | yours, added or removed | optional |
+| 3 | Parallel | shipped, **read-only** | reference + token |
+| 4 | Exa | shipped, **read-only** | reference + token |
+| 5 | Your MCP servers | yours, added or removed | reference + token |
+
+Each token row is two controls, on purpose: **Credential reference** names the
+credential, and **Token** stores the literal through the credentials domain
+(write-only — it starts blank, blank writes nothing, and it reports only whether
+a token is stored). The literal never enters `settings.yaml`; that document is
+portable, and a pasted secret in it is a leak that also resolves to nothing,
+because the plugin looks for a credential *named* by the reference.
 
 A shipped endpoint is read-only on purpose: it is the address this plugin was
 tested against, and an editable one turns a working free backend into a typo that

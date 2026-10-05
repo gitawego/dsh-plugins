@@ -180,3 +180,77 @@ describe('snapshot identity', () => {
         expect(listener).toHaveBeenCalledTimes(1)
     })
 })
+
+describe('storing a token', () => {
+    /** A section whose credential domain is faked, so no secret is involved. */
+    function withCredentials(over: { describe?: boolean; describeThrows?: boolean; writeFails?: string } = {}) {
+        const fake = fakeScope({})
+        const written: { reference: string; value: string }[] = []
+        const controller = createWebSearchSection({
+            scope: fake.scope,
+            mintId: () => 'minted-id',
+            describeCredential: async () => {
+                if (over.describeThrows === true) throw new Error('store unreachable')
+                return over.describe ?? false
+            },
+            writeCredential: async (reference, value) => {
+                if (over.writeFails !== undefined) throw new Error(over.writeFails)
+                written.push({ reference, value })
+            },
+        })
+        return { controller, fake, written }
+    }
+
+    it('stores the literal under the named reference, and never in the settings document', async () => {
+        const { controller, fake, written } = withCredentials()
+        controller.editFree('parallelCredential', 'PARALLEL_API_KEY')
+        controller.editToken('PARALLEL_API_KEY', '  secret-token  ')
+        await controller.saveToken('PARALLEL_API_KEY')
+        expect(written).toEqual([{ reference: 'PARALLEL_API_KEY', value: 'secret-token' }])
+        expect(fake.writes).toHaveLength(0)
+        expect(controller.getSnapshot().tokens['PARALLEL_API_KEY']).toMatchObject({ configured: true, saved: true, draft: '' })
+    })
+
+    it('writes nothing for a blank draft, because blank means keep the stored token', async () => {
+        const { controller, written } = withCredentials()
+        await controller.saveToken('PARALLEL_API_KEY')
+        expect(written).toHaveLength(0)
+    })
+
+    it('refuses to store a token with no reference to store it under', async () => {
+        const { controller, written } = withCredentials()
+        controller.editToken('', 'secret-token')
+        await controller.saveToken('')
+        expect(written).toHaveLength(0)
+        expect(controller.getSnapshot().tokens['']?.error).toMatch(/Name a credential reference/)
+    })
+
+    it('reports a refused write and keeps the draft so it can be retried', async () => {
+        const { controller } = withCredentials({ writeFails: 'credentials-rejected' })
+        controller.editToken('PARALLEL_API_KEY', 'secret-token')
+        await controller.saveToken('PARALLEL_API_KEY')
+        expect(controller.getSnapshot().tokens['PARALLEL_API_KEY']).toMatchObject({ error: 'credentials-rejected', draft: 'secret-token' })
+    })
+
+    it('reports whether each named reference holds a token, and stays quiet when unreachable', async () => {
+        const { controller } = withCredentials({ describe: true })
+        controller.editFree('parallelCredential', 'PARALLEL_API_KEY')
+        controller.editFree('exaCredential', 'EXA_KEY')
+        await controller.refreshTokens()
+        expect(controller.getSnapshot().tokens['PARALLEL_API_KEY']?.configured).toBe(true)
+        expect(controller.getSnapshot().tokens['EXA_KEY']?.configured).toBe(true)
+
+        const unreachable = withCredentials({ describeThrows: true })
+        unreachable.controller.editFree('parallelCredential', 'PARALLEL_API_KEY')
+        await unreachable.controller.refreshTokens()
+        expect(unreachable.controller.getSnapshot().tokens['PARALLEL_API_KEY']).toMatchObject({ configured: undefined, error: undefined })
+    })
+
+    it('does not ask the store about a reference nobody named', async () => {
+        const fake = fakeScope({})
+        const describeCredential = vi.fn(async () => false)
+        const controller = createWebSearchSection({ scope: fake.scope, describeCredential })
+        await controller.refreshTokens()
+        expect(describeCredential).not.toHaveBeenCalled()
+    })
+})

@@ -25,6 +25,28 @@ Each stage is attempted in order; the first non-empty result wins. Only
 throws `WebError` when every stage fails. Respects the abort signal and
 the request's `maxResults` bound.
 
+## Design rule — a token field must never invite a literal (NON-NEGOTIABLE)
+
+The first version of the shipped-server rows had one control labelled **"Token
+(optional)"** whose hint mentioned a credential *reference*. A user pasted the
+literal 40-character token into it, and it landed in `settings.yaml` — a portable
+document — where it both leaked and resolved to nothing, because the plugin then
+looked for a credential *named* `GUAianEQ…`.
+
+A field whose value is a secret and whose storage is elsewhere must not be
+labelled as the secret. Every server row now carries **two** controls:
+
+- **Credential reference** — the name, stored in the config, shown in full;
+- **Token** — write-only, stored through the credentials domain
+  (`remote.credentials.set(reference, value)`), blank until typed, blank writes
+  nothing (blank means *keep the stored token*, never *clear it*), and the only
+  facts it reports are `configured` and whether the last write landed. The
+  literal is dropped from the component as soon as it is stored.
+
+`tests/section-controller.spec.ts` asserts a staged token produces **no settings
+mutation**, refuses a store with no reference named, and keeps the draft after a
+refused write. Do not "simplify" this back to one field.
+
 ## Design rule — the section's layout IS the fallback chain (NON-NEGOTIABLE)
 
 The settings surface is a **section** (`settings.section`, id `web-search`, order

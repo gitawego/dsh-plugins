@@ -25,11 +25,13 @@ import { useEffect, useState, useSyncExternalStore } from 'react'
 import type { Context as ClientContext } from '@deepseek-ai/cordis'
 import type { SettingsScope } from '@deepseek-ai/dsh-client-ui-settings/client'
 import type {} from '@deepseek-ai/dsh-client-ui-renderer/client'
+import './remote-types.ts'
 import type {} from '@deepseek-ai/dsh-client-locale/client'
 import type { InjectFace, PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
 import { BUILTIN_MCP_SERVERS } from '../mcp-servers.ts'
 import {
     createWebSearchSection,
+    type TokenState,
     type WebSearchSectionController,
     type WebSearchSnapshot,
 } from './controller.ts'
@@ -71,6 +73,9 @@ const CSS = `
 .wss-name{font-size:13px;font-weight:600;color:var(--dsw-alias-label-primary)}
 .wss-tag{padding:1px 6px;border:1px solid var(--dsw-alias-border-l2);border-radius:999px;font-size:10px;letter-spacing:.04em;text-transform:uppercase;color:var(--dsw-alias-label-tertiary)}
 .wss-note{margin:0;font-size:11px;color:var(--dsw-alias-label-tertiary)}
+.wss-token{display:flex;gap:8px}
+.wss-token input{flex:1}
+.wss-error{color:var(--dsw-alias-label-error)!important}
 .wss-url{margin:0;font-family:var(--dsw-font-family-mono,ui-monospace,SFMono-Regular,Menlo,monospace);font-size:11px;color:var(--dsw-alias-label-secondary);overflow-wrap:anywhere;user-select:all}
 .wss-fields{display:grid;gap:12px 14px;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));align-items:start}
 /* A field's own rows must keep their natural height: a stretched cell with a
@@ -156,6 +161,58 @@ function Choice(props: {
     )
 }
 
+/**
+ * The token control for one backend.
+ *
+ * A stored token is a secret the browser never receives, so this field cannot be
+ * seeded: it starts blank, a blank draft writes nothing, and the only facts it
+ * shows are whether a token is configured and whether the last write landed. The
+ * reference beside it is what the *config* stores; the literal goes to the
+ * credential store.
+ */
+function TokenField(props: {
+    t: Translate
+    id: string
+    reference: string
+    state: TokenState
+    disabled: boolean
+    onEdit: (text: string) => void
+    onSave: () => void
+}): JSX.Element {
+    const { t, state } = props
+    const named = props.reference.trim().length > 0
+    const status = !named
+        ? t('tokenNeedsReference')
+        : state.configured === undefined
+            ? t('tokenUnknown')
+            : state.configured ? t('tokenStored') : t('tokenMissing')
+    const canSave = !props.disabled && !state.saving && named && state.draft.trim().length > 0
+    return (
+        <div className="wss-field wss-field--wide">
+            <label htmlFor={props.id}>{t('token')}</label>
+            <div className="wss-token">
+                <input
+                    id={props.id}
+                    type="password"
+                    autoComplete="off"
+                    spellCheck={false}
+                    value={state.draft}
+                    disabled={props.disabled || state.saving || !named}
+                    placeholder={state.configured === true ? '••••••••' : ''}
+                    onChange={(event) => { props.onEdit(event.target.value) }}
+                />
+                <button type="button" className="wss-btn" disabled={!canSave} onClick={props.onSave}>
+                    {state.saving ? t('saving') : t('storeToken')}
+                </button>
+            </div>
+            <small className={state.error !== undefined ? 'wss-error' : undefined}>
+                {state.error ?? (state.saved ? `${t('tokenSaved')} ${status}` : status)}
+            </small>
+            <small>{t('tokenHint')}</small>
+        </div>
+    )
+}
+
 /** The numeral that carries one step's position in the chain. */
 function Rank({ n }: { n: number }): JSX.Element {
     return <span className="wss-rank" aria-hidden="true">{n}</span>
@@ -174,6 +231,15 @@ export function WebSearchSection(props: PropsRuntime<'settings.section'> & Injec
     const disabled = !state.writable || state.saving
     const [showLlm, setShowLlm] = useState(false)
     const invalid = new Set(state.invalid)
+    const tokenFor = (reference: string): TokenState => state.tokens[reference] ?? { configured: undefined, draft: '', saving: false, saved: false, error: undefined }
+    const referenceOf = (field: 'parallelCredential' | 'exaCredential'): string =>
+        field === 'parallelCredential' ? draft.free.parallelCredential : draft.free.exaCredential
+
+    useEffect(() => {
+        // One read per reference when the section opens, and whenever a reference
+        // changes: it reports whether a token is stored, never the token.
+        void controller.refreshTokens()
+    }, [draft.free.parallelCredential, draft.free.exaCredential, draft.free.servers.length])
 
     return (
         <div className="wss">
@@ -267,12 +333,21 @@ export function WebSearchSection(props: PropsRuntime<'settings.section'> & Injec
                                 <p className="wss-url">{server.url}</p>
                                 <div className="wss-fields">
                                     <Field
-                                        wide id={`wss-${server.id}-token`}
-                                        label={t('token')}
-                                        hint={t('tokenHint')}
+                                        wide id={`wss-${server.id}-ref`}
+                                        label={t('credential')}
+                                        hint={t('credentialHint')}
                                         disabled={disabled}
                                         value={server.credentialField === 'parallelCredential' ? draft.free.parallelCredential : draft.free.exaCredential}
                                         onChange={(text) => { controller.editFree(server.credentialField, text) }}
+                                    />
+                                    <TokenField
+                                        t={t}
+                                        id={`wss-${server.id}-token`}
+                                        reference={server.credentialField === 'parallelCredential' ? draft.free.parallelCredential : draft.free.exaCredential}
+                                        state={tokenFor(server.credentialField === 'parallelCredential' ? draft.free.parallelCredential : draft.free.exaCredential)}
+                                        disabled={disabled}
+                                        onEdit={(text) => { controller.editToken(referenceOf(server.credentialField), text) }}
+                                        onSave={() => { void controller.saveToken(referenceOf(server.credentialField)) }}
                                     />
                                 </div>
                             </div>
@@ -305,8 +380,16 @@ export function WebSearchSection(props: PropsRuntime<'settings.section'> & Injec
                                                 value={server.label} onChange={(text) => { controller.editServer(server.id, 'label', text) }}
                                             />
                                             <Field
-                                                wide id={`wss-server-${server.id}-token`} label={t('token')} hint={t('tokenHint')} disabled={disabled}
+                                                wide id={`wss-server-${server.id}-ref`} label={t('credential')} hint={t('credentialHint')} disabled={disabled}
                                                 value={server.credential} onChange={(text) => { controller.editServer(server.id, 'credential', text) }}
+                                            />
+                                            <TokenField
+                                                t={t} id={`wss-server-${server.id}-token`}
+                                                reference={server.credential}
+                                                state={tokenFor(server.credential)}
+                                                disabled={disabled}
+                                                onEdit={(text) => { controller.editToken(server.credential, text) }}
+                                                onSave={() => { void controller.saveToken(server.credential) }}
                                             />
                                             <Field
                                                 id={`wss-server-${server.id}-tool`} label={t('serverTool')} hint={t('serverToolHint')} disabled={disabled}
@@ -370,7 +453,32 @@ export function WebSearchSection(props: PropsRuntime<'settings.section'> & Injec
  * @returns the injected face.
  */
 export function createSectionFace(ctx: ClientContext, scope: SettingsScope<unknown>): WebSearchSectionFace {
-    const controller = createWebSearchSection({ scope: scope as never })
+    /**
+     * The credentials domain, bound in a fiber that declares it: cordis refuses
+     * `ctx.remote.credentials` from a context that has not declared the scoped
+     * namespace ("cannot get property ... without inject").
+     */
+    let remote: ClientContext['remote'] | undefined
+    ctx.inject(['remote', 'remote.credentials'], (injected: ClientContext) => {
+        remote = injected.remote
+        return () => {
+            remote = undefined
+        }
+    })
+    const controller = createWebSearchSection({
+        scope: scope as never,
+        describeCredential: async (reference) => {
+            if (remote === undefined) throw new Error('the Remote carrier is still connecting')
+            const response = await remote.credentials.describe([reference])
+            if (!response.ok) throw new Error(response.error.message)
+            return response.value[reference]?.configured === true
+        },
+        writeCredential: async (reference, value) => {
+            if (remote === undefined) throw new Error('the Remote carrier is still connecting')
+            const response = await remote.credentials.set(reference, value)
+            if (!response.ok) throw new Error(response.error.message)
+        },
+    })
     return {
         hooks: {
             webSearchSection: {

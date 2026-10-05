@@ -43,6 +43,18 @@
       ],
       "@deepseek-ai/dsh-client-ui-renderer/client": [
         "./node_modules/@deepseek-ai/dsh-client-ui-renderer/lib/types/client/index.d.ts"
+      ],
+      "@deepseek-ai/dsh-api-gateway/client": [
+        "./node_modules/@deepseek-ai/dsh-api-gateway/lib/types/client/index.d.ts"
+      ],
+      "@deepseek-ai/dsh-credentials/types": [
+        "./node_modules/@deepseek-ai/dsh-credentials/lib/types/types.d.ts"
+      ],
+      "@deepseek-ai/dsh-typert-protocol": [
+        "./node_modules/@deepseek-ai/dsh-typert-protocol/lib/types/index.d.ts"
+      ],
+      "@deepseek-ai/dsh-api-remotes/client": [
+        "./node_modules/@deepseek-ai/dsh-api-remotes/lib/types/client/index.d.ts"
       ]
     },
     "allowImportingTsExtensions": true,
