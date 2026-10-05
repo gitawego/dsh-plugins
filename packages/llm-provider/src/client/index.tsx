@@ -36,6 +36,7 @@ import type { InjectFace, PropsRuntime, TranslateNS } from '@deepseek-ai/dsh-cli
 import {
     createProviderCard,
     FIELDS,
+    type DiscoveredModel,
     REASONING_LEVELS,
     type CardSnapshot,
     type FieldName,
@@ -47,10 +48,11 @@ import { QUOTA_CSS, QuotaGauges, QuotaToolView } from './quota-view.tsx'
 import { createQuotaReader } from './quota-client.ts'
 // The route key comes from the same table the adapter registers, so a rename
 // cannot leave the card editing a section nothing serves.
-import { OPENCODE_GO } from '../gateways.ts'
+import { GATEWAYS } from '../gateways.ts'
 
 const NS = 'llm-provider'
-const ROUTE = OPENCODE_GO.id
+/** Routes this build serves, in gateway order — one panel each. */
+const ROUTES: readonly string[] = GATEWAYS.map((gateway) => gateway.id)
 
 
 /* Pure-type augmentation for the `settings.plugin.item` slot, mirroring
@@ -74,9 +76,8 @@ declare module '@deepseek-ai/dsh-client-ui-slots' {
 
 type Translate = (key: keyof typeof en) => string
 
-/** The face the slot registration injects into the component. */
-interface OpenCodeGoCardFace {
-    hooks: { card: { getSnapshot: () => CardSnapshot; subscribe: (listener: () => void) => () => void } }
+/** One route's actions, as the section's face exposes them. */
+interface ProviderActions {
     refresh: () => void
     togglePin: (modelId: string) => void
     useAll: () => void
@@ -92,6 +93,24 @@ interface OpenCodeGoCardFace {
     selectAllModels: () => void
     clearSelection: () => void
     applyPicker: () => void
+}
+
+/** One route's rendered panel state, as the section's snapshot carries it. */
+export interface ProviderEntry {
+    route: string
+    card: CardSnapshot
+}
+
+/** The section's snapshot: one entry per served route. */
+export interface ProvidersSnapshot {
+    providers: ProviderEntry[]
+}
+
+/** What the section's slot entry injects. */
+interface LlmProvidersFace {
+    hooks: { providers: { getSnapshot: () => ProvidersSnapshot; subscribe: (listener: () => void) => () => void } }
+    t: Translate
+    byRoute: Record<string, ProviderActions>
 }
 
 const CSS = `
@@ -142,6 +161,11 @@ ${QUOTA_CSS}
 .lp-foot p{margin:0;font-size:11px;color:var(--dsw-alias-label-tertiary)}
 .lp-actions{display:flex;gap:8px}
 .lp-note{margin:0;font-size:11px;color:var(--dsw-alias-label-tertiary)}
+.lpp{display:flex;flex-direction:column;gap:14px}
+.lpp-head{display:flex;flex-direction:column;gap:4px}
+.lpp-title{margin:0;font-size:16px;font-weight:600;letter-spacing:.01em}
+.lpp-intro{margin:0;font-size:12px;color:var(--dsw-alias-label-tertiary);max-width:60ch}
+.lpp .lp-card{background:var(--dsw-alias-bg-layer-2)}
 .lpq-dialog{width:min(560px,92vw);max-height:80vh;padding:16px;border:1px solid var(--dsw-alias-border-l2);border-radius:14px;background:var(--dsw-alias-bg-layer-1);color:var(--dsw-alias-label-primary)}
 .lpq-dialog::backdrop{background:#0009}
 .lpq-dialog .lp-dialog-head{display:flex;align-items:baseline;justify-content:space-between;gap:10px;margin-bottom:10px}
@@ -409,12 +433,23 @@ function ModelRowView(props: {
     )
 }
 
-export type OpenCodeGoCardProps = PropsRuntime<'settings.plugin.item'> & InjectFace<OpenCodeGoCardFace> & { t: Translate }
-
-/** The card. */
-export function OpenCodeGoCard(props: OpenCodeGoCardProps): JSX.Element {
+/**
+ * One provider's panel: its models, its allowance, and its configuration.
+ *
+ * A pure function of props rather than a slot component with hooks of its own,
+ * so the section can render one per served route from a single snapshot — which
+ * is what makes "we can add more providers" a data change instead of a
+ * registration change.
+ */
+export function ProviderPanel(props: {
+    t: Translate
+    route: string
+    card: CardSnapshot
+    face: ProviderActions
+}): JSX.Element {
     const t = props.t
-    const snapshot = props.useCard((value) => value)
+    const face = props.face
+    const snapshot = props.card
     const [filter, setFilter] = useState('')
     // The clock only exists to age the "read N ago" line; re-reading it on an
     // interval would re-render the whole card every second for a label.
@@ -422,10 +457,10 @@ export function OpenCodeGoCard(props: OpenCodeGoCardProps): JSX.Element {
     const [showFilter, setShowFilter] = useState(false)
 
     useEffect(() => {
-        props.refresh()
+        face.refresh()
         // One allowance read per card mount: it spends the stored credential on
         // one provider request, so it is on demand rather than on a timer.
-        props.refreshQuota()
+        face.refreshQuota()
     }, [])
 
     // The card lists what the route may use. What it may not lives in the
@@ -449,7 +484,7 @@ export function OpenCodeGoCard(props: OpenCodeGoCardProps): JSX.Element {
     const busy = snapshot.saving
 
     return (
-        <li className="lp-card">
+        <section className="lp-card" aria-label={t('routeName')}>
             <div className="lp-head">
                 <div>
                     <h3 className="lp-title">{t('routeName')}</h3>
@@ -479,10 +514,10 @@ export function OpenCodeGoCard(props: OpenCodeGoCardProps): JSX.Element {
                                 </button>
                             )
                             : null}
-                        <button type="button" className="lp-btn" disabled={!snapshot.writable || busy} onClick={props.openPicker}>
+                        <button type="button" className="lp-btn" disabled={!snapshot.writable || busy} onClick={face.openPicker}>
                             {t('pickModels')}
                         </button>
-                        <button type="button" className="lp-btn" disabled={snapshot.catalog.state === 'loading'} onClick={props.refresh}>
+                        <button type="button" className="lp-btn" disabled={snapshot.catalog.state === 'loading'} onClick={face.refresh}>
                             {t('refresh')}
                         </button>
                     </div>
@@ -509,7 +544,7 @@ export function OpenCodeGoCard(props: OpenCodeGoCardProps): JSX.Element {
                                 pinLabel={t('pin')}
                                 unpinLabel={t('unpin')}
                                 retiredLabel={t('retired')}
-                                onToggle={() => { props.togglePin(row.id) }}
+                                onToggle={() => { face.togglePin(row.id) }}
                             />
                         ))}
                 </ul>
@@ -521,7 +556,7 @@ export function OpenCodeGoCard(props: OpenCodeGoCardProps): JSX.Element {
                     ? null
                     : (
                         <div className="lp-row">
-                            <button type="button" className="lp-btn" disabled={!snapshot.writable || busy} onClick={props.useAll}>
+                            <button type="button" className="lp-btn" disabled={!snapshot.writable || busy} onClick={face.useAll}>
                                 {t('useAll')}
                             </button>
                         </div>
@@ -541,7 +576,7 @@ export function OpenCodeGoCard(props: OpenCodeGoCardProps): JSX.Element {
                                         ? `${t('read')} ${formatAge(snapshot.quota.at, nowRef.current)}`
                                         : t('quotaHint')}
                         </span>
-                        <button type="button" className="lp-btn" disabled={snapshot.quota.state === 'loading'} onClick={props.refreshQuota}>
+                        <button type="button" className="lp-btn" disabled={snapshot.quota.state === 'loading'} onClick={face.refreshQuota}>
                             {t('refresh')}
                         </button>
                     </div>
@@ -558,8 +593,8 @@ export function OpenCodeGoCard(props: OpenCodeGoCardProps): JSX.Element {
                         t={t}
                         state={snapshot.apiKey}
                         disabled={!snapshot.writable}
-                        onEdit={props.editApiKey}
-                        onSave={props.saveApiKey}
+                        onEdit={face.editApiKey}
+                        onSave={face.saveApiKey}
                     />
                     <Field
                         id="lp-credential"
@@ -568,7 +603,7 @@ export function OpenCodeGoCard(props: OpenCodeGoCardProps): JSX.Element {
                         value={draftOf(snapshot, 'apiKeyEnv')}
                         invalid={snapshot.invalid['apiKeyEnv']}
                         disabled={!snapshot.writable}
-                        onChange={(text) => { props.edit('apiKeyEnv', text) }}
+                        onChange={(text) => { face.edit('apiKeyEnv', text) }}
                     />
                     <Field
                         id="lp-endpoint"
@@ -577,7 +612,7 @@ export function OpenCodeGoCard(props: OpenCodeGoCardProps): JSX.Element {
                         value={draftOf(snapshot, 'baseURL')}
                         invalid={snapshot.invalid['baseURL']}
                         disabled={!snapshot.writable}
-                        onChange={(text) => { props.edit('baseURL', text) }}
+                        onChange={(text) => { face.edit('baseURL', text) }}
                     />
                     <Select
                         id="lp-session"
@@ -586,7 +621,7 @@ export function OpenCodeGoCard(props: OpenCodeGoCardProps): JSX.Element {
                         value={draftOf(snapshot, 'sessionRouting')}
                         options={[{ value: 'true', label: t('on') }, { value: 'false', label: t('off') }]}
                         disabled={!snapshot.writable}
-                        onChange={(text) => { props.edit('sessionRouting', text) }}
+                        onChange={(text) => { face.edit('sessionRouting', text) }}
                     />
                     <Select
                         id="lp-reasoning"
@@ -595,7 +630,7 @@ export function OpenCodeGoCard(props: OpenCodeGoCardProps): JSX.Element {
                         value={snapshot.drafts['reasoning'] ?? ''}
                         options={REASONING_LEVELS.map((level) => ({ value: level, label: level === '' ? t('providerDefault') : level }))}
                         disabled={!snapshot.writable}
-                        onChange={(text) => { props.edit('reasoning', text) }}
+                        onChange={(text) => { face.edit('reasoning', text) }}
                     />
                     <Field
                         id="lp-pixels"
@@ -604,7 +639,7 @@ export function OpenCodeGoCard(props: OpenCodeGoCardProps): JSX.Element {
                         value={snapshot.drafts['requestImagePixelBudget'] ?? ''}
                         invalid={snapshot.invalid['requestImagePixelBudget']}
                         disabled={!snapshot.writable}
-                        onChange={(text) => { props.edit('requestImagePixelBudget', text) }}
+                        onChange={(text) => { face.edit('requestImagePixelBudget', text) }}
                     />
                     <Field
                         id="lp-image-bytes"
@@ -613,7 +648,7 @@ export function OpenCodeGoCard(props: OpenCodeGoCardProps): JSX.Element {
                         value={snapshot.drafts['requestImageMaxBytes'] ?? ''}
                         invalid={snapshot.invalid['requestImageMaxBytes']}
                         disabled={!snapshot.writable}
-                        onChange={(text) => { props.edit('requestImageMaxBytes', text) }}
+                        onChange={(text) => { face.edit('requestImageMaxBytes', text) }}
                     />
                     <Field
                         id="lp-request-bytes"
@@ -622,7 +657,7 @@ export function OpenCodeGoCard(props: OpenCodeGoCardProps): JSX.Element {
                         value={snapshot.drafts['maxRequestImageBytes'] ?? ''}
                         invalid={snapshot.invalid['maxRequestImageBytes']}
                         disabled={!snapshot.writable}
-                        onChange={(text) => { props.edit('maxRequestImageBytes', text) }}
+                        onChange={(text) => { face.edit('maxRequestImageBytes', text) }}
                     />
                 </div>
             </details>
@@ -635,7 +670,7 @@ export function OpenCodeGoCard(props: OpenCodeGoCardProps): JSX.Element {
                         type="button"
                         className="lp-btn"
                         disabled={!snapshot.dirty || busy}
-                        onClick={props.discard}
+                        onClick={face.discard}
                     >
                         {t('discard')}
                     </button>
@@ -643,7 +678,7 @@ export function OpenCodeGoCard(props: OpenCodeGoCardProps): JSX.Element {
                         type="button"
                         className="lp-btn lp-btn--primary"
                         disabled={!snapshot.dirty || busy || !snapshot.writable || Object.keys(snapshot.invalid).length > 0}
-                        onClick={props.save}
+                        onClick={face.save}
                     >
                         {busy ? t('saving') : t('save')}
                     </button>
@@ -655,38 +690,28 @@ export function OpenCodeGoCard(props: OpenCodeGoCardProps): JSX.Element {
                 state={snapshot.picker}
                 models={snapshot.models}
                 disabled={!snapshot.writable || busy}
-                onToggle={props.togglePickerModel}
-                onAll={props.selectAllModels}
-                onNone={props.clearSelection}
-                onClose={props.closePicker}
-                onApply={props.applyPicker}
+                onToggle={face.togglePickerModel}
+                onAll={face.selectAllModels}
+                onNone={face.clearSelection}
+                onClose={face.closePicker}
+                onApply={face.applyPicker}
             />
-        </li>
+        </section>
     )
 }
 
-/** Bring the card's face to the component, keyed by the settings namespace. */
-export function createFace(ctx: ClientContext, scope: SettingsScope<ProviderSections>): OpenCodeGoCardFace {
-    /**
-     * The Remote face, bound in a fiber that declares the scoped namespaces.
-     * Undefined until the carrier is up; every read reports that as a reason
-     * rather than as a failure.
-     */
-    let remote: ClientContext['remote'] | undefined
-    ctx.inject(['remote', 'remote.llm', 'remote.credentials'], (injected: ClientContext) => {
-        remote = injected.remote
-        return () => {
-            remote = undefined
-        }
-    })
-    const carrier = (): ClientContext['remote'] => {
-        if (remote === undefined) throw new Error('the Remote carrier is still connecting; try again in a moment')
-        return remote
-    }
-
+/**
+ * Build one route's actions over the shared settings scope and Remote carrier.
+ * @param ctx - the client context.
+ * @param scope - the bound `llm-provider` settings scope.
+ * @param route - the route this controller edits.
+ * @returns that route's actions.
+ */
+export function createFace(ctx: ClientContext, scope: SettingsScope<ProviderSections>, route: string): ProviderActions {
+    const carrier = carrierOf(ctx)
     const controller: ProviderCard = createProviderCard({
         scope,
-        route: ROUTE,
+        route,
         readQuota: createQuotaReader(),
         describeCredential: async (reference) => {
             const response = await carrier().credentials.describe([reference])
@@ -709,7 +734,6 @@ export function createFace(ctx: ClientContext, scope: SettingsScope<ProviderSect
         },
     })
     return {
-        hooks: { card: { getSnapshot: controller.getSnapshot, subscribe: controller.subscribe } },
         refresh: () => { void controller.refresh() },
         togglePin: (modelId) => { void controller.togglePin(modelId) },
         useAll: () => { void controller.useAll() },
@@ -726,6 +750,100 @@ export function createFace(ctx: ClientContext, scope: SettingsScope<ProviderSect
         clearSelection: () => { controller.clearSelection() },
         applyPicker: () => { void controller.applyPicker() },
     }
+}
+
+/**
+ * The LLM providers section: one panel per served route.
+ *
+ * A section rather than a card in the plugin list, because this is a
+ * configuration surface that grows — every gateway this plugin learns to serve
+ * adds a panel here, and none of them belong in a list of plugin cards. It is
+ * also a `list` slot, which carries an explicit `order`, so its position is
+ * stable (the keyed plugin slot has none).
+ *
+ * @param props - the section's owner props, its locale, and the per-route faces.
+ * @returns the section.
+ */
+export function LlmProvidersSection(props: PropsRuntime<'settings.section'> & InjectFace<LlmProvidersFace>): JSX.Element {
+    const t = props.t
+    const snapshot = props.useProviders((value) => value)
+    return (
+        <div className="lpp">
+            <header className="lpp-head">
+                <h2 className="lpp-title">{t('sectionTitle')}</h2>
+                <p className="lpp-intro">{t('sectionIntro')}</p>
+            </header>
+            {snapshot.providers.length === 0
+                ? <p className="lp-hint">{t('noModels')}</p>
+                : snapshot.providers.map((entry) => (
+                    <ProviderPanel
+                        key={entry.route}
+                        t={t}
+                        route={entry.route}
+                        card={entry.card}
+                        face={props.byRoute[entry.route]!}
+                    />
+                ))}
+        </div>
+    )
+}
+
+/**
+ * Build the section's face: one controller per route, projected through a single
+ * memoized snapshot.
+ *
+ * One store rather than one hook per panel: a slot component gets exactly one
+ * injected hook, and a snapshot that rebuilt itself per call would re-render
+ * forever (`useSyncExternalStore` compares by identity — React error #185, the
+ * failure this card already shipped once).
+ * @param ctx - the client context.
+ * @param scope - the bound `llm-provider` settings scope.
+ * @param routes - routes to render a panel for.
+ * @returns the section's injected face.
+ */
+export function createSectionFace(
+    ctx: ClientContext,
+    scope: SettingsScope<ProviderSections>,
+    routes: readonly string[],
+): LlmProvidersFace {
+    const t = ctx.locale.bind(NS) as unknown as Translate
+    const byRoute: Record<string, ProviderActions> = {}
+    const controllers: { route: string; card: ProviderCard }[] = []
+    for (const route of routes) {
+        byRoute[route] = createFace(ctx, scope, route)
+        controllers.push({ route, card: createProviderCard({
+            scope,
+            route,
+            readQuota: createQuotaReader(),
+            describeCredential: credentialDescriber(ctx),
+            writeCredential: credentialWriter(ctx),
+            discover: modelDiscovery(ctx),
+        }) })
+    }
+
+    let cached: ProvidersSnapshot | undefined
+    let stale = true
+    const compute = (): ProvidersSnapshot => ({
+        providers: controllers.map((entry) => ({ route: entry.route, card: entry.card.getSnapshot() })),
+    })
+    const store = {
+        getSnapshot: (): ProvidersSnapshot => {
+            if (cached !== undefined && !stale) return cached
+            stale = false
+            cached = compute()
+            return cached
+        },
+        subscribe: (listener: () => void): (() => void) => {
+            const offs = controllers.map((entry) => entry.card.subscribe(() => {
+                stale = true
+                listener()
+            }))
+            return () => {
+                for (const off of offs) off()
+            }
+        },
+    }
+    return { hooks: { providers: store }, t, byRoute }
 }
 
 /**
@@ -748,6 +866,55 @@ export function createFace(ctx: ClientContext, scope: SettingsScope<ProviderSect
  * because cordis refuses to resolve `ctx.remote.llm` from a context that has not
  * declared it (`cannot get property "remote.llm" without inject`).
  */
+/** The Remote carrier, bound in a fiber that declares the scoped namespaces. */
+function carrierOf(ctx: ClientContext): () => ClientContext['remote'] {
+    let remote: ClientContext['remote'] | undefined
+    ctx.inject(['remote', 'remote.llm', 'remote.credentials'], (injected: ClientContext) => {
+        remote = injected.remote
+        return () => {
+            remote = undefined
+        }
+    })
+    return () => {
+        if (remote === undefined) throw new Error('the Remote carrier is still connecting; try again in a moment')
+        return remote
+    }
+}
+
+/** The credential read one route's profile names. */
+function credentialDescriber(ctx: ClientContext) {
+    const carrier = carrierOf(ctx)
+    return async (reference: string): Promise<boolean> => {
+        const response = await carrier().credentials.describe([reference])
+        if (!response.ok) throw new Error(response.error.message)
+        return response.value[reference]?.configured === true
+    }
+}
+
+/** The credential write behind the API key field. */
+function credentialWriter(ctx: ClientContext) {
+    const carrier = carrierOf(ctx)
+    return async (reference: string, value: string): Promise<void> => {
+        const response = await carrier().credentials.set(reference, value)
+        if (!response.ok) throw new Error(response.error.message)
+    }
+}
+
+/** The live catalog read. */
+function modelDiscovery(ctx: ClientContext) {
+    const carrier = carrierOf(ctx)
+    return async (route: string): Promise<DiscoveredModel[]> => {
+        const result = await carrier().llm.discoverModels(NS, { provider: route })
+        if (!result.ok) throw new Error(result.error.message)
+        return result.value.map((model) => ({
+            id: model.id,
+            ...(model.name !== undefined ? { name: model.name } : {}),
+            ...(model.contextWindow !== undefined ? { contextWindow: model.contextWindow } : {}),
+            ...(model.maxTokens !== undefined ? { maxTokens: model.maxTokens } : {}),
+        }))
+    }
+}
+
 export const inject = ['slots', 'locale', 'settingsScope']
 
 /**
@@ -764,17 +931,20 @@ export function apply(ctx: ClientContext): void {
         locale: NS,
         inject: () => ({}),
     }, QuotaToolView as never))
-    ctx.effect(() => ctx.locale.register(NS, { en, zh }), 'dsh-llm-provider: card locale')
+    ctx.effect(() => ctx.locale.register(NS, { en, zh }), 'dsh-llm-provider: section locale')
     const scope = ctx.settingsScope.bind<ProviderSections>({ namespace: NS })
-    const face = createFace(ctx, scope)
-    const t = ctx.locale.bind(NS) as unknown as Translate
-    const Bound = (props: OpenCodeGoCardProps): JSX.Element => <OpenCodeGoCard {...props} t={props.t ?? t} />
-    ctx.slots.inject('settings.plugin.item', () => ctx.slots.register({
-        name: 'settings.plugin.item',
-        key: NS,
+    const face = createSectionFace(ctx, scope, ROUTES)
+    // A section, not a plugin card: this surface grows with every gateway the
+    // plugin learns to serve, and `settings.section` is a list slot whose
+    // `order` also makes the position stable.
+    ctx.slots.inject('settings.section', () => ctx.slots.register({
+        name: 'settings.section',
+        id: 'llm-providers',
+        order: 50,
+        label: () => face.t('sectionNav'),
         locale: NS,
         inject: () => face,
-    }, Bound as never))
+    }, LlmProvidersSection as never))
 }
 
 export type { ProviderSections, CardSnapshot, FieldName }

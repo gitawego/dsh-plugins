@@ -106,10 +106,14 @@ describe('client bundle', () => {
         }
     })
 
-    it('registers the settings card under the namespace it edits', () => {
+    it('registers a settings SECTION, not a card in the plugin list', () => {
+        // The surface grows with every gateway the plugin serves, and the plugin
+        // list is the wrong home for that: `settings.section` is a list slot
+        // (so it also carries an explicit `order`, and its position is stable).
         const source = readFileSync(bundle, 'utf8')
-        expect(source).toContain('llm-provider')
-        expect(source).toContain('settings.plugin.item')
+        expect(source).toContain('settings.section')
+        expect(source).toContain('llm-providers')
+        expect(source).not.toContain('settings.plugin.item')
     })
 
     it('gates registration only on boot-time services, so the card has a stable position', () => {

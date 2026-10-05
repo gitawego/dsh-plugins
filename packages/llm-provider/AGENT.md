@@ -215,13 +215,27 @@ context. That both waits for the service and hands back a context that declares
 it, and it is how the shipped `dsh-client-modules` registers its web route.
 `ctx.get` is for probing only — and if you probe, never touch the property.
 
-## Design rule — register the card with the boot-time group (NON-NEGOTIABLE)
+## Design rule — this surface is a SECTION, not a plugin card (NON-NEGOTIABLE)
 
-The Plugins tab renders cards in **slot-registration order**, and
-`settings.plugin.item` is a `keyed` slot whose options are `{ key, priority? }` —
-there is **no `order`** to ask for a position (unlike `list` slots). Client
-bundles are loaded concurrently, so that order is timing-dependent; a plugin's
-only lever is *when it registers*.
+The provider settings live in `settings.section` (id `llm-providers`), one panel
+per served route, not in `settings.plugin.item`:
+
+- the surface grows with every gateway the plugin serves, and a plugin-card list
+  is not where several providers belong;
+- `settings.section` is a **list** slot, so it carries an explicit `order` and
+  the position is stable — the keyed plugin slot has no `order` at all, which is
+  why the card's position used to move between reloads.
+
+One store for the whole section, projected as `{ providers: [{ route, card }] }`,
+with the panels as **pure functions of props**. A slot component gets exactly one
+injected hook, and per-panel hooks would mean per-panel stores; the section
+snapshot is memoized for the same reason the card's is (identity-compared
+snapshots, React #185).
+
+## Design rule — register the section with the boot-time group (NON-NEGOTIABLE)
+
+Registration order still matters, and the exported `inject` still lists only
+services that exist at boot.
 
 So the exported `inject` lists only services that exist at boot (`slots`,
 `locale`, `settingsScope`). Anything later — the Remote carrier, which arrives
