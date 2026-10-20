@@ -3,12 +3,12 @@
  *
  * The harness request vocabulary (messages, content blocks, tool schemas) is
  * provider-neutral; pi-ai expects its own `Context`. Everything in this module
- * is one direction only, and it is deliberately the *provider-neutral* path:
- * the adapter keeps no replay state, so an assistant message is rebuilt from
- * durable content exactly as `dsh-llm-pi-ai` rebuilds one produced by a foreign
- * adapter. Reasoning therefore travels as unsigned thinking, which pi-ai's
- * Anthropic converter downgrades to text rather than sending an unsigned block
- * the API would reject.
+ * is one direction only, and it is deliberately the *durable* path: the adapter
+ * keeps no replay state, so an assistant message is rebuilt from durable
+ * content. Provenance decides what pi-ai does with the reasoning — history this
+ * route produced is replayed as the same model's own (DeepSeek's thinking mode
+ * requires it back verbatim), while history from anywhere else stays
+ * provider-neutral and degrades to text.
  *
  * Images are the one place the conversion needs a service: the durable
  * `ImageBlock` references are projected to request bytes through the attachment
@@ -158,13 +158,57 @@ function piContext(systemPrompt: string | undefined, options: GenerateOptions, m
 }
 
 /**
- * Rebuild one assistant history message from durable content, without replay
- * metadata.
+ * The wire field a provider wants replayed reasoning under.
+ *
+ * pi-ai's OpenAI-completions serializer echoes a thinking block only when the
+ * block names a field that vocabulary knows; without one it emits an empty
+ * `reasoning_content`, which DeepSeek's thinking mode rejects once the request
+ * carries tools.
+ */
+export type ReplayedReasoning = 'reasoning_content'
+
+/**
+ * How this request's own history is replayed to pi-ai.
+ *
+ * pi-ai treats an assistant message whose `api`/`provider`/`model` disagree with
+ * the model being called as *foreign*: `transformMessages` downgrades its
+ * thinking to plain text, on the assumption that another vendor's reasoning is
+ * not this model's reasoning. That is right for history this route did not
+ * produce, and wrong for the log it did — DeepSeek's thinking mode requires
+ * those turns back as `reasoning_content`, and prose in `content` is not it.
+ */
+export interface ReplayContract {
+    /** Wire protocol this request dispatches with. */
+    api: string
+    /** Route key the durable history was produced on. */
+    provider: string
+    /** Model id the durable history was produced by. */
+    model: string
+    /** Wire field to echo replayed reasoning under, when the provider requires it. */
+    reasoning?: ReplayedReasoning
+}
+
+/**
+ * Rebuild one assistant history message from durable content.
+ *
+ * Wire identity is stamped only when the durable source *is* the model being
+ * called and that model requires its reasoning replayed. Every other message
+ * keeps the provider-neutral `dsh-foreign` provenance, which is what makes pi-ai
+ * downgrade another vendor's thinking to text rather than sending it as this
+ * model's own.
  * @param message - a harness assistant message.
+ * @param replay - this request's replay contract, when the route replays reasoning.
  * @returns the pi-ai assistant message.
  */
-export function foreignAssistant(message: Message): PiAssistantMessage {
+export function foreignAssistant(message: Message, replay?: ReplayContract): PiAssistantMessage {
     const source = message.source.kind === 'model' ? message.source : undefined
+    const reasoning = replay?.reasoning
+    const sameModel =
+        replay !== undefined &&
+        reasoning !== undefined &&
+        source !== undefined &&
+        source.provider === replay.provider &&
+        source.model === replay.model
     const content: PiAssistantMessage['content'] = []
     for (const block of message.content) {
         switch (block.type) {
@@ -172,7 +216,11 @@ export function foreignAssistant(message: Message): PiAssistantMessage {
                 content.push({ type: 'text', text: block.text })
                 break
             case 'reasoning':
-                content.push({ type: 'thinking', thinking: block.text })
+                content.push({
+                    type: 'thinking',
+                    thinking: block.text,
+                    ...(sameModel && reasoning !== undefined ? { thinkingSignature: reasoning } : {}),
+                })
                 break
             case 'tool-call':
                 content.push({
@@ -191,11 +239,11 @@ export function foreignAssistant(message: Message): PiAssistantMessage {
     return {
         role: 'assistant',
         content,
-        // Provider-neutral provenance: the history came from the durable log,
-        // not from a pi-ai response this process still holds replay data for.
-        api: 'dsh-foreign' as PiAssistantMessage['api'],
-        provider: source?.provider ?? 'dsh-foreign',
-        model: source?.model ?? 'dsh-foreign',
+        // Same-model provenance is what keeps the reasoning on the wire; every
+        // other message stays provider-neutral on purpose.
+        api: (sameModel && replay !== undefined ? replay.api : 'dsh-foreign') as PiAssistantMessage['api'],
+        provider: sameModel && replay !== undefined ? replay.provider : (source?.provider ?? 'dsh-foreign'),
+        model: sameModel && replay !== undefined ? replay.model : (source?.model ?? 'dsh-foreign'),
         usage: emptyPiUsage(),
         stopReason: content.some((piece) => piece.type === 'toolCall') ? 'toolUse' : 'stop',
         timestamp: 0,
@@ -203,8 +251,13 @@ export function foreignAssistant(message: Message): PiAssistantMessage {
 }
 
 /** Track tool names by call id so a tool result can name its tool. */
-function appendAssistant(message: Message, messages: PiMessage[], toolNames: Map<string, string>): void {
-    const assistant = foreignAssistant(message)
+function appendAssistant(
+    message: Message,
+    messages: PiMessage[],
+    toolNames: Map<string, string>,
+    replay?: ReplayContract,
+): void {
+    const assistant = foreignAssistant(message, replay)
     for (const block of assistant.content) {
         if (block.type === 'toolCall') toolNames.set(block.id, block.name)
     }
@@ -214,9 +267,10 @@ function appendAssistant(message: Message, messages: PiMessage[], toolNames: Map
 /**
  * Convert a request with no image occurrences.
  * @param options - the assembled request.
+ * @param replay - this request's replay contract, when the route replays reasoning.
  * @returns the pi-ai context.
  */
-export function textOnlyContext(options: GenerateOptions): PiContext {
+export function textOnlyContext(options: GenerateOptions, replay?: ReplayContract): PiContext {
     assertSupportedImageRoles(options.messages)
     const split = splitSystemPrompt(options)
     const toolNames = new Map<string, string>()
@@ -232,7 +286,7 @@ export function textOnlyContext(options: GenerateOptions): PiContext {
             continue
         }
         if (message.role === 'assistant') {
-            appendAssistant(message, messages, toolNames)
+            appendAssistant(message, messages, toolNames, replay)
             continue
         }
         const text = flattenText(message.content)
@@ -320,9 +374,14 @@ async function userContent(
  * Convert a request that contains image occurrences.
  * @param options - the assembled request.
  * @param conversion - attachment store, profile budgets, and cancellation.
+ * @param replay - this request's replay contract, when the route replays reasoning.
  * @returns the pi-ai context.
  */
-export async function imagesContext(options: GenerateOptions, conversion: ImageConversion): Promise<PiContext> {
+export async function imagesContext(
+    options: GenerateOptions,
+    conversion: ImageConversion,
+    replay?: ReplayContract,
+): Promise<PiContext> {
     const { attachments, profile } = conversion
     const requestImagePolicy = { maxPixels: profile.requestImagePixelBudget, maxBytes: profile.requestImageMaxBytes }
     assertSupportedImageRoles(options.messages)
@@ -363,7 +422,7 @@ export async function imagesContext(options: GenerateOptions, conversion: ImageC
             continue
         }
         if (message.role === 'assistant') {
-            appendAssistant(message, messages, toolNames)
+            appendAssistant(message, messages, toolNames, replay)
             continue
         }
         const inline = message.content.filter((block) => block.type !== 'tool-result')
@@ -393,16 +452,18 @@ export async function imagesContext(options: GenerateOptions, conversion: ImageC
  * @param options - the assembled request.
  * @param hasImage - whether the request carries any image occurrence.
  * @param images - image conversion inputs; required when `hasImage` is true.
+ * @param replay - this request's replay contract, when the route replays reasoning.
  * @returns the pi-ai context.
  */
 export async function toPiContext(
     options: GenerateOptions,
     hasImage: boolean,
     images?: ImageConversion,
+    replay?: ReplayContract,
 ): Promise<PiContext> {
-    if (!hasImage) return textOnlyContext(options)
+    if (!hasImage) return textOnlyContext(options, replay)
     if (images === undefined) {
         throw new LlmError('llm-provider image conversion requires the durable attachment service', 'UNSUPPORTED_CONTENT')
     }
-    return imagesContext(options, images)
+    return imagesContext(options, images, replay)
 }

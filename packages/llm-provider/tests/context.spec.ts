@@ -115,6 +115,55 @@ describe('foreignAssistant', () => {
         expect(converted.usage.totalTokens).toBe(0)
     })
 
+    it('replays its own turn as the same model, which is what keeps reasoning on the wire', () => {
+        const message = createAssistantMessage({
+            content: [
+                { type: 'reasoning', text: 'checked the durable log' },
+                { type: 'tool-call', id: toolCallId('call-2'), name: 'bash', arguments: '{}' },
+            ],
+            source: { provider: 'opencode-go', model: 'deepseek-v4.1-flash' },
+        })
+        // DeepSeek's thinking mode rejects a tool-carrying request whose
+        // assistant turns do not carry their reasoning_content back.
+        const converted = foreignAssistant(message, {
+            api: 'openai-completions',
+            provider: 'opencode-go',
+            model: 'deepseek-v4.1-flash',
+            reasoning: 'reasoning_content',
+        })
+        expect(converted.content[0]).toEqual({
+            type: 'thinking',
+            thinking: 'checked the durable log',
+            thinkingSignature: 'reasoning_content',
+        })
+        // pi-ai only replays a signature when the message claims the model
+        // being called; a foreign label downgrades the thinking to text.
+        expect(converted).toMatchObject({ api: 'openai-completions', provider: 'opencode-go', model: 'deepseek-v4.1-flash' })
+    })
+
+    it('keeps history from another model provider-neutral', () => {
+        const message = createAssistantMessage({
+            content: [{ type: 'reasoning', text: 'someone else reasoning' }],
+            source: { provider: 'opencode-go', model: 'glm-5.3' },
+        })
+        const converted = foreignAssistant(message, {
+            api: 'openai-completions',
+            provider: 'opencode-go',
+            model: 'deepseek-v4.1-flash',
+            reasoning: 'reasoning_content',
+        })
+        expect(converted.content[0]).toEqual({ type: 'thinking', thinking: 'someone else reasoning' })
+        expect(converted.api).toBe('dsh-foreign')
+    })
+
+    it('leaves the reasoning unsigned for a provider that does not ask for it', () => {
+        const message = createAssistantMessage({
+            content: [{ type: 'reasoning', text: 'quiet' }],
+            source: { provider: 'opencode-go', model: 'm' },
+        })
+        expect(foreignAssistant(message).content[0]).toEqual({ type: 'thinking', thinking: 'quiet' })
+    })
+
     it('refuses an assistant image, which pi-ai history cannot represent', () => {
         const message = createAssistantMessage({
             content: [{ type: 'image', attachment: imageRef() }],
@@ -159,6 +208,30 @@ describe('textOnlyContext', () => {
         const result = context.messages.find((message) => message.role === 'toolResult')
         expect(result).toMatchObject({ toolCallId: 'call-1', toolName: 'bash', isError: false })
         expect(result?.role === 'toolResult' && result.content).toEqual([{ type: 'text', text: 'done' }])
+    })
+
+    it('carries the replayed-reasoning field into the assembled history', () => {
+        const context = textOnlyContext(
+            request({
+                messages: [
+                    createAssistantMessage({
+                        content: [
+                            { type: 'reasoning', text: 'weighing it' },
+                            { type: 'tool-call', id: toolCallId('call-3'), name: 'bash', arguments: '{}' },
+                        ],
+                        source: { provider: 'p', model: 'm' },
+                    }),
+                ],
+            }),
+            { api: 'openai-completions', provider: 'p', model: 'm', reasoning: 'reasoning_content' },
+        )
+        const assistant = context.messages[0]
+        expect(assistant).toMatchObject({ role: 'assistant' })
+        expect(assistant?.role === 'assistant' && assistant.content[0]).toEqual({
+            type: 'thinking',
+            thinking: 'weighing it',
+            thinkingSignature: 'reasoning_content',
+        })
     })
 
     it('keeps an empty tool result visible rather than sending an empty block', () => {

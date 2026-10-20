@@ -89,6 +89,37 @@ function reasoningInfo(model: Model<Api>, configured: ModelThinkingLevel | undef
     }
 }
 
+/** Model ids whose OpenAI-compatible servers require replayed reasoning. */
+const DEEPSEEK_MODEL_PREFIX = 'deepseek'
+
+/**
+ * The wire field this model's history must echo reasoning under, when its
+ * provider requires the reasoning back.
+ *
+ * DeepSeek's thinking mode rejects a request that carries `tools` without the
+ * `reasoning_content` of every previous assistant turn: the chain of thought is
+ * concatenated into the context, so an empty or missing echo is a malformed
+ * request rather than a lost nicety. The gateway serves those models under
+ * `deepseek*` ids.
+ *
+ * The installed catalog's compat switch answers for every model that build
+ * describes. A model the gateway released afterwards (`deepseek-v4.1-flash`) has
+ * no compat at all — models.dev does not describe its installed sibling either,
+ * so family inheritance cannot resolve one — and its id names the family
+ * instead. An explicit `false` stays a decision: only the models that ask for
+ * the echo get it.
+ * @param model - the resolved pi-ai model.
+ * @returns `reasoning_content` when history must be replayed with its reasoning,
+ *   otherwise undefined to leave the history unsigned.
+ */
+export function replayedReasoningField(model: Model<Api>): 'reasoning_content' | undefined {
+    if (model.api !== 'openai-completions' || !model.reasoning) return undefined
+    const compat = (model as Model<'openai-completions'>).compat
+    if (compat?.requiresReasoningContentOnAssistantMessages === true) return 'reasoning_content'
+    if (compat?.requiresReasoningContentOnAssistantMessages === false) return undefined
+    return model.id.toLowerCase().startsWith(DEEPSEEK_MODEL_PREFIX) ? 'reasoning_content' : undefined
+}
+
 /**
  * The adapter serving this plugin's routes.
  *
@@ -152,10 +183,17 @@ export class GatewayAdapter extends LlmAdapter {
             throw new LlmError(`model "${model.id}" does not support image input`, 'UNSUPPORTED_CONTENT')
         }
 
+        const replayedReasoning = replayedReasoningField(model)
         const context = await toPiContext(
             options,
             hasImage,
             attachments === undefined ? undefined : { attachments, profile, ...(options.signal ? { signal: options.signal } : {}) },
+            {
+                api: model.api,
+                provider: options.provider,
+                model: model.id,
+                ...(replayedReasoning === undefined ? {} : { reasoning: replayedReasoning }),
+            },
         )
 
         let events: AsyncIterable<Parameters<typeof toStreamChunks>[0] extends AsyncIterable<infer E> ? E : never>

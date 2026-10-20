@@ -1,7 +1,14 @@
 import { describe, expect, it } from 'vitest'
 import type { AssistantMessage, AssistantMessageEvent, Model, Api } from '@earendil-works/pi-ai'
-import { createUserMessage, type GenerateOptions, type LlmResolvedModelInfo, type StreamChunk } from '@deepseek-ai/dsh-llm'
-import { GatewayAdapter } from '../src/adapter.ts'
+import {
+    createAssistantMessage,
+    createUserMessage,
+    type GenerateOptions,
+    type LlmResolvedModelInfo,
+    type StreamChunk,
+    type ToolCallId,
+} from '@deepseek-ai/dsh-llm'
+import { GatewayAdapter, replayedReasoningField } from '../src/adapter.ts'
 import { defaultProfile, type ProviderSettings } from '../src/config.ts'
 import { GATEWAYS, OPENCODE_GO } from '../src/gateways.ts'
 import type { GatewayTransport, PiRequestOptions } from '../src/transport.ts'
@@ -245,5 +252,65 @@ describe('GatewayAdapter stream', () => {
         await expect(
             collect(build({ transport, attachments: { readImageRequest: async () => ({}) } }), request({ messages })),
         ).rejects.toMatchObject({ code: 'UNSUPPORTED_CONTENT' })
+    })
+})
+
+describe('replayedReasoningField', () => {
+    const base = { ...model } as Model<'openai-completions'>
+
+    it('names reasoning_content for a DeepSeek model the installed catalog predates', () => {
+        // deepseek-v4.1-flash is newer than pi-ai 0.85.1's catalog and absent
+        // from models.dev's opencode-go section, so it carries no compat: the
+        // id is the only durable signal, and the gateway rejects the request
+        // without the echo.
+        expect(replayedReasoningField(base)).toBe('reasoning_content')
+    })
+
+    it('lets an explicit catalog switch decide instead of the id', () => {
+        expect(
+            replayedReasoningField({ ...base, compat: { requiresReasoningContentOnAssistantMessages: false } } as Model<Api>),
+        ).toBeUndefined()
+        expect(
+            replayedReasoningField({
+                ...base,
+                id: 'some-other-model',
+                compat: { requiresReasoningContentOnAssistantMessages: true },
+            } as Model<Api>),
+        ).toBe('reasoning_content')
+    })
+
+    it('leaves a non-DeepSeek, non-reasoning, or non-completions model unsigned', () => {
+        expect(replayedReasoningField({ ...base, id: 'kimi-k2.6' } as Model<Api>)).toBeUndefined()
+        expect(replayedReasoningField({ ...base, id: 'glm-5.3' } as Model<Api>)).toBeUndefined()
+        expect(replayedReasoningField({ ...base, reasoning: false } as Model<Api>)).toBeUndefined()
+        expect(replayedReasoningField({ ...base, api: 'anthropic-messages' } as Model<Api>)).toBeUndefined()
+        expect(replayedReasoningField({ ...base, api: 'openai-responses' } as Model<Api>)).toBeUndefined()
+    })
+})
+
+describe('GatewayAdapter reasoning replay', () => {
+    it('hands pi-ai a signed thinking block instead of an empty reasoning echo', async () => {
+        const { transport, seen } = fakeTransport()
+        await collect(
+            build({ transport }),
+            request({
+                messages: [
+                    createAssistantMessage({
+                        content: [
+                            { type: 'reasoning', text: 'weighing it' },
+                            { type: 'tool-call', id: 'call-7' as unknown as ToolCallId, name: 'bash', arguments: '{}' },
+                        ],
+                        source: { provider: 'opencode-go', model: 'deepseek-v4.1-flash' },
+                    }),
+                ],
+            }),
+        )
+        const context = seen[0]?.context as { messages: { role: string; content: unknown[] }[] }
+        const assistant = context.messages.find((message) => message.role === 'assistant')
+        expect(assistant?.content[0]).toEqual({
+            type: 'thinking',
+            thinking: 'weighing it',
+            thinkingSignature: 'reasoning_content',
+        })
     })
 })

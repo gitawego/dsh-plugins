@@ -15,7 +15,15 @@
  */
 import { describe, expect, it } from 'vitest'
 import { createAssistantMessageEventStream, type AssistantMessageEvent } from '@earendil-works/pi-ai'
-import { createUserMessage } from '@deepseek-ai/dsh-llm'
+import {
+    createAssistantMessage,
+    createToolResultMessage,
+    createUserMessage,
+    type GenerateOptions,
+    type ToolCallId,
+} from '@deepseek-ai/dsh-llm'
+import { replayedReasoningField } from '../src/adapter.ts'
+import { toPiContext } from '../src/context.ts'
 import { createGatewayTransport } from '../src/transport.ts'
 import { GATEWAYS, OPENCODE_GO } from '../src/gateways.ts'
 import { defaultProfile, type ProviderSettings } from '../src/config.ts'
@@ -197,6 +205,55 @@ describe('OpenCode Go wire request', () => {
             ) as unknown as AsyncIterable<AssistantMessageEvent>,
         )
         expect(requests[0]?.headers[OPENCODE_SESSION_HEADER]).toBe('01a10c8e-0898-77d8-9c28-5ff69e4529a9')
+    })
+
+    it('replays the reasoning of a tool-calling turn, which the gateway refuses to do without', async () => {
+        const { requests, impl } = recordingFetch()
+        const transport = createGatewayTransport(GATEWAYS, profiles())
+        const model = transport.getModel(OPENCODE_GO.id, LIVE_MODEL)
+        expect(model).toBeDefined()
+        const callId = 'call-1' as unknown as ToolCallId
+        const options = {
+            provider: OPENCODE_GO.id,
+            model: LIVE_MODEL,
+            tools: [{ name: 'run_code', description: 'run a program', parameters: { type: 'object' } }],
+            messages: [
+                createUserMessage({ content: [{ type: 'text', text: 'hello' }], source: { kind: 'user' } }),
+                createAssistantMessage({
+                    content: [
+                        { type: 'reasoning', text: 'The user greeted me; answer briefly.' },
+                        { type: 'tool-call', id: callId, name: 'run_code', arguments: '{}' },
+                    ],
+                    source: { provider: OPENCODE_GO.id, model: LIVE_MODEL },
+                }),
+                createToolResultMessage({ callId, content: [{ type: 'text', text: 'ok' }], isError: false }),
+            ],
+        } as unknown as GenerateOptions
+
+        const reasoning = replayedReasoningField(model!)
+        const context = await toPiContext(options, false, undefined, {
+            api: model!.api,
+            provider: OPENCODE_GO.id,
+            model: LIVE_MODEL,
+            ...(reasoning === undefined ? {} : { reasoning }),
+        })
+        await drain(
+            transport.stream(OPENCODE_GO.id, LIVE_MODEL, context as never, {
+                apiKey: 'test-key',
+                sessionId: 'sess-wire-5',
+                fetch: impl,
+            }) as unknown as AsyncIterable<AssistantMessageEvent>,
+        )
+
+        const body = requests[0]?.body as {
+            messages: { role: string; reasoning_content?: string; tool_calls?: unknown[] }[]
+        }
+        const assistant = body.messages.find((message) => message.role === 'assistant')
+        // DeepSeek's thinking mode concatenates previous turns' reasoning into
+        // the context; an empty or missing echo is answered with 400
+        // "The reasoning_content in the thinking mode must be passed back".
+        expect(assistant?.reasoning_content).toBe('The user greeted me; answer briefly.')
+        expect(assistant?.tool_calls).toHaveLength(1)
     })
 })
 
