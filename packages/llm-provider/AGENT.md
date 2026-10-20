@@ -64,12 +64,14 @@ a pi-ai gap, not a reason to grow an HTTP client here.
 
 Two corollaries:
 
-- **No replay state.** The adapter keeps none, so assistant history is rebuilt
-  from durable content exactly as `dsh-llm-pi-ai` rebuilds a foreign message.
-  Unsigned reasoning therefore travels as thinking, which pi-ai's Anthropic
-  converter downgrades to text rather than sending a block the API would reject.
-  Adding replay is a real feature (native ids and signatures survive
-  compaction); it is not a refactor.
+- **No replay state, but correct provenance.** The adapter stores no provider
+  state, so assistant history is rebuilt from durable content. What it does add
+  is the route's own wire identity plus the reasoning field that identity
+  requires: pi-ai keys the decision on provenance, downgrading a `dsh-foreign`
+  message's thinking to text, which is right for another vendor's reasoning and
+  fatal for DeepSeek's (thinking mode rejects a tool-carrying request without
+  the turn's `reasoning_content`). Storing native ids and signatures across
+  compaction remains a separate feature; stamping identity is not.
 - **pi-ai retries are disabled** (`maxRetries: 0`). The seam's retry policy
   belongs to `dsh-llm-retry`, and two retry loops stacked behind one request
   multiply attempts.

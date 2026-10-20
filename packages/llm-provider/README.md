@@ -291,17 +291,23 @@ Every dispatch through this plugin carries:
 
 - `x-opencode-session: <harness session id>` — the fix;
 - the harness attribution `user-agent`;
-- `authorization: Bearer <resolved credential>` (or pi-ai's ambient auth).
+- `authorization: Bearer <resolved credential>` (or pi-ai's ambient auth);
+- on the DeepSeek models, every replayed assistant turn's own
+  `reasoning_content` — the gateway's thinking mode answers a tool-carrying
+  request without it with `400 … The reasoning_content in the thinking mode
+  must be passed back to the API`, and a turn whose reasoning is missing is a
+  turn the model cannot continue from.
 
 `tests/wire.spec.ts` asserts exactly that, against pi-ai's real
 OpenAI-completions implementation with an injected `fetch`.
 
 ## Limitations
 
-- **No replay state.** Native response ids and thinking signatures are not
-  preserved across turns; assistant history is rebuilt from durable content.
-  Reasoning blocks travel unsigned and pi-ai's Anthropic converter downgrades
-  them to text.
+- **No replay state.** Native response ids and pi-ai's per-block signatures are
+  not stored, so assistant history is rebuilt from durable content. The rebuild
+  stamps the route's own identity, which is what lets pi-ai replay reasoning as
+  `reasoning_content` for the DeepSeek models; history produced by a different
+  model stays provider-neutral and its thinking degrades to text.
 - **No `stop` sequences.** The seam's vocabulary supports them; pi-ai's common
   streaming surface cannot guarantee them, so a request with `stop` fails with
   `UNSUPPORTED_OPTION` rather than silently ignoring the field.
