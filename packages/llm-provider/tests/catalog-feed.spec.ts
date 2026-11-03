@@ -112,6 +112,29 @@ describe('mergeCatalog', () => {
         expect(models.map((entry) => entry.id).sort()).toEqual(['b', 'declared'])
     })
 
+    it('still serves an allowlisted id no source describes yet', () => {
+        // The live fetch has not landed (or failed): the id is only known to the
+        // allowlist, and the route must not go dark because of it.
+        const models = mergeCatalog({
+            gateway: OPENCODE_GO,
+            profile: profile({ models: ['deepseek-v4.1-flash'] }),
+            installed: [model('deepseek-v4-flash')],
+        })
+        expect(models.map((entry) => entry.id)).toEqual(['deepseek-v4.1-flash'])
+        expect(models[0]).toMatchObject({ provider: OPENCODE_GO.id, api: protocolFor(OPENCODE_GO, 'deepseek-v4.1-flash') })
+    })
+
+    it('keeps an allowlisted id once the live catalog describes it', () => {
+        const models = mergeCatalog({
+            gateway: OPENCODE_GO,
+            profile: profile({ models: ['deepseek-v4.1-flash'] }),
+            installed: [],
+            live: live(['deepseek-v4.1-flash', 'other'], metadata({ 'deepseek-v4.1-flash': { contextWindow: 1_000_000, maxTokens: 384_000 } })),
+        })
+        expect(models.map((entry) => entry.id)).toEqual(['deepseek-v4.1-flash'])
+        expect(models[0]).toMatchObject({ contextWindow: 1_000_000, maxTokens: 384_000 })
+    })
+
     it('takes the protocol from the installed model, then the gateway table, then the default', () => {
         const installed = [model('minimax-m3', { api: 'anthropic-messages' })]
         const models = mergeCatalog({
