@@ -123,6 +123,14 @@ function idSet(inputs: CatalogInputs, installed: Map<string, Model<Api>>): strin
         if (allowlist !== undefined && !allowlist.has(id)) continue
         ids.add(id)
     }
+    // Naming a model in the allowlist is itself the decision to serve it, so an
+    // allowlisted id the sources do not describe yet is still advertised — with
+    // the gateway's protocol and the capacity defaults, exactly as a live id
+    // without metadata is. The alternative is a route that serves nothing at
+    // all until the first successful live fetch, which is how a profile whose
+    // allowlist names only post-catalog models ("deepseek-v4.1-flash") went dark
+    // after a cold boot. A wrong id then fails at the gateway, in words.
+    if (allowlist !== undefined) for (const id of allowlist) ids.add(id)
     // Declaring a model is itself the decision to serve it, so an allowlist
     // never filters declarations out.
     for (const declaration of declared) ids.add(declaration.id)
