@@ -11,7 +11,8 @@ plugin under the `@gitawego` npm scope, targeting DSH **0.2.1-rc.5** (the
   first-party LLM provider routes at the `ctx.llm` adapter seam. Ships the
   **OpenCode Go** route with the `x-opencode-session` routing header the gateway
   requires (missing it is the `400 MissingSessionID` failure), resolved per
-  request from the harness session id.
+  request from the harness session id; it also recovers DeepSeek tool calls that
+  the lane leaks as DSML markup instead of `tool_calls`.
 - [packages/web-search](packages/web-search/) — `@gitawego/dsh-web-search`:
   **deprecated** (kept working, no new features). Enhanced web search provider:
   works with **no API key** (free Parallel/Exa MCP backends) and optionally any

@@ -158,38 +158,54 @@ makes for its providers. It is write-only: a stored key never rides a response,
 so the field starts blank, reports only whether a reference is configured, and a
 blank field writes nothing.
 
-**Never put the key in `settings.yaml`.** That document is portable — it gets
+**Never put the key in the profile patch.** That document is portable — it gets
 copied between machines and pasted into issues — which is why the host's own
 provider forms route keys through the credentials domain and why this plugin
 keeps only the reference. `tests/client-controller.spec.ts` asserts a staged key
 produces no settings mutation.
 
-If the reference resolves to nothing, pi-ai's own ambient provider auth is
-tried, and a genuinely missing key fails with an authenticated-request error
-rather than a silent downgrade.
+If the reference resolves to nothing, the request fails **before dispatch** with
+`INVALID_CREDENTIAL` and a message naming the route and the reference. Nothing
+downstream can supply the key: pi-ai's ambient lookup is keyed by *its own*
+provider id, and this route's id is deliberately not one of those, so pi-ai's
+`No API key for provider: opencode-go-session` is not a fallback — it is the
+death rattle. The quota card says the same thing instead of relaying the
+gateway's bare `401`.
 
 ## Configuration
 
-Settings namespace `llm-provider`, one section per served route (all editable
-from the card):
+One `llm-provider` section per served route, stored as this plugin's **loader
+entry config** in the profile patch layer — the file the Settings UI writes
+(`~/.dsh/profiles/<profile>/cordis.patch.yml`). All fields are editable from the
+card:
 
 ```yaml
-llm-provider:
-  opencode-go-session:
-    apiKeyEnv: OPENCODE_API_KEY      # credential reference name
-    baseURL: ''                      # '' = each model's catalog endpoint
-    models: []                       # allowlist over the catalog; [] = all
-    extraModels:                     # models the installed catalog predates
-      - id: deepseek-v4.1-flash
-        contextWindow: 1000000
-        maxTokens: 384000
-        reasoning: true
-    sessionRouting: true             # send x-opencode-session
-    reasoning: ''                    # route-default effort; '' = provider default
-    maxRequestImageBytes: 20971520
-    requestImagePixelBudget: 4194304
-    requestImageMaxBytes: 1048576
+# ~/.dsh/profiles/web/cordis.patch.yml
+- id: llm-provider
+  name: "@gitawego/dsh-llm-provider"
+  config:
+    opencode-go-session:
+      apiKeyEnv: OPENCODE_API_KEY    # credential reference name
+      baseURL: ''                    # '' = each model's catalog endpoint
+      models: []                     # allowlist over the catalog; [] = all
+      extraModels:                   # models the installed catalog predates
+        - id: deepseek-v4.1-flash
+          contextWindow: 1000000
+          maxTokens: 384000
+          reasoning: true
+      sessionRouting: true           # send x-opencode-session
+      reasoning: ''                  # route-default effort; '' = provider default
+      maxRequestImageBytes: 20971520
+      requestImagePixelBudget: 4194304
+      requestImageMaxBytes: 1048576
 ```
+
+Upgrading a 0.1.x profile: the one-time `settings.yaml` import only lands
+sections the running composition accepts, and a third-party namespace is logged
+and left behind in `settings.yaml.imported`. The route then runs on the shipped
+`apiKeyEnv` default while your key sits under your own reference — check with
+`dsh --profile web --dump-config`, and see `AGENT.md` → "Upgrading an existing
+profile".
 
 Every field is optional and clamped: a malformed value degrades to the shipped
 default rather than taking the route offline.
@@ -244,7 +260,11 @@ catalog serving, so a provider outage costs freshness, not availability.
 `extraModels` is the override of last resort: a model the provider serves but
 models.dev does not describe, or one whose capacities you want to correct. A
 declared id wins over both other sources, field by field. `models` is the
-allowlist (`[]` = everything), which the card writes when you pin models.
+allowlist (`[]` = everything), which the card writes when you pin models. An
+allowlisted id is served even before either source describes it — the gateway's
+protocol and the capacity defaults, the same treatment a freshly discovered id
+gets — because a pin is a decision to serve, and a profile that pins only
+post-catalog models must not go dark when the boot read fails.
 
 ## Routes
 
@@ -291,7 +311,7 @@ Every dispatch through this plugin carries:
 
 - `x-opencode-session: <harness session id>` — the fix;
 - the harness attribution `user-agent`;
-- `authorization: Bearer <resolved credential>` (or pi-ai's ambient auth);
+- `authorization: Bearer <resolved credential>`;
 - on the DeepSeek models, every replayed assistant turn's own
   `reasoning_content` — the gateway's thinking mode answers a tool-carrying
   request without it with `400 … The reasoning_content in the thinking mode
@@ -300,6 +320,37 @@ Every dispatch through this plugin carries:
 
 `tests/wire.spec.ts` asserts exactly that, against pi-ai's real
 OpenAI-completions implementation with an injected `fetch`.
+
+### Leaked tool calls (DeepSeek DSML)
+
+DeepSeek describes a tool call in **DSML** — tags wrapped in the `｜｜DSML｜｜`
+token — and the serving lane is supposed to parse that into `tool_calls`.
+Intermittently it does not: the markup arrives as ordinary `content` with
+`finish_reason: "stop"`, so the turn reads as a completed answer, the tool never
+runs, and the agent sits idle showing syntax:
+
+```text
+<｜｜DSML｜｜ calls>
+<｜｜DSML｜｜ invoke name="skill">
+<｜ parameter name="name" string="true">cordis-plugin-development</｜ parameter>
+</｜ invoke>
+</｜ calls>
+```
+
+This is reported for `opencode-go/deepseek-v4.1-flash` and other DeepSeek lanes
+(`anomalyco/opencode#50206`, `#45600`, `vllm-project/vllm#48931`), and pi-ai has
+no parser for it. Since this plugin owns this route's wire, it recovers the
+call: `src/dsml.ts` parses the block, `src/stream.ts` withholds the tail of a
+text block that could still become a token, and at block end a complete block is
+emitted as real tool-call chunks with a `tool-calls` finish. The prose the model
+wrote before the markup is kept; text that parses to nothing passes through
+untouched, so a model *discussing* the markup is never rewritten. Parameter
+values keep their bytes — `string="true"` is never coerced or trimmed, which is
+what makes a `write` of file content survive.
+
+`tests/dsml.spec.ts` and the `leaked DSML tool calls` block in
+`tests/stream.spec.ts` pin both halves, including a replay of the leaked text
+that started this.
 
 ## Limitations
 
