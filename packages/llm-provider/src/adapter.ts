@@ -14,6 +14,7 @@
 import type { AttachmentStore } from '@deepseek-ai/dsh-attachment'
 import {
     contentHasImage,
+    INVALID_CREDENTIAL_CODE,
     LlmAdapter,
     LlmError,
     type GenerateOptions,
@@ -33,6 +34,7 @@ import {
 } from '@earendil-works/pi-ai'
 import type { GatewayProfile } from './config.ts'
 import { toPiContext } from './context.ts'
+import { missingCredentialMessage } from './credential-message.ts'
 import { toStreamChunks } from './stream.ts'
 import { LlmUnavailableError, type GatewayTransport } from './transport.ts'
 
@@ -46,8 +48,11 @@ export interface GatewayAdapterOptions {
     profileOf: (route: string) => GatewayProfile
     /**
      * Resolve the route's credential through the harness credential seam.
-     * `undefined` leaves authentication to pi-ai's own ambient provider auth
-     * (the gateway's `OPENCODE_API_KEY` environment variable).
+     *
+     * `undefined` is a hard failure rather than a hand-off to pi-ai: pi-ai's
+     * ambient lookup is keyed by its own provider id, and a route key is
+     * deliberately not one of those, so nothing downstream can supply the key.
+     * See `credential-message.ts`.
      */
     resolveApiKey: (route: string) => Promise<string | undefined>
     /** The mounted attachment store, when the composition has one. */
@@ -173,6 +178,12 @@ export class GatewayAdapter extends LlmAdapter {
         const model = this.requireModel(options.provider, options.model)
         const reasoning = this.resolveReasoning(model, options.reasoningEffort, profile)
         const apiKey = await this.options.resolveApiKey(options.provider)
+        if (apiKey === undefined) {
+            // Fail here, naming the reference: dispatching without a key only
+            // produces pi-ai's `No API key for provider: <route>`, which points
+            // at neither the setting nor the credential store.
+            throw new LlmError(missingCredentialMessage(options.provider, profile.apiKeyEnv), INVALID_CREDENTIAL_CODE)
+        }
 
         const hasImage = options.messages.some((message) => contentHasImage(message.content))
         const attachments = hasImage ? this.options.resolveAttachments?.() : undefined
@@ -199,7 +210,7 @@ export class GatewayAdapter extends LlmAdapter {
         let events: AsyncIterable<Parameters<typeof toStreamChunks>[0] extends AsyncIterable<infer E> ? E : never>
         try {
             events = this.options.transport.stream(options.provider, options.model, context, {
-                ...(apiKey !== undefined ? { apiKey } : {}),
+                apiKey,
                 ...(reasoning !== undefined ? { reasoning } : {}),
                 ...(options.temperature !== undefined ? { temperature: options.temperature } : {}),
                 ...(options.maxTokens !== undefined ? { maxTokens: options.maxTokens } : {}),

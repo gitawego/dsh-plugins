@@ -183,6 +183,37 @@ client, `ctx.configForms.get(entryId)` is the write/read face
 (`getSnapshot` / `subscribe` / `set` / `unset` / `mutate`); the old
 `ctx.settingsScope` is gone, and `SettingsScope` is no longer exported.
 
+### Upgrading an existing profile: the old settings.yaml is not fully imported
+
+On the first 0.2 boot, `dsh-settings` renames `~/.dsh/settings.yaml` to
+`settings.yaml.imported` and replays each section into the matching profile
+entry. A section the running composition cannot accept is **logged and left in
+the renamed file only** — the profile patch keeps the default. Third-party
+namespaces are exactly the ones that hit this, so a 0.1.x profile that worked
+comes back with `llm-provider`'s profile missing:
+
+```text
+settings: section llm-provider of …/settings.yaml was not imported into entry llm-provider
+```
+
+Symptom on the LLM route: `apiKeyEnv` falls back to the shipped default
+(`OPENCODE_API_KEY`), the user's key is stored under their own reference, and
+every request fails. Re-enter the section (Settings → LLM provider, which
+writes the profile patch) or paste it into
+`~/.dsh/profiles/<profile>/cordis.patch.yml`:
+
+```yaml
+- id: llm-provider
+  name: "@gitawego/dsh-llm-provider"
+  config:
+    opencode-go-session:
+      apiKeyEnv: OPENCODE_GO_CUSTOM_API_KEY
+      models: [deepseek-v4.1-flash]
+```
+
+`--dump-config` is the check: the entry either shows that `config:` block or it
+does not. Values live in `~/.dsh/.credentials.yaml`, not in the patch layer.
+
 ### Client halves with more than one module must bundle
 
 The browser module system wraps ONE entry file in a `factory(require)` whose

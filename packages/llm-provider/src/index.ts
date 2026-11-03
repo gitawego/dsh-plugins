@@ -60,6 +60,7 @@ import {
     type ProviderConfigRefs,
     type ProviderSettings,
 } from './config.ts'
+import { missingCredentialMessage } from './credential-message.ts'
 import { declareRoutes, describeSkips } from './directory.ts'
 import { fetchModelIds, fetchQuota, type QuotaSnapshot } from './gateway-api.ts'
 import { registerQuotaRoute } from './quota-route.ts'
@@ -143,8 +144,10 @@ export function apply(ctx: Context, config: ProviderConfigRefs = {}): () => void
         try {
             const resolved = await ctx.credentials.resolve(credentialRef(ref))
             // `undefined` is the normal "this reference holds nothing" answer,
-            // not an error: pi-ai then tries the gateway's own ambient provider
-            // auth (`OPENCODE_API_KEY`).
+            // not an error. It is not a hand-off to pi-ai either: pi-ai's
+            // ambient lookup is keyed by its own provider id, and this route's
+            // id is deliberately not one of those, so nothing downstream can
+            // supply the key (`credential-message.ts` explains the failure).
             return resolved?.value
         } catch (error) {
             throw new LlmError(
@@ -247,10 +250,12 @@ export function apply(ctx: Context, config: ProviderConfigRefs = {}): () => void
     /** Read one route's credential and endpoint, then ask for its quota. */
     const quotaOf = async (route: string): Promise<QuotaSnapshot> => {
         const apiKey = await resolveApiKey(route)
-        return fetchQuota(
-            { baseURL: baseURLFor(route), ...(apiKey !== undefined ? { apiKey } : {}) },
-            route,
-        )
+        // The card reports `error` verbatim, so an unset reference has to say
+        // what is unset instead of surfacing the gateway's bare 401.
+        if (apiKey === undefined) {
+            return { route, windows: [], fetchedAt: Date.now(), error: missingCredentialMessage(route, profileFor(route).apiKeyEnv) }
+        }
+        return fetchQuota({ baseURL: baseURLFor(route), apiKey }, route)
     }
 
     // The browser's only path to a live allowance read. Guarded and read-only;

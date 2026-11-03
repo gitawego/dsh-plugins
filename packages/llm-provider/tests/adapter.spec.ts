@@ -80,7 +80,7 @@ function build(over: {
         transport: over.transport ?? fakeTransport().transport,
         displayName: () => 'OpenCode Go',
         profileOf: () => profile,
-        resolveApiKey: async () => over.apiKey,
+        resolveApiKey: async () => ('apiKey' in over ? over.apiKey : 'test-key'),
         ...(over.attachments !== undefined ? { resolveAttachments: () => over.attachments as never } : {}),
     })
 }
@@ -148,10 +148,26 @@ describe('GatewayAdapter stream', () => {
         expect(seen[0]?.options?.apiKey).toBe('resolved-key')
     })
 
-    it('leaves auth to pi-ai when the reference resolves to nothing', async () => {
+    it('fails with an actionable credential error when the reference resolves to nothing', async () => {
         const { transport, seen } = fakeTransport()
-        await collect(build({ transport, apiKey: undefined }), request())
-        expect(seen[0]?.options?.apiKey).toBeUndefined()
+        const adapter = build({ transport, apiKey: undefined, profile: { apiKeyEnv: 'OPENCODE_GO_CUSTOM_API_KEY' } })
+        await expect(collect(adapter, request())).rejects.toMatchObject({ code: 'INVALID_CREDENTIAL' })
+        // Nothing was dispatched: pi-ai can never supply a key for a route id it
+        // does not know, so the request would only have failed on the wire.
+        expect(seen).toHaveLength(0)
+    })
+
+    it('names the reference and the route in the credential error', async () => {
+        const adapter = build({ apiKey: undefined, profile: { apiKeyEnv: 'OPENCODE_GO_CUSTOM_API_KEY' } })
+        let message = ''
+        try {
+            await collect(adapter, request())
+        } catch (error) {
+            message = (error as Error).message
+        }
+        expect(message).toContain('opencode-go')
+        expect(message).toContain('OPENCODE_GO_CUSTOM_API_KEY')
+        expect(message).toContain('.credentials.yaml')
     })
 
     it('disables pi-ai retries so the harness owns retry policy', async () => {
