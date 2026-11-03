@@ -202,3 +202,75 @@ describe('toStreamChunks', () => {
         )
     })
 })
+
+/**
+ * The DeepSeek DSML leak, verbatim from a real `opencode-go-session` turn: the
+ * model asked for the `skill` tool, the lane never parsed it, and the markup
+ * arrived as the assistant's text with `finish_reason: "stop"`.
+ */
+const DSML_LEAK =
+    '<\u{FF5C}\u{FF5C}DSML\u{FF5C}\u{FF5C} calls>\n' +
+    '<\u{FF5C}\u{FF5C}DSML\u{FF5C}\u{FF5C} invoke name="skill">\n' +
+    '<\u{FF5C}\u{FF5C}DSML\u{FF5C}\u{FF5C} parameter name="name" string="true">cordis-plugin-development</\u{FF5C}\u{FF5C}DSML\u{FF5C}\u{FF5C} parameter>\n' +
+    '</\u{FF5C}\u{FF5C}DSML\u{FF5C}\u{FF5C} invoke>\n' +
+    '</\u{FF5C}\u{FF5C}DSML\u{FF5C}\u{FF5C} calls>'
+
+describe('toStreamChunks: leaked DSML tool calls', () => {
+    it('recovers a leaked call into a tool-call block and a tool-calls finish', async () => {
+        const leaked = assistant({ content: [{ type: 'text', text: DSML_LEAK }] })
+        const chunks = await collect([
+            { type: 'text_start', contentIndex: 0, partial: leaked },
+            { type: 'text_delta', contentIndex: 0, delta: DSML_LEAK, partial: leaked },
+            { type: 'text_end', contentIndex: 0, content: DSML_LEAK, partial: leaked },
+            { type: 'done', reason: 'stop', message: leaked },
+        ])
+
+        // The markup never reaches the caller as text.
+        expect(chunks.filter((chunk) => chunk.type === 'text-delta')).toEqual([])
+        expect(chunks).toContainEqual({ type: 'block-end', index: 0, block: { type: 'text', text: '' } })
+
+        const call = chunks.find((chunk) => chunk.type === 'block-end' && chunk.block.type === 'tool-call')
+        expect(call).toMatchObject({
+            index: 1,
+            block: {
+                type: 'tool-call',
+                name: 'skill',
+                arguments: JSON.stringify({ name: 'cordis-plugin-development' }),
+            },
+        })
+        expect(chunks.at(-1)).toEqual({ type: 'finish', reason: { kind: 'tool-calls' } })
+    })
+
+    it('keeps the prose the model wrote before the markup', async () => {
+        const body = `I'll load that skill.\n${DSML_LEAK}`
+        const leaked = assistant({ content: [{ type: 'text', text: body }] })
+        const chunks = await collect([
+            { type: 'text_start', contentIndex: 0, partial: leaked },
+            { type: 'text_delta', contentIndex: 0, delta: body, partial: leaked },
+            { type: 'text_end', contentIndex: 0, content: body, partial: leaked },
+            { type: 'done', reason: 'stop', message: leaked },
+        ])
+        // The trailing newline before the markup was already streamed, so it
+        // stays in the block; what must not survive is the markup itself.
+        const block = chunks.find((chunk) => chunk.type === 'block-end')
+        expect(block).toMatchObject({ index: 0, block: { type: 'text' } })
+        expect((block as { block: { text: string } }).block.text.trim()).toBe("I'll load that skill.")
+        expect(chunks.at(-1)).toEqual({ type: 'finish', reason: { kind: 'tool-calls' } })
+    })
+
+    it('still streams ordinary text unchanged, including a trailing angle bracket', async () => {
+        const chunks = await collect([
+            { type: 'text_start', contentIndex: 0, partial: assistant() },
+            { type: 'text_delta', contentIndex: 0, delta: 'a <', partial: assistant() },
+            { type: 'text_delta', contentIndex: 0, delta: ' b', partial: assistant() },
+            { type: 'text_end', contentIndex: 0, content: 'a < b', partial: assistant() },
+            { type: 'done', reason: 'stop', message: assistant({ content: [{ type: 'text', text: 'a < b' }] }) },
+        ])
+        expect(chunks.filter((chunk) => chunk.type === 'text-delta')).toEqual([
+            { type: 'text-delta', index: 0, text: 'a ' },
+            { type: 'text-delta', index: 0, text: '< b' },
+        ])
+        expect(chunks).toContainEqual({ type: 'block-end', index: 0, block: { type: 'text', text: 'a < b' } })
+        expect(chunks.at(-1)).toEqual({ type: 'finish', reason: { kind: 'stop' } })
+    })
+})
