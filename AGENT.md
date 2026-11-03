@@ -91,6 +91,25 @@ symptom is a 404 from a route that exists on disk, or a fix that appears not to
 work. Client bundles reload per tab; host code does not. Ask the user to restart
 in their own shell rather than restarting it from a session.
 
+**A rebuild is not a deploy.** The profile installs these packages with
+`nodeLinker: hoisted` (see `~/.dsh/profiles/<profile>/pnpm-workspace.yaml`), so
+`node_modules/@gitawego/dsh-*` holds a **copy** of `lib/`, not a symlink. Running
+`pnpm build` in the repo changes nothing the host will ever load, and restarting
+then loads the same stale copy — a fix that "does not work" after a restart is
+this, every time. Deploy in two steps, in this order:
+
+```bash
+cd ~/.dsh/profiles/web && pnpm install --offline   # refresh the copied lib/
+# then restart dsh in the user's own shell, and open a new tab
+```
+
+Check the copy, not the repo, before claiming a fix is live:
+
+```bash
+md5sum ~/.dsh/profiles/web/node_modules/@gitawego/dsh-llm-provider/lib/index.js \
+       packages/llm-provider/lib/index.js
+```
+
 If dsh is genuinely wedged (port unreachable, leaks, etc.), ask the user
 to restart it in their interactive shell. Do not start, kill, or
 restart dsh from this session.
