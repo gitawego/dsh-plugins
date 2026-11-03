@@ -17,6 +17,7 @@
  */
 import z from '@deepseek-ai/schemastery'
 import type Schema from '@deepseek-ai/schemastery'
+import type { Volatile } from '@deepseek-ai/cordis'
 import { GATEWAYS, type GatewayDefinition } from './gateways.ts'
 
 /**
@@ -107,10 +108,13 @@ export function defaultProfile(gateway: GatewayDefinition): GatewayProfile {
 /** The schema for one gateway's section. */
 function profileSchema(gateway: GatewayDefinition): Schema<GatewayProfile> {
     const defaults = defaultProfile(gateway)
+    // Every field is volatile: DSH 0.2 hands `apply` stable references whose
+    // `.get()` answers the current layer, so a form write applies to the next
+    // request without re-installing the plugin.
     return z.object({
-        apiKeyEnv: z.string().default(defaults.apiKeyEnv),
-        baseURL: z.string().default(defaults.baseURL),
-        models: z.array(z.string()).default(defaults.models),
+        apiKeyEnv: z.string().default(defaults.apiKeyEnv).volatile(),
+        baseURL: z.string().default(defaults.baseURL).volatile(),
+        models: z.array(z.string()).default(defaults.models).volatile(),
         extraModels: z
             .array(
                 z.object({
@@ -124,22 +128,60 @@ function profileSchema(gateway: GatewayDefinition): Schema<GatewayProfile> {
                     input: z.array(z.union(['text', 'image'] as const)),
                 }),
             )
-            .default(defaults.extraModels),
-        sessionRouting: z.boolean().default(defaults.sessionRouting),
-        reasoning: z.union([...REASONING_LEVELS] as const).default(defaults.reasoning),
-        maxRequestImageBytes: z.number().default(defaults.maxRequestImageBytes),
-        requestImagePixelBudget: z.number().default(defaults.requestImagePixelBudget),
-        requestImageMaxBytes: z.number().default(defaults.requestImageMaxBytes),
-    }) as Schema<GatewayProfile>
+            .default(defaults.extraModels)
+            .volatile(),
+        sessionRouting: z.boolean().default(defaults.sessionRouting).volatile(),
+        reasoning: z.union([...REASONING_LEVELS] as const).default(defaults.reasoning).volatile(),
+        maxRequestImageBytes: z.number().default(defaults.maxRequestImageBytes).volatile(),
+        requestImagePixelBudget: z.number().default(defaults.requestImagePixelBudget).volatile(),
+        requestImageMaxBytes: z.number().default(defaults.requestImageMaxBytes).volatile(),
+    }) as unknown as Schema<GatewayProfile>
 }
 
 /**
  * The namespace schema: one known route section per served gateway. Built from
  * {@link GATEWAYS} so adding a gateway cannot forget its settings section.
  */
-export const Config: Schema<ProviderSettings> = z.object(
+export const Config: Schema = z.object(
     Object.fromEntries(GATEWAYS.map((gateway) => [gateway.id, profileSchema(gateway)])),
-) as Schema<ProviderSettings>
+)
+
+/** One route's configuration references, as the loader hands them to `apply`. */
+export interface GatewayConfigRefs {
+    apiKeyEnv: Volatile<string>
+    baseURL: Volatile<string>
+    models: Volatile<readonly string[]>
+    extraModels: Volatile<readonly ModelDeclaration[]>
+    sessionRouting: Volatile<boolean>
+    reasoning: Volatile<ReasoningLevel>
+    maxRequestImageBytes: Volatile<number>
+    requestImagePixelBudget: Volatile<number>
+    requestImageMaxBytes: Volatile<number>
+}
+
+/** The configuration `apply` receives from the loader (defaults applied). */
+export type ProviderConfigRefs = Record<string, GatewayConfigRefs>
+
+/** Read one stable snapshot of every route profile. */
+export function readProviderConfig(config: ProviderConfigRefs): ProviderSettings {
+    const raw: Record<string, unknown> = {}
+    for (const gateway of GATEWAYS) {
+        const section = config[gateway.id]
+        if (section === undefined) continue
+        raw[gateway.id] = {
+            apiKeyEnv: section.apiKeyEnv.get(),
+            baseURL: section.baseURL.get(),
+            models: [...section.models.get()],
+            extraModels: [...section.extraModels.get()],
+            sessionRouting: section.sessionRouting.get(),
+            reasoning: section.reasoning.get(),
+            maxRequestImageBytes: section.maxRequestImageBytes.get(),
+            requestImagePixelBudget: section.requestImagePixelBudget.get(),
+            requestImageMaxBytes: section.requestImageMaxBytes.get(),
+        }
+    }
+    return resolveProfiles(raw)
+}
 
 /** Clamp one positive byte/pixel budget, falling back when the value is unusable. */
 function positiveInt(value: unknown, fallback: number): number {

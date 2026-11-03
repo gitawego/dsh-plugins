@@ -21,8 +21,8 @@ import { LlmRuntime, type LlmConfigurableProvider } from '@deepseek-ai/dsh-llm'
 import { describe, expect, it, vi } from 'vitest'
 import { declareRoutes, describeSkips, type DirectoryHost } from '../src/directory.ts'
 import { GATEWAYS, OPENCODE_GO, gatewayById } from '../src/gateways.ts'
-import { mountSettings } from '../src/index.ts'
-import { resolveProfiles, type ProviderSettings } from '../src/config.ts'
+import { readProviderConfig } from '../src/config.ts'
+import { resolveProfiles } from '../src/config.ts'
 import { fetchModelsDevCatalog } from '../src/models-dev.ts'
 import { CATALOG_PROVIDERS } from '../src/catalog.ts'
 import { protocolFor } from '../src/gateways.ts'
@@ -130,33 +130,34 @@ describe('declareRoutes', () => {
     })
 })
 
-describe('settings layering', () => {
-    it('hands the deployment configuration to the namespace as its base layer', () => {
-        // The base layer is what makes a composition-supplied profile visible to
-        // the Models page (its dot) while staying out of the user layer (so the
-        // page offers no Delete for something the user did not add).
-        const calls: { ns: string; schema: unknown; options: unknown }[] = []
-        const settings = {
-            register: (ns: string, schema: unknown, options: unknown) => {
-                calls.push({ ns, schema, options })
-                return { get: () => ({}), watch: () => () => {}, update: async () => {}, replace: async () => {} }
+describe('configuration layering', () => {
+    /** A volatile ref over one fixed value. */
+    const ref = <T>(value: T) => ({ get: () => value })
+
+    it('reads the deployment configuration through the volatile refs', () => {
+        // 0.2 has no register call: the loader hands refs and every read takes a
+        // fresh snapshot, so a form write reaches the next request untouched.
+        const config = {
+            [OPENCODE_GO.id]: {
+                apiKeyEnv: ref('MY_REFERENCE'),
+                baseURL: ref('https://example.test/v1'),
+                models: ref([]),
+                extraModels: ref([]),
+                sessionRouting: ref(true),
+                reasoning: ref(''),
+                maxRequestImageBytes: ref(1),
+                requestImagePixelBudget: ref(1),
+                requestImageMaxBytes: ref(1),
             },
         }
-        const config = { [OPENCODE_GO.id]: { apiKeyEnv: 'MY_REFERENCE' } } as unknown as ProviderSettings
-        mountSettings(settings as never, config)
-        expect(calls).toHaveLength(1)
-        expect(calls[0]?.ns).toBe(NS)
-        expect(calls[0]?.options).toMatchObject({ applies: 'live', base: config })
+        const profiles = readProviderConfig(config as never)
+        expect(profiles[OPENCODE_GO.id]?.apiKeyEnv).toBe('MY_REFERENCE')
+        expect(profiles[OPENCODE_GO.id]?.baseURL).toBe('https://example.test/v1')
     })
 
-    it('defaults to an empty base, so a deployment that configures nothing still serves the route', () => {
-        const calls: unknown[] = []
-        const settings = { register: (_ns: string, _schema: unknown, options: unknown) => {
-            calls.push(options)
-            return { get: () => ({}), watch: () => () => {}, update: async () => {}, replace: async () => {} }
-        } }
-        mountSettings(settings as never, {})
-        expect(calls[0]).toMatchObject({ base: {} })
+    it('falls back to the shipped profile for a route the config omits', () => {
+        const profiles = readProviderConfig({} as never)
+        expect(profiles[OPENCODE_GO.id]?.apiKeyEnv).toBe(OPENCODE_GO.apiKeyEnv)
     })
 
     it('resolves a base-supplied reference through the profile resolver', () => {

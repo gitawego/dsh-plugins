@@ -5,6 +5,7 @@
  */
 import z from '@deepseek-ai/schemastery'
 import type Schema from '@deepseek-ai/schemastery'
+import type { Volatile } from '@deepseek-ai/cordis'
 import { BUILTIN_MCP_SERVERS, type McpServerEntry } from './mcp-servers.ts'
 
 export { BUILTIN_MCP_SERVERS, type BuiltinMcpServer, type McpServerEntry } from './mcp-servers.ts'
@@ -56,18 +57,23 @@ export const DEFAULT_CONFIG: WebSearchConfig = {
   },
 }
 
-export const Config: Schema<WebSearchConfig> = z.object({
+/**
+ * The form schema. Every editable field is `volatile()`: DSH 0.2 hands
+ * `apply` stable references whose `.get()` answers the current layer, so a
+ * form write is visible to the next search without re-installing the plugin.
+ */
+export const Config: Schema = z.object({
   llm: z.object({
-    enabled: z.boolean().default(false),
-    protocol: z.union([...LLM_PROTOCOLS] as const).default('anthropic'),
-    baseUrl: z.string().default(''),
-    credential: z.string().default(''),
-    model: z.string().default(DEFAULT_CONFIG.llm.model!),
-    timeoutMs: z.number().default(DEFAULT_CONFIG.llm.timeoutMs),
+    enabled: z.boolean().default(false).volatile(),
+    protocol: z.union([...LLM_PROTOCOLS] as const).default('anthropic').volatile(),
+    baseUrl: z.string().default('').volatile(),
+    credential: z.string().default('').volatile(),
+    model: z.string().default(DEFAULT_CONFIG.llm.model!).volatile(),
+    timeoutMs: z.number().default(DEFAULT_CONFIG.llm.timeoutMs).volatile(),
   }),
   free: z.object({
-    parallelCredential: z.string().default(''),
-    exaCredential: z.string().default(''),
+    parallelCredential: z.string().default('').volatile(),
+    exaCredential: z.string().default('').volatile(),
     servers: z
       .array(
         z.object({
@@ -78,12 +84,55 @@ export const Config: Schema<WebSearchConfig> = z.object({
           tool: z.string(),
         }),
       )
-      .default([]),
-    timeoutMs: z.number().default(DEFAULT_CONFIG.free.timeoutMs),
-    snippetMaxChars: z.number().default(DEFAULT_CONFIG.free.snippetMaxChars),
-    maxResults: z.number().default(DEFAULT_CONFIG.free.maxResults),
+      .default([])
+      .volatile(),
+    timeoutMs: z.number().default(DEFAULT_CONFIG.free.timeoutMs).volatile(),
+    snippetMaxChars: z.number().default(DEFAULT_CONFIG.free.snippetMaxChars).volatile(),
+    maxResults: z.number().default(DEFAULT_CONFIG.free.maxResults).volatile(),
   }),
 })
+
+/** The configuration `apply` receives from the loader (defaults applied). */
+export interface WebSearchConfigRefs {
+  llm: {
+    enabled: Volatile<boolean>
+    protocol: Volatile<LlmProtocol>
+    baseUrl: Volatile<string>
+    credential: Volatile<string>
+    model: Volatile<string>
+    timeoutMs: Volatile<number>
+  }
+  free: {
+    parallelCredential: Volatile<string>
+    exaCredential: Volatile<string>
+    servers: Volatile<readonly McpServerEntry[]>
+    timeoutMs: Volatile<number>
+    snippetMaxChars: Volatile<number>
+    maxResults: Volatile<number>
+  }
+}
+
+/** Read one stable snapshot of the whole section. */
+export function readConfig(config: WebSearchConfigRefs): Partial<WebSearchConfig> {
+  return {
+    llm: {
+      enabled: config.llm.enabled.get(),
+      protocol: config.llm.protocol.get(),
+      baseUrl: config.llm.baseUrl.get(),
+      credential: config.llm.credential.get(),
+      model: config.llm.model.get(),
+      timeoutMs: config.llm.timeoutMs.get(),
+    },
+    free: {
+      parallelCredential: config.free.parallelCredential.get(),
+      exaCredential: config.free.exaCredential.get(),
+      servers: [...config.free.servers.get()],
+      timeoutMs: config.free.timeoutMs.get(),
+      snippetMaxChars: config.free.snippetMaxChars.get(),
+      maxResults: config.free.maxResults.get(),
+    },
+  }
+}
 
 /** "" -> undefined for the optional llm fields, so empty strings disable the backend. */
 function normOpt(v: string | undefined): string | undefined {

@@ -123,7 +123,9 @@ describe('client bundle', () => {
         // carrier, which arrives with the socket handshake, made this card land
         // wherever that handshake happened to finish.
         const module = materialize(bundle)
-        expect(module.inject).toEqual(['slots', 'locale', 'settingsScope'])
+        // 0.2 replaced the `settingsScope` service with `configForms`; both are
+        // boot-time services, so the registration order guarantee is unchanged.
+        expect(module.inject).toEqual(['slots', 'locale', 'configForms'])
     })
 
     it('extends the Models page for its own provider row', () => {

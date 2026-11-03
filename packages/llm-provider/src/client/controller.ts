@@ -34,7 +34,8 @@ export interface SettingsScopeLike<T> {
         revision: number | undefined
     }
     subscribe(listener: () => void): () => void
-    mutate(ops: readonly SettingsPathOp[], expectedRevision?: number): Promise<void>
+    /** Accepts both the old void write and 0.2's boolean write result. */
+    mutate(ops: readonly SettingsPathOp[], expectedRevision?: number): Promise<unknown>
 }
 
 /** One path-addressed settings edit. */

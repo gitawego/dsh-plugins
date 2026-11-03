@@ -5,6 +5,7 @@ import {
     DEFAULT_REQUEST_IMAGE_MAX_BYTES,
     DEFAULT_REQUEST_IMAGE_PIXEL_BUDGET,
     defaultProfile,
+    readProviderConfig,
     resolveProfile,
     resolveProfiles,
 } from '../src/config.ts'
@@ -89,14 +90,13 @@ describe('resolveProfiles', () => {
 
 describe('Config schema', () => {
     it('accepts an empty section and resolves every served route through its defaults', () => {
-        const parsed = Config({}) as Record<string, unknown>
-        expect(resolveProfiles(parsed)[OPENCODE_GO.id]).toEqual(defaultProfile(OPENCODE_GO))
+        // 0.2 parses config into volatile refs; the plugin reads them per call.
+        const parsed = Config({}) as never
+        expect(readProviderConfig(parsed)[OPENCODE_GO.id]).toEqual(defaultProfile(OPENCODE_GO))
     })
 
-    it('keeps a partial section resolvable', () => {
-        // A stored section is partial by construction (the schema supplies the
-        // rest), so the cast reflects how the seam hands it to the plugin.
+    it('keeps a partial section resolvable through its refs', () => {
         const parsed = Config({ [OPENCODE_GO.id]: { reasoning: 'low' } } as never)
-        expect(resolveProfiles(parsed)[OPENCODE_GO.id]?.reasoning).toBe('low')
+        expect(readProviderConfig(parsed)[OPENCODE_GO.id]?.reasoning).toBe('low')
     })
 })

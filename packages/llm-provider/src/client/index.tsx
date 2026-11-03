@@ -26,7 +26,7 @@
  */
 import { useEffect, useRef, useState, useSyncExternalStore } from 'react'
 import type { Context as ClientContext } from '@deepseek-ai/cordis'
-import type { SettingsScope } from '@deepseek-ai/dsh-client-ui-settings/client'
+import type { ConfigForm } from '@deepseek-ai/dsh-client-ui-settings/client'
 import type {} from '@deepseek-ai/dsh-api-remotes/client'
 import './remote-types.ts'
 import type {} from '@deepseek-ai/dsh-client-ui-renderer/client'
@@ -59,13 +59,6 @@ const ROUTES: readonly string[] = GATEWAYS.map((gateway) => gateway.id)
  * The slot types it contributes to (`settings.section`,
  * `settings.models.provider-card`) are declared by their owning packages. */
 declare module '@deepseek-ai/dsh-client-ui-slots' {
-    interface SlotMap {
-        'settings.plugin.item': {
-            kind: 'keyed'
-            scope: 'root'
-            owner: { children?: never }
-        }
-    }
     /* Registering a namespace is what lets `ctx.locale.bind(NS)` type-check and
      * what makes a missing translation a compile error rather than a key shown
      * to the user. */
@@ -771,7 +764,7 @@ export function LlmProvidersSection(props: PropsRuntime<'settings.section'> & In
  * because cordis refuses to resolve `ctx.remote.llm` from a context that has not
  * declared it (`cannot get property "remote.llm" without inject`).
  */
-export const inject = ['slots', 'locale', 'settingsScope']
+export const inject = ['slots', 'locale', 'configForms']
 
 /**
  * Mount the card.
@@ -788,7 +781,8 @@ export function apply(ctx: ClientContext): void {
         inject: () => ({}),
     }, QuotaToolView as never))
     ctx.effect(() => ctx.locale.register(NS, { en, zh }), 'dsh-llm-provider: section locale')
-    const scope = ctx.settingsScope.bind<ProviderSections>({ namespace: NS })
+    // 0.2: one shared ConfigForm per profile entry, keyed by the loader entry id.
+    const scope = ctx.configForms.get<ProviderSections>(NS)
     const face = createSectionFace(ctx, scope, ROUTES)
     // A section, not a plugin card: this surface grows with every gateway the
     // plugin learns to serve, and `settings.section` is a list slot whose

@@ -15,7 +15,6 @@ import {
     parseArguments,
     splitSystemPrompt,
     textOnlyContext,
-    toolResultText,
 } from '../src/context.ts'
 
 const toolCallId = (value: string): ToolCallId => value as unknown as ToolCallId
@@ -44,18 +43,9 @@ describe('parseArguments', () => {
     })
 })
 
-describe('flattenText / toolResultText', () => {
+describe('flattenText', () => {
     it('concatenates visible text only', () => {
         expect(flattenText([{ type: 'text', text: 'a' }, { type: 'reasoning', text: 'r' }, { type: 'text', text: 'b' }])).toBe('ab')
-    })
-
-    it('reaches text nested inside a tool result', () => {
-        expect(
-            toolResultText([
-                { type: 'text', text: 'outer ' },
-                { type: 'tool-result', toolCallId: toolCallId('c1'), content: [{ type: 'text', text: 'inner' }] },
-            ]),
-        ).toBe('outer inner')
     })
 })
 
@@ -71,7 +61,7 @@ describe('splitSystemPrompt', () => {
         const split = splitSystemPrompt(
             request({
                 messages: [
-                    createSystemMessage('you are terse', 'test'),
+                    createSystemMessage('you are terse'),
                     createUserMessage({ content: [{ type: 'text', text: 'hi' }], source: { kind: 'user' } }),
                 ],
             }),
@@ -82,7 +72,7 @@ describe('splitSystemPrompt', () => {
     })
 
     it('sends no prompt for an empty leading system message', () => {
-        const split = splitSystemPrompt(request({ messages: [createSystemMessage('', 'test')] }))
+        const split = splitSystemPrompt(request({ messages: [createSystemMessage('')] }))
         expect(split.systemPrompt).toBeUndefined()
         expect(split.messages).toHaveLength(0)
     })
@@ -276,7 +266,7 @@ describe('textOnlyContext', () => {
             request({
                 messages: [
                     createUserMessage({ content: [{ type: 'text', text: 'first' }], source: { kind: 'user' } }),
-                    createSystemMessage('later instruction', 'test'),
+                    createSystemMessage('later instruction'),
                 ],
             }),
         )

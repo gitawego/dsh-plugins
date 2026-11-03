@@ -1,7 +1,9 @@
 # dsh-plugins
 
 Monorepo of DeepSeek Harness (DSH) plugins. Each package is a publishable DSH
-plugin under the `@gitawego` npm scope.
+plugin under the `@gitawego` npm scope, targeting DSH **0.2.1-rc.5** (the
+0.1.x line is not supported by the current versions — see
+[`COMPATIBILITY.md`](COMPATIBILITY.md)).
 
 ## Packages
 
@@ -11,9 +13,13 @@ plugin under the `@gitawego` npm scope.
   requires (missing it is the `400 MissingSessionID` failure), resolved per
   request from the harness session id.
 - [packages/web-search](packages/web-search/) — `@gitawego/dsh-web-search`:
-  enhanced web search provider. Works with **no API key** (free Parallel/Exa MCP
-  backends) and optionally any LLM-backed web-search endpoint (Anthropic or
-  OpenAI protocol) via `opencode-enhanced`.
+  **deprecated** (kept working, no new features). Enhanced web search provider:
+  works with **no API key** (free Parallel/Exa MCP backends) and optionally any
+  LLM-backed web-search endpoint via `opencode-enhanced`. DSH 0.2 ships its own
+  web stack (DeepSeek search with account sign-in, Search-API/Exa/Perplexity
+  providers, `web_fetch`, multi-query search, and a Web-search settings page);
+  this plugin's remaining niche is the credential-free MCP chain and arbitrary
+  MCP servers.
 - [packages/lsp](packages/lsp/) — `@gitawego/dsh-lsp`: config-driven Language
   Server Protocol integration (official servers by default, persistent sessions,
   progressive diagnostics after edits, rich query tools, Web status card).

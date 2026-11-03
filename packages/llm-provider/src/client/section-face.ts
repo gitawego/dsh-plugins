@@ -10,7 +10,7 @@
  * @module @gitawego/dsh-llm-provider/client/section-face
  */
 import type { Context as ClientContext } from '@deepseek-ai/cordis'
-import type { SettingsScope } from '@deepseek-ai/dsh-client-ui-settings/client'
+import type { ConfigForm } from '@deepseek-ai/dsh-client-ui-settings/client'
 // Type-only: declares `ctx.locale`, which this module reads.
 import type {} from '@deepseek-ai/dsh-client-locale/client'
 import {
@@ -108,13 +108,13 @@ export function actionsFor(controller: ProviderCard): ProviderActions {
  * forever (`useSyncExternalStore` compares by identity — React error #185, the
  * failure this card already shipped once).
  * @param ctx - the client context.
- * @param scope - the bound `llm-provider` settings scope.
+ * @param scope - the `llm-provider` entry's shared config form.
  * @param routes - routes to render a panel for.
  * @returns the section's injected face.
  */
 export function createSectionFace(
     ctx: ClientContext,
-    scope: SettingsScope<ProviderSections>,
+    scope: ConfigForm<ProviderSections>,
     routes: readonly string[],
 ): LlmProvidersFace {
     const t = ctx.locale.bind(NS) as unknown as Translate
