@@ -160,6 +160,15 @@ version. Port `lsp` and `llm-provider`.
    the provider registration (the `ctx.web` seam itself is unchanged).
 5. Update the ~40 test files that construct the old config/message shapes;
    re-run the scratch-workspace typecheck above.
+6. **Re-enter the plugin settings in the upgraded profile.** The one-time
+   `settings.yaml` import only lands sections the running composition accepts;
+   `llm-provider`'s namespace is logged and left in `settings.yaml.imported`.
+   The route then falls back to `apiKeyEnv: OPENCODE_API_KEY` while the key sits
+   under the user's own reference, which surfaces as
+   `No API key for provider: opencode-go-session` (chat) and
+   `usage endpoint answered 401` (quota card). Verify with
+   `dsh --profile web --dump-config` (the `llm-provider` entry must show the
+   `config:` block). See `AGENT.md` → "Upgrading an existing profile".
 
 ## Policy note
 
