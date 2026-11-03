@@ -23,7 +23,7 @@
  */
 import { useEffect, useState, useSyncExternalStore } from 'react'
 import type { Context as ClientContext } from '@deepseek-ai/cordis'
-import type { SettingsScope } from '@deepseek-ai/dsh-client-ui-settings/client'
+import type { ConfigForm } from '@deepseek-ai/dsh-client-ui-settings/client'
 import type {} from '@deepseek-ai/dsh-client-ui-renderer/client'
 import './remote-types.ts'
 import type {} from '@deepseek-ai/dsh-client-locale/client'
@@ -449,10 +449,10 @@ export function WebSearchSection(props: PropsRuntime<'settings.section'> & Injec
 /**
  * Build the section's face: one controller over the bound settings scope.
  * @param ctx - the client context.
- * @param scope - the bound `web-search-enhanced` scope.
+ * @param scope - the `web-search` entry's shared config form.
  * @returns the injected face.
  */
-export function createSectionFace(ctx: ClientContext, scope: SettingsScope<unknown>): WebSearchSectionFace {
+export function createSectionFace(ctx: ClientContext, scope: ConfigForm<unknown>): WebSearchSectionFace {
     /**
      * The credentials domain, bound in a fiber that declares it: cordis refuses
      * `ctx.remote.credentials` from a context that has not declared the scoped
@@ -492,7 +492,7 @@ export function createSectionFace(ctx: ClientContext, scope: SettingsScope<unkno
 }
 
 /** Services this client half uses. */
-export const inject = ['slots', 'locale', 'settingsScope']
+export const inject = ['slots', 'locale', 'configForms']
 
 /**
  * Mount the section.
@@ -501,7 +501,9 @@ export const inject = ['slots', 'locale', 'settingsScope']
 export function apply(ctx: ClientContext): void {
     ctx.effect(installStyles, 'dsh-web-search: section styles')
     ctx.effect(() => ctx.locale.register(NS, { en, zh }), 'dsh-web-search: section locale')
-    const scope = ctx.settingsScope.bind<unknown>({ namespace: NS })
+    // 0.2: the form namespace is the loader entry id (`web-search`, the id the
+    // bundle patch inserts), not the plugin's old settings namespace string.
+    const scope = ctx.configForms.get<unknown>('web-search')
     const face = createSectionFace(ctx, scope)
     ctx.slots.inject('settings.section', () => ctx.slots.register({
         name: 'settings.section',

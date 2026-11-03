@@ -19,13 +19,28 @@ declare module '@deepseek-ai/cordis' {
   }
 }
 import { createUserMessage } from '@deepseek-ai/dsh-llm'
+
+/**
+ * LSP owns its message provenance. 0.2 removed the shared `plugin` source
+ * kind: every producer declares its own entry in the merge-extensible map.
+ */
+declare module '@deepseek-ai/dsh-llm' {
+  interface MessageSourceMap {
+    lsp: {
+      readonly kind: 'lsp'
+      readonly form: 'relay'
+    }
+  }
+}
 import { join } from 'node:path'
 import { homedir } from 'node:os'
 import {
   Config,
   LSP_SETTINGS_NAMESPACE,
   mergeConfig,
+  readConfig,
   resolveConfig,
+  type LspConfig,
   type LspSettings,
   type ResolvedLspConfig,
 } from './config.ts'
@@ -86,7 +101,7 @@ function surfaceInjection(
         try {
           const message: UserMessage = createUserMessage({
             content: [{ type: 'text', text }],
-            source: { kind: 'plugin', plugin: 'dsh-lsp', form: 'relay' },
+            source: { kind: 'lsp', form: 'relay' },
           })
           agent.inject(message)
         } catch (error) {
@@ -99,26 +114,21 @@ function surfaceInjection(
   }
 }
 
-export function apply(ctx: Context, base: Partial<LspSettings> = {}) {
+export function apply(ctx: Context, config: LspConfig) {
   const home = process.env.DSH_HOME ?? join(homedir(), '.dsh')
-  const settings = ctx.settings.register(LSP_SETTINGS_NAMESPACE, Config, {
-    base: base as Record<string, unknown>,
-    applies: 'live',
-    validate: (value: unknown) => {
-      resolveConfig(mergeConfig(value))
-    },
-  })
 
-  let resolved: ResolvedLspConfig = resolveConfig(mergeConfig(settings.get()))
-  const settingsWatch = settings.watch(async (next: unknown) => {
-    resolved = resolveConfig(mergeConfig(next))
-  })
+  // 0.2 derives the configuration form from this plugin's exported `Config`
+  // and hands `apply` stable volatile refs. Reading them where the value is
+  // used (instead of caching one snapshot) is what keeps a form write live
+  // without re-installing the plugin.
+  const current = (): ResolvedLspConfig => resolveConfig(mergeConfig(readConfig(config)))
 
-  // Writeable settings seam shared by the Web settings route and the /lsp
-  // command (headless users configure without the Web UI).
+  // Writeable settings seam shared by the Web settings form and the /lsp
+  // command (headless users configure without the Web UI). The namespace is
+  // the loader entry id, which the form service keys directly.
   const lspSettings: LspSettingsLike = {
-    get: () => settings.get() as LspSettings,
-    update: (patch) => settings.update(patch),
+    get: () => mergeConfig(readConfig(config)) as LspSettings,
+    update: (patch) => ctx.settings.update(LSP_SETTINGS_NAMESPACE, patch),
     mutate: (ops) =>
       ctx.settings.mutate(
         LSP_SETTINGS_NAMESPACE,
@@ -134,7 +144,7 @@ export function apply(ctx: Context, base: Partial<LspSettings> = {}) {
   // workspace cwd), so agents in the same workspace share one LspManager —
   // sessions are reused, processes are bounded, and teardown is refcounted.
   const pool = new RootPool<LspManager>(
-    (root) => new LspManager({ config: resolved, cwd: root, onStatus: () => {} }),
+    (root) => new LspManager({ config: current(), cwd: root, onStatus: () => {} }),
     (_root, manager) => { void manager.shutdown() },
   )
   const agentIdOf = (agent: Agent): string => String(agent.id)
@@ -188,7 +198,7 @@ export function apply(ctx: Context, base: Partial<LspSettings> = {}) {
         ? sessions.map((s) => `${s.id} @ ${s.root}: ${s.status}`)
         : ['No LSP sessions started yet.']
       if (sub === 'show') {
-        const configured = Object.keys(resolved.servers)
+        const configured = Object.keys(current().servers)
         lines = [
           `Configured servers: ${configured.length ? configured.join(', ') : '(none)'}`,
           ...lines,
@@ -212,8 +222,8 @@ export function apply(ctx: Context, base: Partial<LspSettings> = {}) {
           diagnostics: () => getManager(agent).diagnostics(),
           getClients: (file) => getManager(agent).getClients(file),
         },
-        config: resolved.progressive,
-        onInjection: (text) => surfaceInjection(ctx, resolved.progressive, agent, text),
+        config: current().progressive,
+        onInjection: (text) => surfaceInjection(ctx, current().progressive, agent, text),
       })
       sinks.set(id, sink)
     }
@@ -270,7 +280,7 @@ export function apply(ctx: Context, base: Partial<LspSettings> = {}) {
   }, 2_000)
   void statusInterval.unref?.()
 
-  ctx.logger.info('dsh-lsp ready (%d server routes configured)', Object.keys(resolved.servers).length)
+  ctx.logger.info('dsh-lsp ready (%d server routes configured)', Object.keys(current().servers).length)
 
   // Full lifecycle teardown (LIFO over registration order); fiber-scoped
   // registrations (settings namespace, web routes) are also auto-disposed.
@@ -280,7 +290,6 @@ export function apply(ctx: Context, base: Partial<LspSettings> = {}) {
     toolsResultDisposer()
     commandDisposer()
     toolDisposers.forEach((dispose) => dispose())
-    settingsWatch()
     pool.releaseAll((_root, manager) => { void manager.shutdown() })
   }
 }

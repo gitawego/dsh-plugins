@@ -19,7 +19,7 @@ import type {} from '@deepseek-ai/dsh-web'
 import type {} from '@deepseek-ai/dsh-credentials'
 import type {} from '@deepseek-ai/dsh-settings'
 import { credentialRef } from '@deepseek-ai/dsh-credentials'
-import { Config, WEB_SEARCH_SETTINGS_NAMESPACE, createResolvedConfig, type WebSearchConfig } from './config.ts'
+import { Config, WEB_SEARCH_SETTINGS_NAMESPACE, createResolvedConfig, readConfig, type WebSearchConfig, type WebSearchConfigRefs } from './config.ts'
 import { createSearchProvider, PROVIDER_ID } from './provider.ts'
 
 export const name = '@gitawego/dsh-web-search'
@@ -30,19 +30,13 @@ export { createSearchProvider } from './provider.ts'
 export type { WebSearchConfig } from './config.ts'
 export type { ProviderRuntime } from './provider.ts'
 
-export const inject = ['web', 'settings', 'credentials']
+export const inject = ['web', 'credentials']
 
-export function apply(ctx: Context, config: Partial<WebSearchConfig> = {}): () => void {
-  const settings = ctx.settings.register(WEB_SEARCH_SETTINGS_NAMESPACE, Config, {
-    base: config,
-    applies: 'live',
-    validate: (value: unknown) => createResolvedConfig(value as Partial<WebSearchConfig>),
-  })
-
-  let resolved: WebSearchConfig = createResolvedConfig(settings.get() as WebSearchConfig)
-  const watch = settings.watch((next: unknown) => {
-    resolved = createResolvedConfig(next as WebSearchConfig)
-  })
+export function apply(ctx: Context, config: WebSearchConfigRefs): () => void {
+  // 0.2 derives the configuration form from this plugin's exported `Config`
+  // and hands `apply` stable volatile refs. Reading them per call is what
+  // makes a form write live without re-installing the plugin.
+  const current = (): WebSearchConfig => createResolvedConfig(readConfig(config))
 
   /** Resolve one optional free-backend credential reference. */
   const resolveFreeToken = async (ref: string | undefined): Promise<string | undefined> => {
@@ -56,10 +50,10 @@ export function apply(ctx: Context, config: Partial<WebSearchConfig> = {}): () =
   }
 
   const provider = createSearchProvider(
-    () => resolved,
+    current,
     {
       resolveGoApiKey: async () => {
-        const ref = resolved.llm.credential
+        const ref = current().llm.credential
         if (!ref) return undefined
         try {
           const resolvedCred = await ctx.credentials.resolve(credentialRef(ref))
@@ -80,8 +74,8 @@ export function apply(ctx: Context, config: Partial<WebSearchConfig> = {}): () =
       },
       // Optional tokens for the hosted MCP endpoints: a reference that resolves
       // to nothing keeps the anonymous free path rather than failing the search.
-      resolveParallelApiKey: async () => resolveFreeToken(resolved.free.parallelCredential),
-      resolveExaApiKey: async () => resolveFreeToken(resolved.free.exaCredential),
+      resolveParallelApiKey: async () => resolveFreeToken(current().free.parallelCredential),
+      resolveExaApiKey: async () => resolveFreeToken(current().free.exaCredential),
     },
   )
 
@@ -89,6 +83,5 @@ export function apply(ctx: Context, config: Partial<WebSearchConfig> = {}): () =
 
   return () => {
     disposeProvider()
-    watch()
   }
 }

@@ -56,7 +56,8 @@ import {
     Config,
     LLM_PROVIDER_SETTINGS_NAMESPACE,
     defaultProfile,
-    resolveProfiles,
+    readProviderConfig,
+    type ProviderConfigRefs,
     type ProviderSettings,
 } from './config.ts'
 import { declareRoutes, describeSkips } from './directory.ts'
@@ -77,7 +78,7 @@ export const name = '@gitawego/dsh-llm-provider'
  * registry, and the tool registry are attached optionally, so a composition
  * without one still serves text models.
  */
-export const inject = ['llm', 'settings', 'credentials']
+export const inject = ['llm', 'credentials']
 
 /** Route keys this build registers, in gateway order. */
 export const ROUTES: readonly string[] = GATEWAYS.map((gateway) => gateway.id)
@@ -105,45 +106,31 @@ export const CATALOG_TTL_MS = 6 * 60 * 60 * 1000
  *   the configurable-provider entries.
  */
 /**
- * Register the settings namespace, with the plugin's own configuration as its
- * composition base.
- *
- * The namespace resolves in three layers — schema defaults, then this base, then
- * the user document (`settings.yaml`, or the card's writes). Putting a
- * deployment's profile in the base is what the Models page calls *not yours to
- * delete*: it offers Delete only for a profile that exists in the user layer
- * and nowhere else, so a reference supplied by composition does not present as a
- * removable user choice. It also means the page can see the profile's
- * `apiKeyEnv` — and therefore report the credential as configured — without
- * anyone having to write a settings section first.
- *
- * Exported as a function over an explicit settings face so the wiring (rather
- * than the whole plugin) can be tested.
- * @param settings - the settings service.
- * @param config - the plugin's configuration, used as the base layer.
- * @returns the namespace's owner scope.
- */
-export function mountSettings(
-    settings: Pick<Context['settings'], 'register'>,
-    config: ProviderSettings,
-): ReturnType<Context['settings']['register']> {
-    return settings.register(LLM_PROVIDER_SETTINGS_NAMESPACE, Config, { applies: 'live', base: config })
-}
-
-/**
  * Mount the provider routes.
+ *
+ * DSH 0.2 derives the configuration form from this plugin's exported `Config`
+ * and hands `apply` stable volatile refs (one per field, per route). Every
+ * read takes a fresh snapshot, so a form write applies to the next request
+ * without re-installing the plugin; a route whose endpoint moved also re-reads
+ * its live catalog.
  * @param ctx - the plugin's context.
- * @param config - deployment configuration, applied as the settings base layer.
- * @returns a disposer releasing the settings watcher, the adapter routes, and
- *   the configurable-provider entries.
+ * @param config - the loader-supplied configuration references.
+ * @returns a disposer releasing the adapter routes and the
+ *   configurable-provider entries.
  */
-export function apply(ctx: Context, config: ProviderSettings = {}): () => void {
-    const settings = mountSettings(ctx.settings, config)
-
-    let profiles: ProviderSettings = resolveProfiles(settings.get())
+export function apply(ctx: Context, config: ProviderConfigRefs = {}): () => void {
+    const snapshot = (): ProviderSettings => readProviderConfig(config)
+    let profiles: ProviderSettings = snapshot()
     const transport = createGatewayTransport(GATEWAYS, profiles)
+    const boot = new AbortController()
+
+    // Assigned once the feed exists (below); a request that arrives before the
+    // composition finishes simply reads the boot snapshot.
+    let feed: CatalogFeed | undefined
+    let syncProfiles = (): void => {}
 
     const profileFor = (route: string): ProviderSettings[string] => {
+        syncProfiles()
         const profile = profiles[route]
         if (profile !== undefined) return profile
         const gateway: GatewayDefinition | undefined = gatewayById(route)
@@ -175,13 +162,28 @@ export function apply(ctx: Context, config: ProviderSettings = {}): () => void {
         return gatewayById(route)?.baseURL ?? override
     }
 
-    const feed: CatalogFeed = createCatalogFeed({
+    feed = createCatalogFeed({
         gateways: GATEWAYS,
         profileOf: profileFor,
         resolveApiKey,
         installedModels: (route) => transport.installedModels(route),
         apply: (route: string, live: LiveCatalog) => transport.setCatalog(route, live),
     })
+
+    syncProfiles = (): void => {
+        const next = snapshot()
+        if (JSON.stringify(next) === JSON.stringify(profiles)) return
+        const previous = profiles
+        profiles = next
+        transport.setProfiles(next)
+        // A route pointed at another endpoint is describing a different
+        // catalog; re-read it rather than serving the previous endpoint's.
+        for (const gateway of GATEWAYS) {
+            if (previous[gateway.id]?.baseURL !== next[gateway.id]?.baseURL) {
+                void feed?.refresh(gateway.id, boot.signal).catch(() => undefined)
+            }
+        }
+    }
 
     // Bound in an injected fiber for the same reason as the web server above:
     // `ctx.attachments` is a declared-service read, not a probe. A composition
@@ -280,22 +282,10 @@ export function apply(ctx: Context, config: ProviderSettings = {}): () => void {
 
     // Prime the live catalog in the background: a boot that cannot reach the
     // gateway must still serve the installed catalog, so nothing waits on this.
-    const boot = new AbortController()
     void feed.refresh(undefined, boot.signal).catch(() => undefined)
-
-    const watch = settings.watch((next: unknown) => {
-        const previous = profiles
-        profiles = resolveProfiles(next)
-        transport.setProfiles(profiles)
-        // A route pointed at another endpoint is describing a different
-        // catalog; re-read it rather than serving the previous endpoint's.
-        const moved = GATEWAYS.filter((gateway) => previous[gateway.id]?.baseURL !== profiles[gateway.id]?.baseURL)
-        for (const gateway of moved) void feed.refresh(gateway.id, boot.signal).catch(() => undefined)
-    })
 
     return () => {
         boot.abort('llm-provider unloaded')
-        watch()
         discovery()
         registration()
     }

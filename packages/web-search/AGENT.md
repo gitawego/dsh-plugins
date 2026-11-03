@@ -1,12 +1,21 @@
 # AGENT.md — dsh-web-search (architecture)
 
+> **Status: deprecated (2026-11).** DSH 0.2 ships its own web stack — DeepSeek
+> search with account sign-in, the DeepSeek Search API, Exa/Perplexity
+> providers, `web_fetch`, multi-query `web_search`, and a Web-search settings
+> page (`dsh-client-ui-settings-web-search`). This package is kept working on
+> 0.2.1-rc.5 and still owns the two things the built-ins do not: a credential-free
+> Parallel/Exa MCP path and a fallback chain. Do not add features here without a
+> concrete gap the built-ins cannot fill; prefer composing the first-party
+> providers.
+
 The non-negotiable design rules for `@gitawego/dsh-web-search`. **LESSONS.md
 holds the session history, debugging deep-dives, and host environment facts;
 this file is the architecture and rulebook.**
 
 ## What this project is
 
-A chained-fallback `WebSearchProvider` for DeepSeek Harness (DSH) 0.1.0-rc.7+.
+A chained-fallback `WebSearchProvider` for DeepSeek Harness (DSH) 0.2.1-rc.5.
 Registers into `ctx.web` with **id `opencode-enhanced`** alongside the shipped
 `dsh-web-search-deepseek` (id `deepseek-official`). The chain tries in
 order:

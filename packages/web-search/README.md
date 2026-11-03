@@ -1,6 +1,14 @@
 # @gitawego/dsh-web-search
 
-Enhanced web search provider for DeepSeek Harness (DSH) 0.1.0-rc.7+.
+> **Deprecated.** DSH 0.2 ships a complete first-party web stack: DeepSeek
+> search (keyless through the DeepSeek account sign-in), the DeepSeek Search
+> API, Exa and Perplexity providers, `web_fetch`, multi-query `web_search`,
+> and a **Settings → Web search** page. Prefer those. This package still
+> installs and works on DSH 0.2.1-rc.5 for the cases the built-ins do not
+> cover — anonymous Parallel/Exa MCP search, a fallback chain across backends,
+> and arbitrary MCP servers — but it receives no new features.
+
+Enhanced web search provider for DeepSeek Harness (DSH) 0.2.1-rc.5.
 Registers a `WebSearchProvider` (id `opencode-enhanced`) into `ctx.web` with
 **chained fallback** in order:
 

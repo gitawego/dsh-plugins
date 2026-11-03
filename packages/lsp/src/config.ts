@@ -5,12 +5,13 @@
  *  so malformed documented settings degrade to defaults instead of crashing. */
 import z from '@deepseek-ai/schemastery'
 import type Schema from '@deepseek-ai/schemastery'
+import type { Volatile } from '@deepseek-ai/cordis'
 import { DEFAULT_SERVERS } from './catalog.js'
 import { managedBinDir } from './platform.js'
 
-/** Settings namespace key. Spelled as a plain literal: the seam's
- *  `SettingsNamespace` brand is applied by `ctx.settings.register`'s generic,
- *  and `settingsNamespace()` (the old rc.7 helper) no longer exists. */
+/** Profile entry id this plugin's configuration form is keyed by. In DSH
+ *  0.2 a form namespace is the loader entry id, not a plugin-chosen string, so
+ *  this must match the `insert` id in `cordis.patch.yml`. */
 export const LSP_SETTINGS_NAMESPACE = 'lsp'
 
 export const PROGRESS_INJECT_MODES = ['status', 'conversation', 'none'] as const
@@ -99,9 +100,14 @@ function ServerEntry(): Schema<ServerConfig> {
   })
 }
 
-export const Config: Schema<LspSettings> = z.object({
-  timeout: z.number().default(DEFAULT_TIMEOUT),
-  binDir: z.string(),
+/**
+ * The form schema. Every user-editable field is `volatile()`: the loader hands
+ * `apply` stable references whose `.get()` always answers the current layer,
+ * so a form write is visible to the next call without re-installing the plugin.
+ */
+export const Config: Schema = z.object({
+  timeout: z.number().default(DEFAULT_TIMEOUT).volatile(),
+  binDir: z.string().volatile(),
   progressive: z
     .object({
       enabled: z.boolean().default(DEFAULT_PROGRESSIVE.enabled),
@@ -109,9 +115,30 @@ export const Config: Schema<LspSettings> = z.object({
       maxDiagnostics: z.number().default(DEFAULT_PROGRESSIVE.maxDiagnostics),
       quietMs: z.number().default(DEFAULT_PROGRESSIVE.quietMs),
     })
-    .default(DEFAULT_PROGRESSIVE),
-  servers: z.dict(ServerEntry()),
+    .default(DEFAULT_PROGRESSIVE)
+    .volatile(),
+  servers: z.dict(ServerEntry()).default({}).volatile(),
 })
+
+/** The configuration `apply` receives from the loader (schema defaults applied). */
+export interface LspConfig {
+  timeout: Volatile<number>
+  binDir: Volatile<string | undefined>
+  progressive: Volatile<ProgressiveConfig>
+  servers: Volatile<Record<string, ServerConfig>>
+}
+
+/** Read one stable snapshot of every configurable field. */
+export function readConfig(config: LspConfig): Partial<LspSettings> {
+  return {
+    timeout: config.timeout.get(),
+    ...(config.binDir.get() !== undefined ? { binDir: config.binDir.get() as string } : {}),
+    progressive: config.progressive.get(),
+    // The snapshot is deeply readonly; the resolver normalizes it into fresh
+    // mutable values, so the cast is the boundary, not a lie about storage.
+    servers: config.servers.get() as unknown as Record<string, ServerConfig>,
+  }
+}
 
 // ── validation / clamping ──────────────────────────────────────────────────
 

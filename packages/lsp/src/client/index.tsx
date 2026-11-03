@@ -10,7 +10,7 @@
 import { useEffect, useState, useSyncExternalStore } from 'react'
 import type { Context as ClientContext } from '@deepseek-ai/cordis'
 import type { SnapshotStore } from '@deepseek-ai/dsh-client-store'
-import type { SettingsScope } from '@deepseek-ai/dsh-client-ui-settings/client'
+import type { ConfigForm } from '@deepseek-ai/dsh-client-ui-settings/client'
 import type { ToolCallBlock } from '@deepseek-ai/dsh-client-ui-chat/client'
 import type {} from '@deepseek-ai/dsh-client-ui-renderer/client'
 import type {} from '@deepseek-ai/dsh-client-ui-settings/client'
@@ -226,7 +226,7 @@ interface SettingsState {
 export class SettingsController {
   private state: SettingsState = { status: 'idle' }
   private readonly listeners = new Set<() => void>()
-  private scope: SettingsScope<LspSettings> | undefined
+  private scope: ConfigForm<LspSettings> | undefined
   private updateScope: ((patch: Record<string, unknown>) => Promise<void>) | undefined
 
   subscribe = (listener: () => void): (() => void) => {
@@ -244,7 +244,7 @@ export class SettingsController {
   /** Bind to the settings scope. Replaces the previous fetch-based
    *  GET/POST backdrop with the rc.7 settingsScope service. */
   bind(
-    scope: SettingsScope<LspSettings>,
+    scope: ConfigForm<LspSettings>,
     updateScope: (patch: Record<string, unknown>) => Promise<void>,
   ): void {
     this.scope = scope
@@ -286,7 +286,11 @@ export class SettingsController {
 type ToolViewProps = PropsRuntime<'tool.call.toolview'> & { t?: LspTranslate }
 
 function argsRawOf(block: ToolCallBlock): string {
-  return 'call' in block ? (block.call?.argsRaw ?? '') : block.argsRaw
+  // 0.2 splits the call into three stages and only a dispatched call (or a
+  // settled result whose call is still in the loaded window) carries the raw
+  // arguments. A preparing call deliberately has none.
+  if ('kind' in block) return block.call?.argsRaw ?? ''
+  return block.phase === 'start' ? block.argsRaw : ''
 }
 
 function resultText(block: ToolCallBlock): string {
@@ -600,7 +604,7 @@ function installStyles(): () => void {
 }
 
 /** Required client services. */
-export const inject = ['slots', 'locale', 'settingsScope']
+export const inject = ['slots', 'locale', 'configForms']
 
 /** Register the lsp_diagnostics tool card and the editable LSP settings section. */
 export function apply(ctx: ClientContext): void {
@@ -615,7 +619,10 @@ export function apply(ctx: ClientContext): void {
   // `ctx.on`). The host maintains a refcount via lsp/status/subscribe so
   // the 2s interval only fires when at least one client is listening.
   status.bind(ctx)
-  const settingsScope = ctx.settingsScope.bind<LspSettings>({ namespace: 'lsp' })
+  // 0.2: one shared ConfigForm per profile entry, keyed by the loader entry id
+  // (the same id `cordis.patch.yml` inserts). It exposes the same snapshot /
+  // subscribe / set / mutate surface the controller already consumes.
+  const settingsScope = ctx.configForms.get<LspSettings>('lsp')
   settings.bind(settingsScope, async (patch) => {
     // Write each editable field through the rc.7 settings scope directly.
     // The client cannot import `src/settings-patch.ts` because that helper
