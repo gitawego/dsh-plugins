@@ -22,6 +22,7 @@ import {
     type ToolCallId,
 } from '@deepseek-ai/dsh-llm'
 import { isContextOverflow, type AssistantMessage, type AssistantMessageEvent, type Usage } from '@earendil-works/pi-ai'
+import { dsmlHoldIndex, splitDsml, type DsmlToolCall } from './dsml.ts'
 
 /**
  * Brand a provider tool-call id as the harness's `ToolCallId`.
@@ -143,6 +144,14 @@ export function mapStopReason(message: AssistantMessage, contextWindow: number):
  * Tool-call ids are only known once pi-ai's partial message carries the call, so
  * the first delta for a block records the id and every later delta reuses it —
  * the harness correlates a delta stream by that id.
+ *
+ * Text blocks pass through a DSML holdback: a DeepSeek lane can leak a tool call
+ * as markup inside `content`, and the leak only becomes recognizable once the
+ * closing tag arrives. The tail that could still become the DSML token is
+ * withheld from the delta stream, and at `text_end` a complete block is turned
+ * into real tool-call blocks with a `tool-calls` finish — see `dsml.ts`. Text
+ * that parses to nothing is emitted unchanged, so this is a recovery path and
+ * never a rewrite of ordinary prose.
  * @param events - one assistant turn's pi-ai event stream.
  * @param contextWindow - exact model capacity for overflow detection.
  * @param callerSignal - caller cancellation; an aborted caller turns an
@@ -156,19 +165,54 @@ export async function* toStreamChunks(
     callerSignal?: AbortSignal,
 ): AsyncGenerator<StreamChunk> {
     const toolIds = new Map<number, { id: string; name: string }>()
+    /** Withheld text per text block, and what of that block already reached the caller. */
+    const textBlocks = new Map<number, { held: string; emitted: string }>()
+    /** Tool calls recovered from leaked markup, emitted once the stream ends. */
+    const recovered: DsmlToolCall[] = []
+    let lastIndex = -1
     for await (const event of events) {
+        if ('contentIndex' in event) lastIndex = Math.max(lastIndex, event.contentIndex)
         switch (event.type) {
             case 'start':
                 break
             case 'text_start':
+                textBlocks.set(event.contentIndex, { held: '', emitted: '' })
                 yield { type: 'block-start', index: event.contentIndex, blockType: 'text' }
                 break
-            case 'text_delta':
-                yield { type: 'text-delta', index: event.contentIndex, text: event.delta }
+            case 'text_delta': {
+                const block = textBlocks.get(event.contentIndex) ?? { held: '', emitted: '' }
+                block.held += event.delta
+                const cut = dsmlHoldIndex(block.held)
+                if (cut > 0) {
+                    const text = block.held.slice(0, cut)
+                    block.held = block.held.slice(cut)
+                    block.emitted += text
+                    yield { type: 'text-delta', index: event.contentIndex, text }
+                }
+                textBlocks.set(event.contentIndex, block)
                 break
-            case 'text_end':
-                yield { type: 'block-end', index: event.contentIndex, block: { type: 'text', text: event.content } }
+            }
+            case 'text_end': {
+                const block = textBlocks.get(event.contentIndex) ?? { held: '', emitted: '' }
+                // The held tail is the only place a DSML block can start, so it
+                // is the only thing that has to be parsed.
+                const split = splitDsml(block.held)
+                if (split.calls.length === 0) {
+                    if (block.held.length > 0) {
+                        block.emitted += block.held
+                        yield { type: 'text-delta', index: event.contentIndex, text: block.held }
+                    }
+                } else {
+                    recovered.push(...split.calls)
+                    if (split.text.length > 0) {
+                        block.emitted += split.text
+                        yield { type: 'text-delta', index: event.contentIndex, text: split.text }
+                    }
+                }
+                textBlocks.delete(event.contentIndex)
+                yield { type: 'block-end', index: event.contentIndex, block: { type: 'text', text: block.emitted } }
                 break
+            }
             case 'thinking_start':
                 yield { type: 'block-start', index: event.contentIndex, blockType: 'reasoning' }
                 break
@@ -211,8 +255,14 @@ export async function* toStreamChunks(
                 }
                 break
             case 'done':
+                yield* recoveredBlocks(recovered, lastIndex)
                 yield { type: 'usage', usage: mapUsage(event.message.usage) }
-                yield { type: 'finish', reason: mapStopReason(event.message, contextWindow) }
+                yield {
+                    type: 'finish',
+                    // Recovered calls are the reason the turn has work to do; the
+                    // provider's own `stop` describes the leak, not the intent.
+                    reason: recovered.length > 0 ? { kind: 'tool-calls' } : mapStopReason(event.message, contextWindow),
+                }
                 return
             case 'error':
                 yield { type: 'usage', usage: mapUsage(event.error.usage) }
@@ -227,4 +277,35 @@ export async function* toStreamChunks(
         }
     }
     throw new LlmError('pi-ai event stream ended without done/error', 'STREAM_CLOSED')
+}
+
+/**
+ * Monotonic suffix for synthesized call ids.
+ *
+ * A recovered call has no provider id — DSML carries none — and the harness
+ * correlates each tool result with the id of the call that asked for it, so two
+ * recovered calls must never share one. A counter is enough: ids are unique for
+ * the process, and their shape is visibly not a provider's (`call_8d15…`).
+ */
+let recoveredCalls = 0
+
+/**
+ * Emit one complete tool-call block per recovered call.
+ *
+ * The blocks are numbered after the highest content index the provider used, so
+ * a recovery can never collide with a block pi-ai itself described.
+ * @param calls - calls parsed out of leaked markup.
+ * @param start - highest content index seen in the stream; `-1` when none.
+ * @returns the block-start / delta / block-end trio per call.
+ */
+function* recoveredBlocks(calls: readonly DsmlToolCall[], start: number): Generator<StreamChunk> {
+    for (const [offset, call] of calls.entries()) {
+        const index = start + 1 + offset
+        recoveredCalls += 1
+        const id = asToolCallId(`call_dsml_${recoveredCalls.toString(36)}`)
+        const arguments_ = JSON.stringify(call.arguments)
+        yield { type: 'block-start', index, blockType: 'tool-call' }
+        yield { type: 'tool-call-delta', index, id, name: call.name, argumentsDelta: arguments_ }
+        yield { type: 'block-end', index, block: { type: 'tool-call', id, name: call.name, arguments: arguments_ } }
+    }
 }
