@@ -62,7 +62,7 @@ together for version compatibility. Currently:
 - `packages/lsp` — LSP bridge.
 
 Each package is independently published and installed via `dsh plugin`,
-but they share the same Node version, pnpm version, and `0.2.1-rc.5` DSH pinning.
+but they share the same Node version, pnpm version, and `0.2.2-rc.1` DSH pinning.
 
 ## Non-negotiable rules (apply to every package)
 
@@ -121,7 +121,7 @@ This rule is recorded in each package's `AGENT.md` as
 ### DSH version pinning
 
 Every DSH dependency must be pinned to the **exact** host version (currently
-`0.2.1-rc.5`, matching the host install at
+`0.2.2-rc.1`, matching the host install at
 `<dsh prefix>/lib/node_modules/@deepseek-ai/dsh/node_modules/@deepseek-ai/*`). Caret ranges are forbidden for DSH
 packages: semver pre-release tags don't cross rc boundaries, so `^0.1.1-rc.1`
 silently resolves to a newer host level (`rc.2`, ...) and drifts from the
@@ -339,7 +339,7 @@ dsh-plugins/
 ## Resume / dev workflow
 
 1. `cd dsh-plugins && pnpm install` (resolves workspace deps)
-2. For each package you want to touch: `cd packages/<name> && pnpm typecheck && pnpm test && pnpm build` (2026-11: 409 tests green across web-search/lsp/llm-provider on dsh 0.2.1-rc.5, typecheck clean)
+2. For each package you want to touch: `cd packages/<name> && pnpm typecheck && pnpm test && pnpm build` (2026-11: 431 tests green across web-search/lsp/llm-provider on dsh 0.2.2-rc.1, typecheck clean)
 3. `cd ~/.dsh/profiles/web && rm -rf node_modules/<your-package> && pnpm install --offline` (refresh the worker)
 4. Open a new browser tab; the rebuilt bundle is picked up by the
    `__DSH_BOOT__` script.

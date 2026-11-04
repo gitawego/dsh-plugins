@@ -1,7 +1,7 @@
 # dsh-plugins
 
 Monorepo of DeepSeek Harness (DSH) plugins. Each package is a publishable DSH
-plugin under the `@gitawego` npm scope, targeting DSH **0.2.1-rc.5** (the
+plugin under the `@gitawego` npm scope, targeting DSH **0.2.2-rc.1** (the
 0.1.x line is not supported by the current versions — see
 [`COMPATIBILITY.md`](COMPATIBILITY.md)).
 

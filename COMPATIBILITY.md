@@ -37,6 +37,14 @@ all three installed boots clean (composed tree includes each bundle; the GUI
 serves every `client.js`; a headless Chrome load reports no console or page
 errors).
 
+**Update, same day: the line has since moved to `0.2.2-rc.1`** (npm `next`).
+Nothing in the port changed for it — the pin bump plus the ranged
+`@deepseek-ai/cordis` `^4.1.0` / `@deepseek-ai/schemastery` `^3.19.0` (the
+versions the 0.2.2 host bundles) was enough: `pnpm -r typecheck` clean and
+**431 tests** green, with the profile copies refreshed by
+`scripts/install-plugins.sh`. The audit below is left as written for 0.2.1,
+the line the break analysis was done against.
+
 The table above records the pre-port audit: before the port the same packages
 produced 37 / 5 / 3 TypeScript errors against 0.2.1.
 
