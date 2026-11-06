@@ -323,36 +323,48 @@ OpenAI-completions implementation with an injected `fetch`.
 
 ### Leaked tool calls (DeepSeek DSML)
 
-DeepSeek describes a tool call in **DSML** — tags wrapped in the `｜｜DSML｜｜`
-token — and the serving lane is supposed to parse that into `tool_calls`.
+DeepSeek describes a tool call in **DSML** — tags wrapped in a `｜â€¦｜` mark,
+**one** fullwidth bar per side — and the serving lane is supposed to parse that
+into `tool_calls`.
 Intermittently it does not: the markup arrives as ordinary `content` with
 `finish_reason: "stop"`, so the turn reads as a completed answer, the tool never
-runs, and the agent sits idle showing syntax:
+runs, the agent sits idle showing syntax. The token is **one** fullwidth bar
+(U+FF5C) on each side of `DSML`:
 
 ```text
-<｜｜DSML｜｜ calls>
-<｜｜DSML｜｜ invoke name="skill">
-<｜ parameter name="name" string="true">cordis-plugin-development</｜ parameter>
-</｜ invoke>
-</｜ calls>
+<\u{FF5C}DSML\u{FF5C} calls>
+<\u{FF5C}DSML\u{FF5C} invoke name="bash">
+<\u{FF5C}DSML\u{FF5C} parameter name="command" string="true">ls</\u{FF5C}DSML\u{FF5C} parameter>
+</\u{FF5C}DSML\u{FF5C} calls>
 ```
 
-This is reported for `opencode-go/deepseek-v4.1-flash` and other DeepSeek lanes
-(`anomalyco/opencode#50206`, `#45600`, `vllm-project/vllm#48931`), and pi-ai has
-no parser for it. Since this plugin owns this route's wire, it recovers the
-call: `src/dsml.ts` parses the block, `src/stream.ts` withholds the tail of a
-text block that could still become a token, and at block end a complete block is
-emitted as real tool-call chunks with a `tool-calls` finish. The prose the model
-wrote before the markup is kept; text that parses to nothing passes through
-untouched, so a model *discussing* the markup is never rewritten. Parameter
-values keep their bytes — `string="true"` is never coerced or trimmed, which is
-what makes a `write` of file content survive.
+The model writes that template itself when its request arrives without tool
+definitions, or the serving lane returns it unparsed. Either way the conversion
+belongs to the provider, and this plugin does **not** decode it: a client-side
+parser has to invent call ids, guess spacing and encoding, and would turn an
+upstream fault into a silent success. An earlier attempt here did exactly that and
+never fired, because it matched two bars per side while the lane emits one.
 
-`tests/dsml.spec.ts` and the `leaked DSML tool calls` block in
-`tests/stream.spec.ts` pin both halves, including a replay of the leaked text
-that started this.
+Instead the reply is failed: a text-only response that *begins* with the template
+token, when tools were offered, finishes with a retryable `SERVER` failure. The
+retry policy re-runs the request — the honest remedy — and a persistent leak
+surfaces as an explicit error rather than markup in the transcript.
+
+The evidence for that reading, from one affected session: its `request/header`
+shows the request carried all 46 tools, replaying that exact request (46 tools,
+`reasoningEffort: high`, `maxTokens: 384000`) returns proper tool calls 4 times
+out of 4, and the leaked turn followed four 429 "upstream overloaded" retries with
+the model's own reasoning saying *"we have no explicit tool list"* — the
+overloaded lane served it without tool definitions.
 
 ## Limitations
+
+- **A leaked tool-call template fails the turn instead of being decoded.** When
+  the serving lane skips its tool-call parsing, the model's native template
+  (`<｜DSML｜ calls>`) arrives as text. The plugin reports that as a retryable
+  server failure — the retry policy re-runs the request, and a persistent leak
+  shows as an error. Parsing it client-side would invent call ids and hide an
+  upstream fault.
 
 - **No replay state.** Native response ids and pi-ai's per-block signatures are
   not stored, so assistant history is rebuilt from durable content. The rebuild

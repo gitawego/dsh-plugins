@@ -27,12 +27,12 @@ function assistant(over: Partial<AssistantMessage> = {}): AssistantMessage {
     }
 }
 
-async function collect(events: AssistantMessageEvent[], contextWindow = 1000, signal?: AbortSignal): Promise<StreamChunk[]> {
+async function collect(events: AssistantMessageEvent[], contextWindow = 1000, signal?: AbortSignal, toolsOffered = false): Promise<StreamChunk[]> {
     const chunks: StreamChunk[] = []
     async function* source(): AsyncIterable<AssistantMessageEvent> {
         for (const event of events) yield event
     }
-    for await (const chunk of toStreamChunks(source(), contextWindow, signal)) chunks.push(chunk)
+    for await (const chunk of toStreamChunks(source(), contextWindow, signal, toolsOffered)) chunks.push(chunk)
     return chunks
 }
 
@@ -215,62 +215,55 @@ const DSML_LEAK =
     '</\u{FF5C}\u{FF5C}DSML\u{FF5C}\u{FF5C} invoke>\n' +
     '</\u{FF5C}\u{FF5C}DSML\u{FF5C}\u{FF5C} calls>'
 
-describe('toStreamChunks: leaked DSML tool calls', () => {
-    it('recovers a leaked call into a tool-call block and a tool-calls finish', async () => {
-        const leaked = assistant({ content: [{ type: 'text', text: DSML_LEAK }] })
-        const chunks = await collect([
-            { type: 'text_start', contentIndex: 0, partial: leaked },
-            { type: 'text_delta', contentIndex: 0, delta: DSML_LEAK, partial: leaked },
-            { type: 'text_end', contentIndex: 0, content: DSML_LEAK, partial: leaked },
-            { type: 'done', reason: 'stop', message: leaked },
-        ])
+describe('a reply that is the model tool-call template', () => {
+    const template = '< | DSLM | calls> < | DSLM | invoke name="bash"> < | DSLM | parameter name="command" string="true">ls< / | DSLM | parameter> < / | DSLM | invoke> < / | DSLM | calls>'
 
-        // The markup never reaches the caller as text.
-        expect(chunks.filter((chunk) => chunk.type === 'text-delta')).toEqual([])
-        expect(chunks).toContainEqual({ type: 'block-end', index: 0, block: { type: 'text', text: '' } })
-
-        const call = chunks.find((chunk) => chunk.type === 'block-end' && chunk.block.type === 'tool-call')
-        expect(call).toMatchObject({
-            index: 1,
-            block: {
-                type: 'tool-call',
-                name: 'skill',
-                arguments: JSON.stringify({ name: 'cordis-plugin-development' }),
-            },
-        })
-        expect(chunks.at(-1)).toEqual({ type: 'finish', reason: { kind: 'tool-calls' } })
+    it('is a retryable server failure when tools were offered', () => {
+        // The upstream skipped its tool-call parsing: the turn did NOT complete,
+        // and recording the markup as an answer silently loses the tool call.
+        const reason = mapStopReason(assistant({ content: [{ type: 'text', text: template }] }), 1000, true)
+        expect(reason.kind).toBe('error')
+        expect(reason.kind === 'error' && reason.failure.code).toBe('SERVER')
+        expect(reason.kind === 'error' && reason.failure.message).toMatch(/tool-call syntax as text/)
     })
 
-    it('keeps the prose the model wrote before the markup', async () => {
-        const body = `I'll load that skill.\n${DSML_LEAK}`
-        const leaked = assistant({ content: [{ type: 'text', text: body }] })
-        const chunks = await collect([
-            { type: 'text_start', contentIndex: 0, partial: leaked },
-            { type: 'text_delta', contentIndex: 0, delta: body, partial: leaked },
-            { type: 'text_end', contentIndex: 0, content: body, partial: leaked },
-            { type: 'done', reason: 'stop', message: leaked },
-        ])
-        // The trailing newline before the markup was already streamed, so it
-        // stays in the block; what must not survive is the markup itself.
-        const block = chunks.find((chunk) => chunk.type === 'block-end')
-        expect(block).toMatchObject({ index: 0, block: { type: 'text' } })
-        expect((block as { block: { text: string } }).block.text.trim()).toBe("I'll load that skill.")
-        expect(chunks.at(-1)).toEqual({ type: 'finish', reason: { kind: 'tool-calls' } })
+    it('recognises the exact token a real leak carries', () => {
+        // Copied from a live session log: `<` + ONE U+FF5C fullwidth bar + DSML +
+        // one bar. An earlier workaround in this repo matched two bars per side
+        // and therefore never fired on the real thing.
+        const real = '<\u{FF5C}DSML\u{FF5C} calls>\n<\u{FF5C}DSML\u{FF5C} invoke name="bash">\n<\u{FF5C}DSML\u{FF5C} parameter name="command" string="true">ls</\u{FF5C}DSML\u{FF5C} parameter>'
+        const reason = mapStopReason(assistant({ content: [{ type: 'text', text: real }] }), 1000, true)
+        expect(reason.kind).toBe('error')
+        expect(reason.kind === 'error' && reason.failure.code).toBe('SERVER')
     })
 
-    it('still streams ordinary text unchanged, including a trailing angle bracket', async () => {
-        const chunks = await collect([
-            { type: 'text_start', contentIndex: 0, partial: assistant() },
-            { type: 'text_delta', contentIndex: 0, delta: 'a <', partial: assistant() },
-            { type: 'text_delta', contentIndex: 0, delta: ' b', partial: assistant() },
-            { type: 'text_end', contentIndex: 0, content: 'a < b', partial: assistant() },
-            { type: 'done', reason: 'stop', message: assistant({ content: [{ type: 'text', text: 'a < b' }] }) },
-        ])
-        expect(chunks.filter((chunk) => chunk.type === 'text-delta')).toEqual([
-            { type: 'text-delta', index: 0, text: 'a ' },
-            { type: 'text-delta', index: 0, text: '< b' },
-        ])
-        expect(chunks).toContainEqual({ type: 'block-end', index: 0, block: { type: 'text', text: 'a < b' } })
-        expect(chunks.at(-1)).toEqual({ type: 'finish', reason: { kind: 'stop' } })
+    it('is accepted as text when the request offered no tools, where markup is not a defect', () => {
+        const reason = mapStopReason(assistant({ content: [{ type: 'text', text: template }] }), 1000, false)
+        expect(reason).toEqual({ kind: 'stop' })
+    })
+
+    it('does not fire when a model merely discusses the markup inside prose', () => {
+        const prose = `DeepSeek's template looks like ${template} at the start of a call, but this answer is prose.`
+        expect(mapStopReason(assistant({ content: [{ type: 'text', text: prose }] }), 1000, true)).toEqual({ kind: 'stop' })
+    })
+
+    it('does not fire when the reply carries a real tool call', () => {
+        const reason = mapStopReason(
+            assistant({ stopReason: 'toolUse', content: [{ type: 'toolCall', id: 'c', name: 'bash', arguments: {} }] }),
+            1000,
+            true,
+        )
+        expect(reason).toEqual({ kind: 'tool-calls' })
+    })
+
+    it('is recognised through the chunk stream, so the loop sees the failure', async () => {
+        const chunks = await collect(
+            [{ type: 'done', reason: 'stop', message: assistant({ content: [{ type: 'text', text: template }] }) }],
+            1000,
+            undefined,
+            true,
+        )
+        const finish = chunks.at(-1)
+        expect(finish?.type === 'finish' && finish.reason.kind).toBe('error')
     })
 })
