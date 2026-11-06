@@ -25,6 +25,13 @@ PKG="${2:-}"
 
 echo "monorepo: $MONOREPO_DIR"
 echo "profile:  $PROFILE"
+
+# Refuse to deploy a manifest that disagrees with the harness it will load into.
+# A runtime or stale dependency on a host package installs a second copy inside
+# the plugin, so the plugin speaks an older protocol than the host it boots in —
+# the failure that once shipped an adapter built against a pi-ai two versions
+# behind the harness.
+node "$MONOREPO_DIR/scripts/check-host-pins.mjs" --host "${DSH_HOST:-$(dirname "$(dirname "$(command -v dsh || echo /nonexistent/dsh)")")/lib/node_modules/@deepseek-ai/dsh}"
 if [ -n "$PKG" ]; then echo "package:  $PKG (filtered)"; fi
 
 # Verify profile exists

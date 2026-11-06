@@ -129,7 +129,22 @@ silently resolves to a newer host level (`rc.2`, ...) and drifts from the
 running install. Only `@deepseek-ai/cordis` and
 `@deepseek-ai/schemastery` keep ranged pins — they are stable across dsh rc
 levels — and those ranges are kept at the **newest published release**
-(currently `^4.0.4` / `^3.18.4`).
+(currently `^4.1.0` / `^3.19.0`).
+
+**This rule is enforced, not remembered.** `pnpm check:pins`
+(`scripts/check-host-pins.mjs`) resolves the harness actually installed, then
+fails on three things: a `@deepseek-ai/*` or `@earendil-works/*` package in
+`dependencies` (the harness provides it at runtime, so declaring it installs a
+second copy), a `@deepseek-ai/dsh-*` or `@earendil-works/*` reference that is not
+the host's exact resolved version, and a ranged pin whose host copy does not
+satisfy it. `pnpm test` runs it first, and `scripts/install-plugins.sh` refuses
+to deploy a profile when it fails; `pnpm fix:pins` rewrites drifted pins.
+
+The guard exists because the manual rule was followed and still drifted: the
+llm-provider package pinned `@earendil-works/pi-ai@0.85.1` while the host had
+moved to `1.5.0`, and the plugin served the retired `zen/go` endpoint without the
+`x-opencode-session` header, because the *pinned* build — not the host's — is the
+one its code imported.
 
 **Never bump a `@deepseek-ai/dsh-*` pin to npm's newest published version.**
 The newest published DSH line (`0.2.x` alpha/rc) is ahead of the installed
@@ -183,10 +198,13 @@ host:
   React 18 (`dsh-client-ui-renderer` devDepends on `react ^18.2.0`), and the
   browser bundle resolves `react` from the host page. React 19 typings would
   typecheck against a runtime the host does not have.
-- **`@earendil-works/pi-ai` is pinned to the host's copy** (`0.85.1`, the
-  version `dsh-llm-pi-ai` depends on). A different minor changes the
-  `Model`/`Provider`/`AssistantMessageEvent` contracts the adapter is
-  written against.
+- **`@earendil-works/pi-ai` is not a dependency of any package here.** It is a
+  host-internal library: `dsh-llm-pi-ai` owns the wire, and a plugin that
+  imports pi-ai is a plugin that has started building its own provider route.
+  One did, pinned to `0.85.1` while the host ran `1.5.0`; the resulting route had
+  no session header, served the retired `zen/go` endpoint, and leaked native tool
+  syntax as text. If a plugin needs a provider capability, it configures the
+  host's profile — it does not take a pi-ai dependency.
 
 ### Configuration is a form, not a namespace (0.2+)
 
