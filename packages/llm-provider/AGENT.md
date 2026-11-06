@@ -138,6 +138,28 @@ deliberate and documented in code:
 - a model the route does not serve fails the request with `UNKNOWN_MODEL`, and a
   route whose catalog the installed pi-ai does not ship serves nothing.
 
+## Design rule — never let a third-party dataset be the only source of wire semantics (NON-NEGOTIABLE)
+
+Compat switches (`thinkingFormat: deepseek`, `requiresReasoningContentOnAssistantMessages`,
+`maxTokensField`) were inherited through models.dev's `family` field alone. models.dev
+then **dropped `deepseek-v4-flash`** while the gateway kept serving it and serving its
+successor, so no installed model mapped to the `deepseek-flash` family, `compat` came
+back `undefined`, and the request silently lost DeepSeek's wire semantics — the model
+answered in its native template format as text (`<|DSLM|calls>…`) instead of a tool call.
+
+Resolution order for the nearest surveyed relative is now:
+
+1. the dataset's `family` (semantic, when present);
+2. **the longest shared id prefix** in the installed catalog
+   (`nearestInstalled`, minimum 6 characters) — the id is durable, the dataset is not.
+
+For the *protocol*, the gateway's published endpoint table sits **above** the relative:
+the table is documented fact for specific ids, the prefix match is an inference.
+
+A degraded merge is invisible without a probe: the model still answers, just in the
+wrong dialect. `tests/catalog-feed.spec.ts` pins the dataset-has-moved-on case, and a
+three-turn live probe (tool call → tool result → next tool call) is the manual check.
+
 ## Design rule — profile-declared models exist because catalogs go stale (NON-NEGOTIABLE)
 
 The route advertises the installed catalog **plus** `extraModels`. This is not a

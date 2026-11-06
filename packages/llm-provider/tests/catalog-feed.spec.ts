@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import type { Api, Model } from '@earendil-works/pi-ai'
-import { createCatalogFeed, mergeCatalog, thinkingLevelMapFor, type LiveCatalog } from '../src/catalog-feed.ts'
+import { createCatalogFeed, mergeCatalog, nearestInstalled, thinkingLevelMapFor, type LiveCatalog } from '../src/catalog-feed.ts'
 import { defaultProfile, resolveProfiles, type GatewayProfile } from '../src/config.ts'
 import { GATEWAYS, OPENCODE_GO, protocolFor, type GatewayDefinition } from '../src/gateways.ts'
 import type { ModelMetadata } from '../src/models-dev.ts'
@@ -135,7 +135,7 @@ describe('mergeCatalog', () => {
         expect(models[0]).toMatchObject({ contextWindow: 1_000_000, maxTokens: 384_000 })
     })
 
-    it('takes the protocol from the installed model, then the gateway table, then the default', () => {
+    it('resolves the protocol most-authoritative-first: catalog, table, relative, default', () => {
         const installed = [model('minimax-m3', { api: 'anthropic-messages' })]
         const models = mergeCatalog({
             gateway: OPENCODE_GO,
@@ -144,10 +144,13 @@ describe('mergeCatalog', () => {
             live: live(['minimax-m3', 'minimax-m2.5', 'gpt-6-luna', 'brand-new'], metadata({ 'brand-new': {} })),
         })
         const byId = new Map(models.map((entry) => [entry.id, entry]))
+        // Exact catalog entry.
         expect(byId.get('minimax-m3')?.api).toBe('anthropic-messages')
-        // Not in the catalog and not in the table: the gateway default.
-        expect(byId.get('minimax-m2.5')?.api).toBe('openai-completions')
+        // The gateway's published endpoint table, for an id the catalog lacks.
         expect(byId.get('gpt-6-luna')?.api).toBe('openai-responses')
+        // Undocumented, but a surveyed relative shares the id family.
+        expect(byId.get('minimax-m2.5')?.api).toBe('anthropic-messages')
+        // Nothing in common with anything surveyed: the route default.
         expect(byId.get('brand-new')?.api).toBe('openai-completions')
     })
 
@@ -297,5 +300,43 @@ describe('createCatalogFeed', () => {
         const snapshots = await catalog.refresh()
         expect(snapshots.map((entry) => entry.route)).toEqual([OPENCODE_GO.id, 'second'])
         expect(fetchImpl.mock.calls.filter(([input]) => String(input).includes('models.dev'))).toHaveLength(1)
+    })
+})
+
+describe('inheriting a wire dialect when the dataset has moved on', () => {
+    const compat = { thinkingFormat: 'deepseek' as const, supportsStore: false, maxTokensField: 'max_tokens' as const, requiresReasoningContentOnAssistantMessages: true }
+
+    it('finds the nearest installed model by id when the dataset names no family', () => {
+        // models.dev dropped `deepseek-v4-flash` while the gateway kept serving it
+        // and its successor; without this fallback the successor had no compat at
+        // all and the second turn failed with a 400.
+        const installed = [model('deepseek-v4-flash', { compat }), model('kimi-k3')]
+        expect(nearestInstalled('deepseek-v4.1-flash', installed)?.id).toBe('deepseek-v4-flash')
+    })
+
+    it('refuses a distant match, so an unrelated model inherits nothing', () => {
+        expect(nearestInstalled('zzz-brand-new', [model('deepseek-v4-flash', { compat })])).toBeUndefined()
+        expect(nearestInstalled('kimi-k2.6', [model('kimi-k2.7')])?.id).toBe('kimi-k2.7')
+    })
+
+    it('carries the compat onto a live-only model when metadata for the relative is gone', () => {
+        const models = mergeCatalog({
+            gateway: OPENCODE_GO,
+            profile: profile(),
+            installed: [model('deepseek-v4-flash', { compat })],
+            // Live list has the successor; models.dev knows nothing about either.
+            live: live(['deepseek-v4-flash', 'deepseek-v4.1-flash'], metadata({})),
+        })
+        expect(models.find((entry) => entry.id === 'deepseek-v4.1-flash')?.compat).toEqual(compat)
+    })
+
+    it('still prefers the dataset family when one is available', () => {
+        const models = mergeCatalog({
+            gateway: OPENCODE_GO,
+            profile: profile(),
+            installed: [model('muse-spark-1.2', { compat: { thinkingFormat: 'openai' } })],
+            live: live(['muse-spark-1.3'], metadata({ 'muse-spark-1.2': { family: 'muse' }, 'muse-spark-1.3': { family: 'muse' } })),
+        })
+        expect(models.find((entry) => entry.id === 'muse-spark-1.3')?.compat).toEqual({ thinkingFormat: 'openai' })
     })
 })
