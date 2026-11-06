@@ -8,11 +8,13 @@ plugin under the `@gitawego` npm scope, targeting DSH **0.2.2-rc.1** (the
 ## Packages
 
 - [packages/llm-provider](packages/llm-provider/) — `@gitawego/dsh-llm-provider`:
-  first-party LLM provider routes at the `ctx.llm` adapter seam. Ships the
-  **OpenCode Go** route with the `x-opencode-session` routing header the gateway
-  requires (missing it is the `400 MissingSessionID` failure), resolved per
-  request from the harness session id; it also recovers DeepSeek tool calls that
-  the lane leaks as DSML markup instead of `tool_calls`.
+  the **OpenCode Go** dashboard. It serves no route: `dsh-llm-pi-ai` owns the
+  route, the endpoint, the model catalog, and the `x-opencode-session` header
+  (pi-ai 1.5.0 stamps it from the session id). The plugin reports the two facts
+  no host seam owns — the provider's live model list versus the installed
+  catalog (plus the `models:` block that reconciles them) and the 5-hour /
+  weekly / monthly allowance — through a command, a tool, a guarded loopback
+  route, and a settings section.
 - [packages/web-search](packages/web-search/) — `@gitawego/dsh-web-search`:
   **deprecated** (kept working, no new features). Enhanced web search provider:
   works with **no API key** (free Parallel/Exa MCP backends) and optionally any

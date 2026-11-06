@@ -1,193 +1,89 @@
 /**
- * Settings namespace for the provider routes this plugin serves.
+ * Settings namespace for the provider *dashboard*.
  *
- * The namespace carries one section per gateway (see `gateways.ts`), each
- * section a *tuning* profile: credential reference, optional endpoint override,
- * optional model allowlist, image budget, and the routing-header switch. Model
- * metadata itself is never configuration here — it comes from the installed
- * pi-ai catalog, so a catalog update is the only thing that changes a model's
- * context window or compat switches.
+ * This plugin serves no route. Requests, endpoints, protocol, the
+ * `x-opencode-session` header, streaming, tool-call parsing, and retries all
+ * belong to the host's `dsh-llm-pi-ai` adapter, which resolves them from the
+ * installed pi-ai catalog. What is left here is the one thing no host seam
+ * owns: **reporting** a provider's live model list and subscription quota.
  *
- * Resolution is failure-tolerant by construction: every field has a schema
- * default derived from the gateway definition, and `resolveProfiles()` re-clamps
- * what a hand-edited `settings.yaml` can contain, so a malformed profile
- * degrades to the shipped default instead of taking the route offline.
+ * So the profile answers three questions and nothing else:
+ *
+ * - which host route to report on ({@link DEFAULT_ROUTE});
+ * - which endpoint speaks the gateway's `/models` and `/usage` JSON
+ *   ({@link DEFAULT_MONITOR_ENDPOINT} — the same `inference/go` family pi-ai
+ *   sends model calls to, verified to answer both);
+ * - which credential reference authenticates those two read-only calls.
+ *
+ * Resolution never throws: a hand-edited `settings.yaml` degrades to the
+ * shipped default rather than blanking the dashboard.
  *
  * @module @gitawego/dsh-llm-provider/config
  */
 import z from '@deepseek-ai/schemastery'
 import type Schema from '@deepseek-ai/schemastery'
 import type { Volatile } from '@deepseek-ai/cordis'
-import { GATEWAYS, type GatewayDefinition } from './gateways.ts'
 
 /**
  * Settings namespace key. A plain literal: the seam's `SettingsNamespace`
- * brand is applied by `ctx.settings.register`'s generic, and the rc.7
- * `settingsNamespace()` helper does not exist in the 0.1.5 build.
+ * brand is applied by `ctx.settings.register`'s generic.
  */
 export const LLM_PROVIDER_SETTINGS_NAMESPACE = 'llm-provider'
 
-/** Reasoning levels a profile may pin as the route default. `''` leaves it to pi-ai. */
-export const REASONING_LEVELS = ['', 'off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'] as const
-export type ReasoningLevel = (typeof REASONING_LEVELS)[number]
-
-/** Aggregate base64 image-payload bound for one request; oldest images offload first. */
-export const DEFAULT_MAX_REQUEST_IMAGE_BYTES = 20 * 1024 * 1024
-/** Total-pixel budget for each deterministic request image. */
-export const DEFAULT_REQUEST_IMAGE_PIXEL_BUDGET = 2048 * 2048
-/** Encoded-byte target for each request image before base64 expansion. */
-export const DEFAULT_REQUEST_IMAGE_MAX_BYTES = 1024 * 1024
-/** Capacity fallback for a declared model the profile does not size. */
-export const DEFAULT_CONTEXT_WINDOW = 262_144
-/** Output-cap fallback for a declared model the profile does not size. */
-export const DEFAULT_MAX_TOKENS = 32_768
-/** Wire protocol assumed for a declared model when the profile names none. */
-export const DEFAULT_API = 'openai-completions' as const
-
-/** One model a profile adds to (or corrects in) the route's catalog. */
-export interface ModelDeclaration {
-    /** Model id a request names. */
-    id: string
-    /** Display name; defaults to the id. */
-    name?: string
-    /** Wire protocol; only needed for a model the catalog does not describe. */
-    api?: string
-    /** Endpoint override for this model only. */
-    baseURL?: string
-    contextWindow?: number
-    maxTokens?: number
-    reasoning?: boolean
-    input?: ('text' | 'image')[]
-}
-
-/** One gateway's resolved profile; every field is materialized. */
-export interface GatewayProfile {
-    /** Credential-reference name resolved through the harness credential seam. */
-    apiKeyEnv: string
-    /** Endpoint override; the empty string means "use the catalog's per-model endpoint". */
-    baseURL: string
-    /** Model allowlist; empty means "every model the installed catalog describes". */
-    models: string[]
-    /**
-     * Models this profile declares beyond (or instead of) the installed catalog.
-     *
-     * A gateway is not a snapshot: `opencode.ai/zen/go` serves model ids that
-     * pi-ai 0.85.1's catalog has never heard of (`deepseek-v4.1-flash` among
-     * them), and a route that could only serve catalog ids would reject exactly
-     * the models a user is actually running. An id already in the catalog is
-     * corrected field by field; a new id is described by the defaults below.
-     */
-    extraModels: ModelDeclaration[]
-    /** Whether to stamp the gateway's routing header from the session id. */
-    sessionRouting: boolean
-    /** Route-default reasoning level, or `''` for the model/catalog default. */
-    reasoning: ReasoningLevel
-    maxRequestImageBytes: number
-    requestImagePixelBudget: number
-    requestImageMaxBytes: number
-}
-
-/** The namespace's resolved section: one profile per served route. */
-export type ProviderSettings = Record<string, GatewayProfile>
-
-/** The shipped profile for one gateway — also the schema default. */
-export function defaultProfile(gateway: GatewayDefinition): GatewayProfile {
-    return {
-        apiKeyEnv: gateway.apiKeyEnv,
-        baseURL: gateway.baseURL,
-        models: [],
-        extraModels: [],
-        sessionRouting: gateway.sessionRouting,
-        reasoning: '',
-        maxRequestImageBytes: DEFAULT_MAX_REQUEST_IMAGE_BYTES,
-        requestImagePixelBudget: DEFAULT_REQUEST_IMAGE_PIXEL_BUDGET,
-        requestImageMaxBytes: DEFAULT_REQUEST_IMAGE_MAX_BYTES,
-    }
-}
-
-/** The schema for one gateway's section. */
-function profileSchema(gateway: GatewayDefinition): Schema<GatewayProfile> {
-    const defaults = defaultProfile(gateway)
-    // Every field is volatile: DSH 0.2 hands `apply` stable references whose
-    // `.get()` answers the current layer, so a form write applies to the next
-    // request without re-installing the plugin.
-    return z.object({
-        apiKeyEnv: z.string().default(defaults.apiKeyEnv).volatile(),
-        baseURL: z.string().default(defaults.baseURL).volatile(),
-        models: z.array(z.string()).default(defaults.models).volatile(),
-        extraModels: z
-            .array(
-                z.object({
-                    id: z.string(),
-                    name: z.string(),
-                    api: z.string(),
-                    baseURL: z.string(),
-                    contextWindow: z.number(),
-                    maxTokens: z.number(),
-                    reasoning: z.boolean(),
-                    input: z.array(z.union(['text', 'image'] as const)),
-                }),
-            )
-            .default(defaults.extraModels)
-            .volatile(),
-        sessionRouting: z.boolean().default(defaults.sessionRouting).volatile(),
-        reasoning: z.union([...REASONING_LEVELS] as const).default(defaults.reasoning).volatile(),
-        maxRequestImageBytes: z.number().default(defaults.maxRequestImageBytes).volatile(),
-        requestImagePixelBudget: z.number().default(defaults.requestImagePixelBudget).volatile(),
-        requestImageMaxBytes: z.number().default(defaults.requestImageMaxBytes).volatile(),
-    }) as unknown as Schema<GatewayProfile>
-}
+/**
+ * Host route reported on by default.
+ *
+ * The route key is the host adapter's, not ours: `dsh-llm-pi-ai` declares a
+ * directory entry for every pi-ai provider it ships, and `opencode-go` is one
+ * of them, so the route exists once the profile sets a credential reference.
+ */
+export const DEFAULT_ROUTE = 'opencode-go'
 
 /**
- * The namespace schema: one known route section per served gateway. Built from
- * {@link GATEWAYS} so adding a gateway cannot forget its settings section.
+ * Default endpoint for the gateway's reporting API.
+ *
+ * `https://opencode.ai/inference/go/v1` answers `GET /models` (OpenAI-shaped
+ * `data[].id`) and `GET /usage` (the rolling/weekly/monthly windows). It is the
+ * `inference/go` family pi-ai 1.5 sends model calls to; the older `zen/go/v1`
+ * still answers both, so a deployment pinned to it can override this field.
  */
-export const Config: Schema = z.object(
-    Object.fromEntries(GATEWAYS.map((gateway) => [gateway.id, profileSchema(gateway)])),
-)
+export const DEFAULT_MONITOR_ENDPOINT = 'https://opencode.ai/inference/go/v1'
 
-/** One route's configuration references, as the loader hands them to `apply`. */
-export interface GatewayConfigRefs {
-    apiKeyEnv: Volatile<string>
+/** Credential reference the reporting calls resolve when the profile names none. */
+export const DEFAULT_API_KEY_ENV = 'OPENCODE_GO_CUSTOM_API_KEY'
+
+/** Minutes a fetched status stays authoritative before a read refreshes it. */
+export const DEFAULT_REFRESH_MINUTES = 15
+
+/** One resolved monitoring profile; every field is materialized. */
+export interface MonitorProfile {
+    /** Host route to report on. */
+    route: string
+    /** Endpoint root that serves `/models` and `/usage`. */
+    baseURL: string
+    /** Credential-reference name resolved through the harness credential seam. */
+    apiKeyEnv: string
+    /** Cache lifetime of a fetched status, in minutes. */
+    refreshMinutes: number
+}
+
+/** The schema the settings form is generated from. */
+export const Config: Schema = z.object({
+    // Every field is volatile: DSH 0.2 hands `apply` stable references whose
+    // `.get()` answers the current layer, so a form write applies to the next
+    // read without re-installing the plugin.
+    route: z.string().default(DEFAULT_ROUTE).volatile(),
+    baseURL: z.string().default(DEFAULT_MONITOR_ENDPOINT).volatile(),
+    apiKeyEnv: z.string().default(DEFAULT_API_KEY_ENV).volatile(),
+    refreshMinutes: z.number().default(DEFAULT_REFRESH_MINUTES).volatile(),
+})
+
+/** The configuration references `apply` receives from the loader. */
+export interface MonitorConfigRefs {
+    route: Volatile<string>
     baseURL: Volatile<string>
-    models: Volatile<readonly string[]>
-    extraModels: Volatile<readonly ModelDeclaration[]>
-    sessionRouting: Volatile<boolean>
-    reasoning: Volatile<ReasoningLevel>
-    maxRequestImageBytes: Volatile<number>
-    requestImagePixelBudget: Volatile<number>
-    requestImageMaxBytes: Volatile<number>
-}
-
-/** The configuration `apply` receives from the loader (defaults applied). */
-export type ProviderConfigRefs = Record<string, GatewayConfigRefs>
-
-/** Read one stable snapshot of every route profile. */
-export function readProviderConfig(config: ProviderConfigRefs): ProviderSettings {
-    const raw: Record<string, unknown> = {}
-    for (const gateway of GATEWAYS) {
-        const section = config[gateway.id]
-        if (section === undefined) continue
-        raw[gateway.id] = {
-            apiKeyEnv: section.apiKeyEnv.get(),
-            baseURL: section.baseURL.get(),
-            models: [...section.models.get()],
-            extraModels: [...section.extraModels.get()],
-            sessionRouting: section.sessionRouting.get(),
-            reasoning: section.reasoning.get(),
-            maxRequestImageBytes: section.maxRequestImageBytes.get(),
-            requestImagePixelBudget: section.requestImagePixelBudget.get(),
-            requestImageMaxBytes: section.requestImageMaxBytes.get(),
-        }
-    }
-    return resolveProfiles(raw)
-}
-
-/** Clamp one positive byte/pixel budget, falling back when the value is unusable. */
-function positiveInt(value: unknown, fallback: number): number {
-    const n = typeof value === 'number' ? value : Number(value)
-    if (!Number.isFinite(n) || n <= 0) return fallback
-    return Math.floor(n)
+    apiKeyEnv: Volatile<string>
+    refreshMinutes: Volatile<number>
 }
 
 /** Trim to a defined non-empty string, or undefined. */
@@ -195,78 +91,39 @@ function trimmed(value: unknown): string | undefined {
     return typeof value === 'string' && value.trim().length > 0 ? value.trim() : undefined
 }
 
-/**
- * Normalize one declared model, dropping the fields it does not set so the merge
- * over the catalog stays field-by-field (an unset `contextWindow` must not
- * overwrite a catalog value with a default).
- * @param value - the stored entry, of unknown shape.
- * @returns the normalized declaration, or undefined when it names no id.
- */
-function resolveDeclaration(value: unknown): ModelDeclaration | undefined {
-    if (typeof value !== 'object' || value === null) return undefined
-    const raw = value as Record<string, unknown>
-    const id = trimmed(raw.id)
-    if (id === undefined) return undefined
-    const input = Array.isArray(raw.input)
-        ? raw.input.filter((modality): modality is 'text' | 'image' => modality === 'text' || modality === 'image')
-        : undefined
-    return {
-        id,
-        ...(trimmed(raw.name) !== undefined ? { name: trimmed(raw.name)! } : {}),
-        ...(trimmed(raw.api) !== undefined ? { api: trimmed(raw.api)! } : {}),
-        ...(trimmed(raw.baseURL) !== undefined ? { baseURL: trimmed(raw.baseURL)! } : {}),
-        ...(positiveInt(raw.contextWindow, 0) > 0 ? { contextWindow: positiveInt(raw.contextWindow, 0) } : {}),
-        ...(positiveInt(raw.maxTokens, 0) > 0 ? { maxTokens: positiveInt(raw.maxTokens, 0) } : {}),
-        ...(typeof raw.reasoning === 'boolean' ? { reasoning: raw.reasoning } : {}),
-        ...(input !== undefined && input.length > 0 ? { input } : {}),
-    }
-}
-
-/** Whether a normalized entry survived declaration normalization. */
-function isDeclaration(value: ModelDeclaration | undefined): value is ModelDeclaration {
-    return value !== undefined
+/** Clamp a positive, finite number, falling back when the value is unusable. */
+function positive(value: unknown, fallback: number): number {
+    const n = typeof value === 'number' ? value : Number(value)
+    if (!Number.isFinite(n) || n <= 0) return fallback
+    return n
 }
 
 /**
- * Merge one stored section over its gateway defaults, validating every field.
- * Never throws: a malformed value falls back to the shipped default, because a
- * hand-edited `settings.yaml` must not be able to disable a whole route.
- * @param gateway - the gateway the section belongs to.
+ * Normalize one stored profile over the shipped defaults.
  * @param input - the stored (or merged) section, of unknown shape.
  * @returns a fully materialized profile.
  */
-export function resolveProfile(gateway: GatewayDefinition, input: unknown): GatewayProfile {
-    const defaults = defaultProfile(gateway)
-    const raw = (input ?? {}) as Partial<Record<keyof GatewayProfile, unknown>>
-    const reasoning = REASONING_LEVELS.includes(raw.reasoning as ReasoningLevel)
-        ? (raw.reasoning as ReasoningLevel)
-        : defaults.reasoning
+export function resolveProfile(input: unknown): MonitorProfile {
+    const raw = (input ?? {}) as Partial<Record<keyof MonitorProfile, unknown>>
     return {
-        apiKeyEnv: trimmed(raw.apiKeyEnv) ?? defaults.apiKeyEnv,
-        // An explicitly cleared endpoint is meaningful: models carry their own
-        // endpoint in the catalog, so '' defers to them instead of to a
-        // hardcoded route default.
-        baseURL: typeof raw.baseURL === 'string' ? raw.baseURL.trim() : defaults.baseURL,
-        models: Array.isArray(raw.models)
-            ? [...new Set(raw.models.filter((id): id is string => typeof id === 'string' && id.trim().length > 0).map((id) => id.trim()))]
-            : defaults.models,
-        extraModels: Array.isArray(raw.extraModels) ? raw.extraModels.map(resolveDeclaration).filter(isDeclaration) : defaults.extraModels,
-        sessionRouting: typeof raw.sessionRouting === 'boolean' ? raw.sessionRouting : defaults.sessionRouting,
-        reasoning,
-        maxRequestImageBytes: positiveInt(raw.maxRequestImageBytes, defaults.maxRequestImageBytes),
-        requestImagePixelBudget: positiveInt(raw.requestImagePixelBudget, defaults.requestImagePixelBudget),
-        requestImageMaxBytes: positiveInt(raw.requestImageMaxBytes, defaults.requestImageMaxBytes),
+        route: trimmed(raw.route) ?? DEFAULT_ROUTE,
+        baseURL: trimmed(raw.baseURL) ?? DEFAULT_MONITOR_ENDPOINT,
+        apiKeyEnv: typeof raw.apiKeyEnv === 'string' ? raw.apiKeyEnv.trim() : DEFAULT_API_KEY_ENV,
+        refreshMinutes: positive(raw.refreshMinutes, DEFAULT_REFRESH_MINUTES),
     }
 }
 
 /**
- * Resolve the whole namespace section: one profile per served route.
- * @param section - the resolved namespace value (schema defaults already applied).
- * @returns profiles keyed by route, in {@link GATEWAYS} order.
+ * Read one stable snapshot of the profile.
+ * @param config - the loader-supplied references.
+ * @returns the resolved profile.
  */
-export function resolveProfiles(section: unknown): ProviderSettings {
-    const raw = (section ?? {}) as Record<string, unknown>
-    const profiles: ProviderSettings = {}
-    for (const gateway of GATEWAYS) profiles[gateway.id] = resolveProfile(gateway, raw[gateway.id])
-    return profiles
+export function readMonitorProfile(config: MonitorConfigRefs | undefined): MonitorProfile {
+    if (config === undefined) return resolveProfile(undefined)
+    return resolveProfile({
+        route: config.route.get(),
+        baseURL: config.baseURL.get(),
+        apiKeyEnv: config.apiKeyEnv.get(),
+        refreshMinutes: config.refreshMinutes.get(),
+    })
 }

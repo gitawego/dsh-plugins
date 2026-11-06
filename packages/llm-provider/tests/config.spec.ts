@@ -1,102 +1,86 @@
+/**
+ * The monitoring profile's resolution rules.
+ *
+ * The profile carries four fields and no secrets: a route to report on, an
+ * endpoint to ask, a credential *reference* to authenticate with, and a cache
+ * lifetime. Everything a provider route needs to *serve* — protocol, catalog,
+ * headers — is the host adapter's business, and a field that crept back in here
+ * would be a second source of truth for it.
+ */
 import { describe, expect, it } from 'vitest'
 import {
-    Config,
-    DEFAULT_MAX_REQUEST_IMAGE_BYTES,
-    DEFAULT_REQUEST_IMAGE_MAX_BYTES,
-    DEFAULT_REQUEST_IMAGE_PIXEL_BUDGET,
-    defaultProfile,
-    readProviderConfig,
+    DEFAULT_API_KEY_ENV,
+    DEFAULT_MONITOR_ENDPOINT,
+    DEFAULT_REFRESH_MINUTES,
+    DEFAULT_ROUTE,
+    LLM_PROVIDER_SETTINGS_NAMESPACE,
+    readMonitorProfile,
     resolveProfile,
-    resolveProfiles,
+    type MonitorConfigRefs,
 } from '../src/config.ts'
-import { GATEWAYS, OPENCODE_GO, gatewayById } from '../src/gateways.ts'
 
-describe('gateway definitions', () => {
-    it('ships OpenCode Go, the gateway whose missing header this plugin fixes', () => {
-        expect(GATEWAYS[0]).toBe(OPENCODE_GO)
-        expect(OPENCODE_GO.id).toBe('opencode-go-session')
-        expect(OPENCODE_GO.catalogProvider).toBe('opencode-go')
-        expect(OPENCODE_GO.sessionRouting).toBe(true)
-        expect(OPENCODE_GO.apiKeyEnv).toBe('OPENCODE_API_KEY')
-        expect(gatewayById('opencode-go-session')).toBe(OPENCODE_GO)
-        // The pi-ai catalog id is NOT a route this build serves.
-        expect(gatewayById('opencode-go')).toBeUndefined()
+/** Volatile-reference stand-ins, as the loader hands them to `apply`. */
+function refs(value: Record<string, unknown>): MonitorConfigRefs {
+    return Object.fromEntries(
+        Object.entries(value).map(([key, stored]) => [key, { get: () => stored }]),
+    ) as unknown as MonitorConfigRefs
+}
+
+describe('the monitoring profile', () => {
+    it('defaults to the host route and the reporting endpoint', () => {
+        const profile = resolveProfile(undefined)
+        expect(profile.route).toBe(DEFAULT_ROUTE)
+        expect(profile.baseURL).toBe(DEFAULT_MONITOR_ENDPOINT)
+        expect(profile.apiKeyEnv).toBe(DEFAULT_API_KEY_ENV)
+        expect(profile.refreshMinutes).toBe(DEFAULT_REFRESH_MINUTES)
     })
 
-    it('answers undefined for a route this build does not serve', () => {
-        expect(gatewayById('nope')).toBeUndefined()
-    })
-})
-
-describe('defaultProfile', () => {
-    it('derives every default from the gateway definition', () => {
-        expect(defaultProfile(OPENCODE_GO)).toEqual({
-            apiKeyEnv: 'OPENCODE_API_KEY',
-            baseURL: 'https://opencode.ai/zen/go/v1',
-            models: [],
-            extraModels: [],
-            sessionRouting: true,
-            reasoning: '',
-            maxRequestImageBytes: DEFAULT_MAX_REQUEST_IMAGE_BYTES,
-            requestImagePixelBudget: DEFAULT_REQUEST_IMAGE_PIXEL_BUDGET,
-            requestImageMaxBytes: DEFAULT_REQUEST_IMAGE_MAX_BYTES,
-        })
-    })
-})
-
-describe('resolveProfile', () => {
-    it('falls back to the shipped defaults for a missing section', () => {
-        expect(resolveProfile(OPENCODE_GO, undefined)).toEqual(defaultProfile(OPENCODE_GO))
+    it('defaults the route to the installed pi-ai provider key, not a private route', () => {
+        // The whole point of the cut: the plugin reports on the host adapter's
+        // route, so the default must be a key dsh-llm-pi-ai already declares.
+        expect(DEFAULT_ROUTE).toBe('opencode-go')
     })
 
-    it('degrades a malformed hand-edited section to defaults instead of disabling the route', () => {
-        const profile = resolveProfile(OPENCODE_GO, {
-            apiKeyEnv: '   ',
-            models: ['a', 'a', ' b ', 7, ''],
-            reasoning: 'ultra',
-            sessionRouting: 'yes',
-            maxRequestImageBytes: -1,
-            requestImagePixelBudget: 0,
-            requestImageMaxBytes: Number.NaN,
-        })
+    it('asks the inference/go reporting endpoint, which answers both reads', () => {
+        expect(DEFAULT_MONITOR_ENDPOINT).toBe('https://opencode.ai/inference/go/v1')
+    })
+
+    it('trims stored values', () => {
+        const profile = resolveProfile({ route: '  opencode-go  ', baseURL: ' https://example.test/v1 ', apiKeyEnv: ' OPENCODE_API_KEY ' })
+        expect(profile.route).toBe('opencode-go')
+        expect(profile.baseURL).toBe('https://example.test/v1')
         expect(profile.apiKeyEnv).toBe('OPENCODE_API_KEY')
-        expect(profile.models).toEqual(['a', 'b'])
-        expect(profile.reasoning).toBe('')
-        expect(profile.sessionRouting).toBe(true)
-        expect(profile.maxRequestImageBytes).toBe(DEFAULT_MAX_REQUEST_IMAGE_BYTES)
-        expect(profile.requestImagePixelBudget).toBe(DEFAULT_REQUEST_IMAGE_PIXEL_BUDGET)
-        expect(profile.requestImageMaxBytes).toBe(DEFAULT_REQUEST_IMAGE_MAX_BYTES)
     })
 
-    it('honors an explicit endpoint override and an explicitly cleared one', () => {
-        expect(resolveProfile(OPENCODE_GO, { baseURL: 'https://proxy.example/v1' }).baseURL).toBe('https://proxy.example/v1')
-        expect(resolveProfile(OPENCODE_GO, { baseURL: '' }).baseURL).toBe('')
+    it('keeps an explicitly cleared credential reference', () => {
+        // Clearing the reference is meaningful: it says "these two read-only
+        // calls go unauthenticated", and the card reports that instead of
+        // silently falling back to a reference the user removed.
+        expect(resolveProfile({ apiKeyEnv: '' }).apiKeyEnv).toBe('')
     })
 
-    it('honors a valid reasoning level and a disabled routing header', () => {
-        const profile = resolveProfile(OPENCODE_GO, { reasoning: 'high', sessionRouting: false })
-        expect(profile.reasoning).toBe('high')
-        expect(profile.sessionRouting).toBe(false)
-    })
-})
-
-describe('resolveProfiles', () => {
-    it('materializes one profile per served route', () => {
-        const profiles = resolveProfiles({ [OPENCODE_GO.id]: { apiKeyEnv: 'MY_KEY' } })
-        expect(Object.keys(profiles)).toEqual(GATEWAYS.map((gateway) => gateway.id))
-        expect(profiles[OPENCODE_GO.id]?.apiKeyEnv).toBe('MY_KEY')
-    })
-})
-
-describe('Config schema', () => {
-    it('accepts an empty section and resolves every served route through its defaults', () => {
-        // 0.2 parses config into volatile refs; the plugin reads them per call.
-        const parsed = Config({}) as never
-        expect(readProviderConfig(parsed)[OPENCODE_GO.id]).toEqual(defaultProfile(OPENCODE_GO))
+    it('falls back field by field when a stored value is unusable', () => {
+        const profile = resolveProfile({ route: '   ', baseURL: 42, apiKeyEnv: null, refreshMinutes: -1 })
+        expect(profile.route).toBe(DEFAULT_ROUTE)
+        expect(profile.baseURL).toBe(DEFAULT_MONITOR_ENDPOINT)
+        expect(profile.apiKeyEnv).toBe(DEFAULT_API_KEY_ENV)
+        expect(profile.refreshMinutes).toBe(DEFAULT_REFRESH_MINUTES)
     })
 
-    it('keeps a partial section resolvable through its refs', () => {
-        const parsed = Config({ [OPENCODE_GO.id]: { reasoning: 'low' } } as never)
-        expect(readProviderConfig(parsed)[OPENCODE_GO.id]?.reasoning).toBe('low')
+    it('accepts a fractional refresh interval', () => {
+        expect(resolveProfile({ refreshMinutes: 0.5 }).refreshMinutes).toBe(0.5)
+    })
+
+    it('reads one stable snapshot from the loader references', () => {
+        const profile = readMonitorProfile(refs({ route: 'my-route', baseURL: 'https://gw.test/v1', apiKeyEnv: 'MY_KEY', refreshMinutes: 5 }))
+        expect(profile).toEqual({ route: 'my-route', baseURL: 'https://gw.test/v1', apiKeyEnv: 'MY_KEY', refreshMinutes: 5 })
+    })
+
+    it('resolves defaults when the loader hands no references at all', () => {
+        expect(readMonitorProfile(undefined).route).toBe(DEFAULT_ROUTE)
+    })
+
+    it('owns exactly one settings namespace', () => {
+        expect(LLM_PROVIDER_SETTINGS_NAMESPACE).toBe('llm-provider')
     })
 })

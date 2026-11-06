@@ -54,9 +54,10 @@ that apply across packages.
 A collection of DSH (DeepSeek Harness) plugin packages maintained
 together for version compatibility. Currently:
 
-- `packages/llm-provider` — `@gitawego/dsh-llm-provider` — LLM provider
-  routes (OpenCode Go first), including the gateway's required
-  `x-opencode-session` routing header.
+- `packages/llm-provider` — `@gitawego/dsh-llm-provider` — OpenCode Go
+  **dashboard**: live model list versus the harness catalog, and the
+  subscription quota. No route, no transport, no header — `dsh-llm-pi-ai` owns
+  all of that.
 - `packages/web-search` — `@gitawego/dsh-web-search` — chained-fallback
   `WebSearchProvider` (Anthropic + free MCP backends).
 - `packages/lsp` — LSP bridge.
@@ -193,7 +194,7 @@ host:
 schema; user-editable fields are marked `.volatile()`, and `apply(ctx, config)`
 receives stable references read with `.get()`. Do not cache one snapshot at
 `apply` time — take a fresh snapshot per operation (`readConfig` in lsp /
-web-search, `readProviderConfig` in llm-provider), or a form write will not
+web-search, `readMonitorProfile` in llm-provider), or a form write will not
 reach the next request without reinstalling the plugin.
 
 The form namespace is the **loader entry id** from `cordis.patch.yml`
@@ -222,12 +223,17 @@ writes the profile patch) or paste it into
 `~/.dsh/profiles/<profile>/cordis.patch.yml`:
 
 ```yaml
+- id: llm-pi-ai
+  name: "@deepseek-ai/dsh-llm-pi-ai"
+  config:
+    providers:
+      opencode-go:
+        apiKeyEnv: OPENCODE_GO_CUSTOM_API_KEY
 - id: llm-provider
   name: "@gitawego/dsh-llm-provider"
   config:
-    opencode-go-session:
-      apiKeyEnv: OPENCODE_GO_CUSTOM_API_KEY
-      models: [deepseek-v4.1-flash]
+    route: opencode-go
+    apiKeyEnv: OPENCODE_GO_CUSTOM_API_KEY
 ```
 
 `--dump-config` is the check: the entry either shows that `config:` block or it
@@ -349,8 +355,8 @@ dsh-plugins/
 
 Per-package AGENT.md / LESSONS.md:
 
-- `packages/llm-provider/AGENT.md` — provider-route design, OpenCode Go
-  transport facts, `x-opencode-session` contract
+- `packages/llm-provider/AGENT.md` — the reporting-only boundary, and why a
+  private route was the bug
 - `packages/web-search/AGENT.md` — chained-fallback search provider design
 - `packages/web-search/LESSONS.md` — session history, the "click does
   nothing" root cause, DSH Settings Card pitfalls, no-restart policy

@@ -8,5 +8,8 @@
  * @module @gitawego/dsh-llm-provider/quota-path
  */
 
-/** Path the card reads; the host registers exactly this. */
+/** Path the card reads for the allowance report; the host registers exactly this. */
 export const QUOTA_ROUTE_PATH = '/llm-provider/quota'
+
+/** Path the card reads for the model status; the host registers exactly this. */
+export const STATUS_ROUTE_PATH = '/llm-provider/status'

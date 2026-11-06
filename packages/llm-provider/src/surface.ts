@@ -1,12 +1,10 @@
 /**
- * The surfaces that make a fetched catalog and a quota report visible.
+ * The surfaces that make the status readable: one command, one tool.
  *
- * Two of them, because they answer two different questions:
- *
- * - **`/llm-provider`** — a human command. `models` prints the live catalog with
- *   the facts a model picker needs (context window, output cap, thinking
- *   levels), `quota` prints the subscription windows, and `refresh` re-reads
- *   both. Nothing here goes to the model.
+ * - **`/llm-provider`** — a human command. `models` prints the gateway's list
+ *   beside the harness catalog and the block to paste when they differ, `quota`
+ *   prints the subscription windows, and `refresh` re-reads both. Nothing here
+ *   goes to the model.
  * - **`llm_quota`** — a tool, so the agent can ask the same question mid-task.
  *   OpenCode Go's allowances are per-window shares of a monthly budget, and an
  *   agent about to launch a long job is the one caller who benefits from
@@ -19,63 +17,59 @@
  */
 import { defineTool, type ToolDefinition } from '@deepseek-ai/dsh-tools'
 import type { JsonValue } from '@deepseek-ai/dsh-util-values'
-import { getSupportedThinkingLevels, type Api, type Model } from '@earendil-works/pi-ai'
-import type { CatalogFeed, RouteCatalogSnapshot } from './catalog-feed.ts'
 import { formatQuota, type QuotaSnapshot } from './gateway-api.ts'
+import { modelsSnippet, type ProviderModelRow, type ProviderStatus } from './status.ts'
 
 /** What the surfaces can ask the plugin for. */
 export interface SurfaceDeps {
-    /** Routes this build serves. */
-    routes: readonly string[]
-    /** The catalog feed. */
-    feed: CatalogFeed
-    /** Advertised models for one route. */
-    modelsOf: (route: string) => readonly Model<Api>[]
-    /** Fetch a route's quota report. */
-    quotaOf: (route: string) => Promise<QuotaSnapshot>
+    /** Host route reported on. */
+    route: string
+    /** The last read, without touching the network. */
+    status: () => ProviderStatus
+    /** Re-read the status. */
+    refresh: () => Promise<ProviderStatus>
+    /** Fetch the quota report. */
+    quotaOf: () => Promise<QuotaSnapshot>
 }
 
-/** Pick the route a subcommand addresses, defaulting to the only/primary one. */
-function routeOf(routes: readonly string[], requested: string | undefined): string | undefined {
-    if (requested !== undefined) return routes.includes(requested) ? requested : undefined
-    return routes[0]
+/** Render a token count as `1M`, `384k`, `900`. */
+function tokens(value: number): string {
+    if (value >= 1_000_000) return `${Math.round((value / 1_000_000) * 10) / 10}M`
+    if (value >= 1000) return `${Math.round(value / 1000)}k`
+    return String(value)
 }
 
 /**
  * Render one model's line for a human surface: the facts a picker shows.
- * @param model - the advertised model.
- * @returns one line: id, context window, output cap, and thinking levels.
+ * @param row - the status row.
+ * @returns one line: id, capacities, modalities, and where the id came from.
  */
-export function formatModel(model: Model<Api>): string {
-    const context = `${Math.round(model.contextWindow / 1000)}k ctx`
-    const output = `${Math.round(model.maxTokens / 1000)}k out`
-    const levels = getSupportedThinkingLevels(model)
-    const thinking = model.reasoning ? `thinking: ${levels.join('/')}` : 'no thinking'
-    const modalities = model.input.join('+')
-    return `${model.id} — ${context}, ${output}, ${thinking}, ${modalities}, ${model.api}`
+export function formatModel(row: ProviderModelRow): string {
+    const facts: string[] = []
+    if (row.contextWindow !== undefined) facts.push(`${tokens(row.contextWindow)} ctx`)
+    if (row.maxTokens !== undefined) facts.push(`${tokens(row.maxTokens)} out`)
+    if (row.input !== undefined && row.input.length > 0) facts.push(row.input.join('+'))
+    if (row.reasoning === true) facts.push('thinking')
+    const source = row.known && row.live ? 'catalog+live' : row.known ? 'catalog' : 'live only'
+    return [`${row.id} — ${facts.join(', ') || 'no capacities disclosed'}`, source].join(' · ')
 }
 
 /**
- * Render a catalog snapshot and its models for a human surface.
- * @param snapshot - the last refresh's summary.
- * @param models - the models the route advertises.
+ * Render a status for a human surface.
+ * @param status - the last read.
  * @returns lines ready to join.
  */
-export function formatCatalog(snapshot: RouteCatalogSnapshot | undefined, models: readonly Model<Api>[]): string[] {
+export function formatStatus(status: ProviderStatus): string[] {
     const lines: string[] = []
-    if (snapshot !== undefined) {
-        const fetched = new Date(snapshot.fetchedAt).toISOString()
-        lines.push(
-            snapshot.liveCount > 0
-                ? `Live catalog: ${snapshot.liveCount} models from the gateway, ${snapshot.modelCount} advertised (read ${fetched}).`
-                : `No live catalog read (${snapshot.error ?? 'not refreshed yet'}); ${snapshot.modelCount} advertised from the installed catalog.`,
-        )
-        if (snapshot.discovered.length > 0) {
-            lines.push(`New since this pi-ai build: ${snapshot.discovered.join(', ')}`)
-        }
-        lines.push(snapshot.metadataLoaded ? 'Capacities and thinking levels: models.dev.' : 'models.dev metadata unavailable; capacities fall back to the installed catalog.')
+    const fetched = new Date(status.fetchedAt).toISOString()
+    lines.push(
+        `Live catalog: ${status.servedCount} served by ${status.endpoint}, ${status.knownCount} advertised by the harness catalog (read ${fetched}).`,
+    )
+    if (status.error !== undefined) lines.push(`Read problem: ${status.error}.`)
+    if (status.unknownIds.length > 0) {
+        lines.push(`Not in the installed catalog: ${status.unknownIds.join(', ')}.`)
     }
-    lines.push(...models.map(formatModel))
+    lines.push(...status.models.map(formatModel))
     return lines
 }
 
@@ -90,34 +84,49 @@ export interface CommandOutcome {
  *
  * Kept as a plain function over explicit dependencies so the command's exact
  * output is unit-testable without a cordis context, a network, or a registry.
- * @param deps - routes, feed, and readers.
+ * @param deps - route, readers, and the last snapshot.
  * @param rawInput - text after the command name.
  * @returns the command result.
  */
 export async function runProviderCommand(deps: SurfaceDeps, rawInput: string): Promise<CommandOutcome> {
-    const parts = rawInput.trim().split(/\s+/u).filter(Boolean)
-    const sub = parts[0] ?? 'models'
-    const requested = parts[1]
-    const route = routeOf(deps.routes, requested)
-    if (route === undefined) {
-        return { kind: 'success', text: `Unknown route "${requested}". Served routes: ${deps.routes.join(', ')}.` }
-    }
+    const sub = rawInput.trim().split(/\s+/u).filter(Boolean)[0] ?? 'models'
 
     if (sub === 'refresh') {
-        const refreshed = await deps.feed.refresh(route)
-        const snapshot = refreshed[0] ?? deps.feed.snapshot(route)
-        return { kind: 'success', text: formatCatalog(snapshot, deps.modelsOf(route)).join('\n') }
+        return { kind: 'success', text: formatStatus(await deps.refresh()).join('\n') }
     }
 
     if (sub === 'quota') {
-        const quota = await deps.quotaOf(route)
-        return { kind: 'success', text: [`${route} quota:`, ...formatQuota(quota)].join('\n') }
+        const quota = await deps.quotaOf()
+        return { kind: 'success', text: [`${deps.route} quota:`, ...formatQuota(quota)].join('\n') }
     }
 
     if (sub !== 'models') {
-        return { kind: 'success', text: `Unknown subcommand "${sub}". Use: models [route], quota [route], refresh [route].` }
+        return { kind: 'success', text: `Unknown subcommand "${sub}". Use: models, quota, refresh.` }
     }
-    return { kind: 'success', text: [`${route} models:`, ...formatCatalog(deps.feed.snapshot(route), deps.modelsOf(route))].join('\n') }
+
+    const status = deps.status()
+    const lines = [`${deps.route} models:`, ...formatStatus(status)]
+    if (status.unknownIds.length > 0) {
+        lines.push('', 'To serve the ids the installed catalog does not describe, add them to llm-pi-ai.providers.' + deps.route + ':', ...modelsSnippet(status))
+    }
+    return { kind: 'success', text: lines.join('\n') }
+}
+
+/** Convert one quota report to the tool's structured half. */
+function quotaDetails(quota: QuotaSnapshot): Record<string, JsonValue> {
+    return {
+        route: quota.route,
+        error: quota.error ?? null,
+        fetchedAt: quota.fetchedAt,
+        windows: quota.windows.map((window) => ({
+            id: window.id,
+            label: window.label,
+            percentUsed: window.percentUsed,
+            percentRemaining: window.percentRemaining,
+            status: window.status,
+            resetsAt: window.resetsAt ?? null,
+        })),
+    }
 }
 
 /**
@@ -126,20 +135,15 @@ export async function runProviderCommand(deps: SurfaceDeps, rawInput: string): P
  * The tool reports every window the provider discloses and never invents one:
  * OpenCode Go reports a rolling 5-hour window, a weekly window, and a monthly
  * window, and a provider that reports fewer simply has fewer lines.
- * @param deps - routes and the quota reader.
+ * @param deps - route and the quota reader.
  * @returns the tool definition to register.
  */
 export function createQuotaTool(deps: SurfaceDeps): ToolDefinition {
     return defineTool({
         name: 'llm_quota',
         description:
-            'Report the remaining LLM provider quota for this session\'s provider route: the 5-hour, weekly, and monthly allowance windows the provider discloses, with reset times. Check before launching a long-running job.',
-        parameters: {
-            route: {
-                type: 'string',
-                description: `Provider route to report; defaults to ${deps.routes[0] ?? 'the only route'}. Served: ${deps.routes.join(', ')}.`,
-            },
-        } as const,
+            "Report the remaining LLM provider quota for this session's provider route: the 5-hour, weekly, and monthly allowance windows the provider discloses, with reset times. Check before launching a long-running job.",
+        parameters: {} as const,
         output: {
             schema: {
                 type: 'object',
@@ -153,32 +157,12 @@ export function createQuotaTool(deps: SurfaceDeps): ToolDefinition {
             // sentence back into numbers.
             presentationMeta: (_args, value) => (value as { details: JsonValue }).details,
         },
-        async execute(args) {
-            // Tool arguments arrive from the model, so they are validated here
-            // rather than trusted: a missing or non-string route falls back to
-            // the primary route instead of failing the call.
-            const raw = (args as { route?: unknown }).route
-            const requested = typeof raw === 'string' && raw.trim().length > 0 ? raw.trim() : undefined
-            const route = routeOf(deps.routes, requested)
-            if (route === undefined) {
-                const details: Record<string, JsonValue> = { route: requested ?? null, windows: [], error: 'unknown route', fetchedAt: 0 }
-                return { text: `Unknown provider route "${requested}". Served routes: ${deps.routes.join(', ')}.`, details }
+        async execute() {
+            const quota = await deps.quotaOf()
+            return {
+                text: [`${quota.route} quota:`, ...formatQuota(quota)].join('\n'),
+                details: quotaDetails(quota),
             }
-            const quota = await deps.quotaOf(route)
-            const details: Record<string, JsonValue> = {
-                route,
-                error: quota.error ?? null,
-                fetchedAt: quota.fetchedAt,
-                windows: quota.windows.map((window) => ({
-                    id: window.id,
-                    label: window.label,
-                    percentUsed: window.percentUsed,
-                    percentRemaining: window.percentRemaining,
-                    status: window.status,
-                    resetsAt: window.resetsAt ?? null,
-                })),
-            }
-            return { text: [`${route} quota:`, ...formatQuota(quota)].join('\n'), details }
         },
     })
 }
