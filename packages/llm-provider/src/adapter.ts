@@ -224,7 +224,7 @@ export class GatewayAdapter extends LlmAdapter {
             throw this.normalize(error, options.provider, options.model)
         }
 
-        yield* toStreamChunks(events, model.contextWindow, options.signal)
+        yield* toStreamChunks(events, model.contextWindow, options.signal, (options.tools?.length ?? 0) > 0)
     }
 
     /** Resolve one exact model or fail with the seam's stable code. */

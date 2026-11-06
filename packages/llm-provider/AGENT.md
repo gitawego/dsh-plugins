@@ -138,6 +138,37 @@ deliberate and documented in code:
 - a model the route does not serve fails the request with `UNKNOWN_MODEL`, and a
   route whose catalog the installed pi-ai does not ship serves nothing.
 
+## Design rule — a leaked tool-call template is a failure, never a parse (NON-NEGOTIABLE)
+
+The model sometimes answers with its **native tool-call template as text** —
+`<｜DSML｜ calls>` / `<｜DSML｜ invoke name="bash">`, with **one U+FF5C
+fullwidth bar** on each side of `DSML` (read from a real leaked reply; the
+workaround that preceded this rule matched two bars and therefore never fired) —
+and no `tool_calls`.
+The serving stack is what converts that template; when it does not, the client
+receives markup in `content` with `finish_reason: stop`.
+
+**Do not parse it.** A decoder has to invent call ids, guess spacing and
+encoding, and — worst of all — turns an upstream fault into a silent success. An
+earlier workaround here did exactly that and never fired, because it matched two
+bars per side while the lane emits one; it has been removed.
+
+What this plugin does instead: `looksLikeToolTemplate()` recognises the token at
+the *start* of a reply (a model discussing the markup quotes it inside prose), and
+`mapStopReason()` reports a **retryable `SERVER`** failure when tools were offered
+and no call was made. `dsh-llm-retry` then re-runs the request — which is the
+honest remedy, because the fault is upstream — and a persistent leak surfaces as
+an explicit error instead of markup on screen.
+
+Root cause of the case that drove this (evidenced, not guessed):
+
+- the request carried **46 tools** (session `request/header`), and replays of that
+  exact request — full tool list, `reasoningEffort: high`, `maxTokens: 384000` —
+  return proper `toolCall`s;
+- the leaked turn followed **four 429 "upstream overloaded"** retries, and the
+  model's own reasoning says *"we have no explicit tool list"*: the overloaded
+  lane served it without the tool definitions and without its tool-call parser.
+
 ## Design rule — never let a third-party dataset be the only source of wire semantics (NON-NEGOTIABLE)
 
 Compat switches (`thinkingFormat: deepseek`, `requiresReasoningContentOnAssistantMessages`,
