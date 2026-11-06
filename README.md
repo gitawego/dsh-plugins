@@ -5,6 +5,21 @@ plugin under the `@gitawego` npm scope, targeting DSH **0.2.2-rc.1** (the
 0.1.x line is not supported by the current versions — see
 [`COMPATIBILITY.md`](COMPATIBILITY.md)).
 
+## Commands
+
+```bash
+pnpm check:pins   # every @deepseek-ai/* / @earendil-works/* pin must match the installed harness
+pnpm verify       # check:pins + typecheck + build + tests
+pnpm fix:pins     # rewrite drifted pins to the host's resolved versions
+```
+
+A plugin runs *inside* the harness process, so a host package it declares at
+runtime is a second copy: an older protocol, catalog, or endpoint than the host
+it loads into. That is not theory — one package here pinned `pi-ai@0.85.1`
+against a `1.5.0` host and grew a whole provider route to compensate.
+`pnpm check:pins` fails the build before that reaches a profile, and
+`scripts/install-plugins.sh` refuses to deploy on it.
+
 ## Packages
 
 - [packages/llm-provider](packages/llm-provider/) — `@gitawego/dsh-llm-provider`:
