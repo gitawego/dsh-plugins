@@ -22,7 +22,7 @@
  */
 import type { Api, Model, ModelCost, ThinkingLevelMap } from '@earendil-works/pi-ai'
 import { DEFAULT_API, DEFAULT_CONTEXT_WINDOW, DEFAULT_MAX_TOKENS, type GatewayProfile, type ModelDeclaration, type ProviderSettings } from './config.ts'
-import { protocolFor, type GatewayDefinition } from './gateways.ts'
+import type { GatewayDefinition } from './gateways.ts'
 import { fetchModelIds, type GatewayCallOptions } from './gateway-api.ts'
 import { fetchModelsDevCatalog, type FetchLike, type ModelMetadata } from './models-dev.ts'
 
@@ -102,15 +102,60 @@ function indexByFamily(installed: readonly Model<Api>[], metadata: ReadonlyMap<s
     return index
 }
 
-/** Resolve the wire protocol for one model id. */
+/** Shortest shared id prefix accepted as a family signal. */
+const MIN_SHARED_PREFIX = 6
+
+/**
+ * The installed model an unlisted id most plausibly shares a wire dialect with.
+ *
+ * models.dev is a moving dataset: it dropped `deepseek-v4-flash` while the
+ * gateway kept serving it and kept serving its successor, so a family lookup
+ * alone left `deepseek-v4.1-flash` with **no compat at all** — no
+ * `thinkingFormat: deepseek`, no `reasoning_content` echo, and a 400 on the
+ * second turn. The id itself is the durable signal, so when the dataset cannot
+ * name a family, fall back to the longest shared id prefix in the installed
+ * catalog: `deepseek-v4.1-flash` and `deepseek-v4-flash` share
+ * `deepseek-v4`.
+ * @param id - model id the catalog does not describe.
+ * @param installed - the installed catalog.
+ * @returns the nearest installed model, or undefined when nothing is close.
+ */
+export function nearestInstalled(id: string, installed: readonly Model<Api>[]): Model<Api> | undefined {
+    let best: Model<Api> | undefined
+    let bestLength = 0
+    for (const model of installed) {
+        if (model.id === id) return model
+        let shared = 0
+        while (shared < id.length && shared < model.id.length && id[shared] === model.id[shared]) shared += 1
+        if (shared >= MIN_SHARED_PREFIX && shared > bestLength) {
+            best = model
+            bestLength = shared
+        }
+    }
+    return best
+}
+
+/**
+ * Resolve the wire protocol for one model id, most authoritative first:
+ * a profile declaration, the exact catalog entry, the gateway's own published
+ * endpoint table, the nearest surveyed relative, then the route default.
+ *
+ * The relative sits *below* the table on purpose: the table is documentation for
+ * specific ids, while a shared id prefix is an inference — right far more often
+ * than the blanket default, but never ahead of a published fact.
+ */
 function apiFor(
     gateway: GatewayDefinition,
     id: string,
     declared: ModelDeclaration | undefined,
     installed: Model<Api> | undefined,
-    familyBase: Model<Api> | undefined,
+    relative: Model<Api> | undefined,
 ): string {
-    return declared?.api ?? installed?.api ?? familyBase?.api ?? protocolFor(gateway, id) ?? DEFAULT_API
+    return declared?.api
+        ?? installed?.api
+        ?? gateway.protocols.byId[id]
+        ?? relative?.api
+        ?? DEFAULT_API
 }
 
 /** Resolve the advertised model id set: live ∪ installed ∪ declared, allowlist applied. */
@@ -158,8 +203,12 @@ export function mergeCatalog(inputs: CatalogInputs): Model<Api>[] {
         const base = installed.get(id)
         const meta = metadata.get(id)
         const declaration = declared.get(id)
-        const familyBase = meta?.family !== undefined ? families.get(meta.family) : undefined
-        const api = apiFor(gateway, id, declaration, base, familyBase)
+        // Dataset family first (semantic), then the id itself (durable): a model
+        // the dataset has dropped must still inherit its relative's wire dialect.
+        const familyBase = (meta?.family !== undefined ? families.get(meta.family) : undefined)
+            ?? nearestInstalled(id, inputs.installed)
+        const relative = familyBase
+        const api = apiFor(gateway, id, declaration, base, relative)
         const reasoning = declaration?.reasoning ?? meta?.reasoning ?? base?.reasoning ?? false
         const levelMap = reasoning
             ? (thinkingLevelMapFor(meta?.options?.effort) ?? base?.thinkingLevelMap)
