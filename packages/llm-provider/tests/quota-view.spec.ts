@@ -3,7 +3,7 @@ import { formatCountdown, parseQuotaView, toneFor } from '../src/client/quota-fo
 
 /** A tool result's meta, as the tool's `presentationMeta` produces it. */
 const meta = () => ({
-    route: 'opencode-go-session',
+    route: 'opencode-go',
     error: null,
     fetchedAt: 1_791_212_000_000,
     windows: [
@@ -27,7 +27,7 @@ describe('toneFor', () => {
 describe('parseQuotaView', () => {
     it('reads the three windows the provider reports, in order', () => {
         const view = parseQuotaView(meta())
-        expect(view?.route).toBe('opencode-go-session')
+        expect(view?.route).toBe('opencode-go')
         expect(view?.fetchedAt).toBe(1_791_212_000_000)
         expect(view?.windows.map((window) => [window.label, window.percentRemaining, window.tone])).toEqual([
             ['5-hour', 97, 'ok'],

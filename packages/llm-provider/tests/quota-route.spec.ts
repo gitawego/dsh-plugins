@@ -5,7 +5,8 @@
  */
 import { describe, expect, it, vi } from 'vitest'
 import type { IncomingMessage, ServerResponse } from 'node:http'
-import { QUOTA_ROUTE_PATH, createQuotaHandler, isTrustedLocalRequest, quotaPayload, registerQuotaRoute } from '../src/quota-route.ts'
+import { QUOTA_ROUTE_PATH, STATUS_ROUTE_PATH, createQuotaHandler, createStatusHandler, isTrustedLocalRequest, quotaPayload, registerQuotaRoute } from '../src/quota-route.ts'
+import { composeStatus } from '../src/status.ts'
 import { parseQuotaView } from '../src/client/quota-format.ts'
 import { parseQuota } from '../src/gateway-api.ts'
 
@@ -13,7 +14,7 @@ import { parseQuota } from '../src/gateway-api.ts'
 function request(over: { method?: string; url?: string; headers?: Record<string, string> } = {}): IncomingMessage {
     return {
         method: over.method ?? 'GET',
-        url: over.url ?? '/llm-provider/quota?route=opencode-go-session',
+        url: over.url ?? '/llm-provider/quota?route=opencode-go',
         headers: over.headers ?? { host: '127.0.0.1:3080' },
     } as unknown as IncomingMessage
 }
@@ -35,9 +36,21 @@ function response() {
     }
 }
 
+/** A status the dashboard would hold. */
+const status = composeStatus({
+    route: 'opencode-go',
+    endpoint: 'https://gw.test/v1',
+    credential: 'K',
+    apiKey: 'sk',
+    knownModels: [{ id: 'alpha' }],
+    liveIds: ['alpha', 'beta'],
+    metadata: new Map(),
+    fetchedAt: 1,
+})
+
 const snapshot = parseQuota(
     { usage: { rolling: { status: 'ok', percent: 3, resetsAt: '2026-10-05T19:56:40.000Z' }, monthly: { status: 'ok', percent: 82 } } },
-    'opencode-go-session',
+    'opencode-go',
     1_791_212_000_000,
 )
 
@@ -121,22 +134,23 @@ describe('registration', () => {
 
     it('registers through an injected fiber, never through the property form', () => {
         const { outer, registered, deps } = contexts()
-        registerQuotaRoute(outer as never, { routes: ['opencode-go-session'], quotaOf: async () => snapshot })
+        registerQuotaRoute(outer as never, { routes: ['opencode-go'], quotaOf: async () => snapshot, statusOf: () => status })
         expect(deps).toEqual([['webServer']])
-        expect(registered).toMatchObject([{ kind: 'exact', path: QUOTA_ROUTE_PATH }])
+        // Two read-only routes, one guard: the allowance and the model status.
+        expect(registered).toMatchObject([{ kind: 'exact', path: QUOTA_ROUTE_PATH }, { kind: 'exact', path: STATUS_ROUTE_PATH }])
     })
 
     it('does not require the service to exist up front, so a profile without a webserver still loads', () => {
         // `ctx.inject` simply never runs the callback; nothing else in apply
         // depends on the route.
         const { outer, registered } = contexts()
-        expect(() => registerQuotaRoute(outer as never, { routes: [], quotaOf: async () => snapshot })).not.toThrow()
-        expect(registered).toHaveLength(1)
+        expect(() => registerQuotaRoute(outer as never, { routes: [], quotaOf: async () => snapshot, statusOf: () => status })).not.toThrow()
+        expect(registered).toHaveLength(2)
     })
 })
 
 describe('the handler', () => {
-    const deps = { routes: ['opencode-go-session'], quotaOf: async () => snapshot }
+    const deps = { routes: ['opencode-go'], quotaOf: async () => snapshot, statusOf: () => status }
 
     it('answers the report for a served route', async () => {
         const { res, written } = response()
@@ -159,7 +173,7 @@ describe('the handler', () => {
         const { res, written } = response()
         await createQuotaHandler(deps)(request({ url: '/llm-provider/quota?route=nope' }), res)
         expect(written.status).toBe(400)
-        expect(written.body).toMatch(/unknown route; served: opencode-go-session/)
+        expect(written.body).toMatch(/unknown route; served: opencode-go/)
     })
 
     it('answers a provider failure as an explainable report, not a crash', async () => {
@@ -167,5 +181,45 @@ describe('the handler', () => {
         await createQuotaHandler({ ...deps, quotaOf: async () => { throw new Error('credential missing') } })(request(), res)
         expect(written.status).toBe(502)
         expect(JSON.parse(written.body ?? '{}')).toMatchObject({ error: 'credential missing', windows: [] })
+    })
+})
+
+describe('the status route', () => {
+    /** A minimal node request carrying the trust headers. */
+    function req(query = '?route=opencode-go', headers: Record<string, string> = { host: '127.0.0.1:8080', 'sec-fetch-site': 'same-origin' }): IncomingMessage {
+        return { method: 'GET', url: `/llm-provider/status${query}`, headers } as unknown as IncomingMessage
+    }
+
+    /** A response recorder. */
+    function res(): { res: ServerResponse; body: () => unknown; code: () => number } {
+        let text = ''
+        let code = 0
+        const response = {
+            writeHead: (next: number) => { code = next; return response },
+            end: (chunk?: string) => { text = chunk ?? '' },
+        }
+        return { res: response as unknown as ServerResponse, body: () => JSON.parse(text || 'null'), code: () => code }
+    }
+
+    it('serves the cached status without a network call', async () => {
+        const { res: response, body, code } = res()
+        await createStatusHandler({ routes: ['opencode-go'], quotaOf: async () => snapshot, statusOf: () => status })(req(), response)
+        expect(code()).toBe(200)
+        expect(body()).toMatchObject({ route: 'opencode-go', servedCount: 2, unknownIds: ['beta'] })
+    })
+
+    it('shares the guard the quota route uses', async () => {
+        const { res: response, code } = res()
+        await createStatusHandler({ routes: ['opencode-go'], quotaOf: async () => snapshot, statusOf: () => status })(
+            req('?route=opencode-go', { host: 'evil.example' }),
+            response,
+        )
+        expect(code()).toBe(403)
+    })
+
+    it('refuses a route it does not serve', async () => {
+        const { res: response, code } = res()
+        await createStatusHandler({ routes: ['opencode-go'], quotaOf: async () => snapshot, statusOf: () => status })(req('?route=other'), response)
+        expect(code()).toBe(400)
     })
 })

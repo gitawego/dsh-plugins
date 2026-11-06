@@ -28,9 +28,10 @@ import type { IncomingMessage, ServerResponse } from 'node:http'
 import type { Context } from '@deepseek-ai/cordis'
 import type {} from '@deepseek-ai/dsh-host-webserver'
 import type { QuotaSnapshot } from './gateway-api.ts'
-import { QUOTA_ROUTE_PATH } from './quota-path.ts'
+import { QUOTA_ROUTE_PATH, STATUS_ROUTE_PATH } from './quota-path.ts'
+import type { ProviderStatus } from './status.ts'
 
-export { QUOTA_ROUTE_PATH } from './quota-path.ts'
+export { QUOTA_ROUTE_PATH, STATUS_ROUTE_PATH }
 
 /** The request facts the trust decision reads. */
 export interface RequestFacts {
@@ -103,12 +104,14 @@ export function quotaPayload(snapshot: QuotaSnapshot): QuotaRoutePayload {
     }
 }
 
-/** Everything the route needs. */
+/** Everything the routes need. */
 export interface QuotaRouteDeps {
     /** Routes this build serves. */
     routes: readonly string[]
     /** Read one route's quota through the credential seam. */
     quotaOf: (route: string) => Promise<QuotaSnapshot>
+    /** The last model status read; no network call, the cache answers. */
+    statusOf: () => ProviderStatus
 }
 
 /** Read one header from a node request. */
@@ -139,28 +142,57 @@ function send(res: ServerResponse, status: number, body: unknown): void {
  */
 export function createQuotaHandler(deps: QuotaRouteDeps) {
     return async (req: IncomingMessage, res: ServerResponse): Promise<void> => {
-        const facts: RequestFacts = {
-            method: req.method,
-            host: header(req, 'host'),
-            origin: header(req, 'origin'),
-            secFetchSite: header(req, 'sec-fetch-site'),
-        }
-        if (!isTrustedLocalRequest(facts)) {
-            send(res, 403, { error: 'forbidden' })
-            return
-        }
-        const requested = new URL(req.url ?? '/', 'http://dsh.invalid').searchParams.get('route')
-        const route = requested !== null && deps.routes.includes(requested) ? requested : undefined
-        if (route === undefined) {
-            send(res, 400, { error: `unknown route; served: ${deps.routes.join(', ')}` })
-            return
-        }
+        const route = allow(req, res, deps)
+        if (route === undefined) return
         try {
             send(res, 200, quotaPayload(await deps.quotaOf(route)))
         } catch (error) {
             send(res, 502, { route, windows: [], fetchedAt: Date.now(), error: error instanceof Error ? error.message : String(error) })
         }
     }
+}
+
+/**
+ * Build the model-status handler.
+ *
+ * Same guard as the quota read, none of the network: the status is the plugin's
+ * cached read, so a card refresh costs the host nothing when the TTL is fresh.
+ * @param deps - delivered routes and the status reader.
+ * @returns the handler for {@link STATUS_ROUTE_PATH}.
+ */
+export function createStatusHandler(deps: QuotaRouteDeps) {
+    return async (req: IncomingMessage, res: ServerResponse): Promise<void> => {
+        if (allow(req, res, deps) === undefined) return
+        send(res, 200, deps.statusOf())
+    }
+}
+
+/**
+ * Apply the trust guard and resolve the requested route.
+ *
+ * Both handlers need the same three answers — trusted caller, known route — so
+ * they share one implementation: a guard that only one of them enforced would
+ * be the storefront of a hole in the other.
+ * @param req - the incoming request.
+ * @param res - the response to refuse on.
+ * @param deps - delivered routes.
+ * @returns the route, or undefined when the request was already refused.
+ */
+function allow(req: IncomingMessage, res: ServerResponse, deps: QuotaRouteDeps): string | undefined {
+    const facts: RequestFacts = {
+        method: req.method,
+        host: header(req, 'host'),
+        origin: header(req, 'origin'),
+        secFetchSite: header(req, 'sec-fetch-site'),
+    }
+    if (!isTrustedLocalRequest(facts)) {
+        send(res, 403, { error: 'forbidden' })
+        return undefined
+    }
+    const requested = new URL(req.url ?? '/', 'http://dsh.invalid').searchParams.get('route')
+    const route = requested !== null && deps.routes.includes(requested) ? requested : undefined
+    if (route === undefined) send(res, 400, { error: `unknown route; served: ${deps.routes.join(', ')}` })
+    return route
 }
 
 /**
@@ -183,6 +215,10 @@ export function registerQuotaRoute(ctx: Context, deps: QuotaRouteDeps): void {
         host.effect(
             () => host.webServer.register({ kind: 'exact', path: QUOTA_ROUTE_PATH, handler: createQuotaHandler(deps) }),
             'llm-provider: quota route',
+        )
+        host.effect(
+            () => host.webServer.register({ kind: 'exact', path: STATUS_ROUTE_PATH, handler: createStatusHandler(deps) }),
+            'llm-provider: status route',
         )
     })
 }

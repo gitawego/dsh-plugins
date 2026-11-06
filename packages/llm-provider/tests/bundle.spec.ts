@@ -68,7 +68,7 @@ describe('server entry', () => {
     it('exists and exports the plugin surface the loader mounts', () => {
         expect(existsSync(entry), 'lib/index.js is missing — run `pnpm build` first').toBe(true)
         const source = readFileSync(entry, 'utf8')
-        for (const symbol of ['apply', 'inject', 'Config', 'createGatewayTransport', 'ROUTES']) {
+        for (const symbol of ['apply', 'inject', 'Config', 'DEFAULT_ROUTE', 'createStatusHandler']) {
             expect(source, `${symbol} is not exported by the server entry`).toMatch(new RegExp(`\\b${symbol}\\b`))
         }
     })
@@ -128,28 +128,15 @@ describe('client bundle', () => {
         expect(module.inject).toEqual(['slots', 'locale', 'configForms'])
     })
 
-    it('extends the Models page for its own provider row', () => {
-        // The shipped Models section renders `settings.models.provider-card` for
-        // every provider row, keyed by the settings namespace that owns it —
-        // documented as the seat for plugins distributed outside the harness.
-        // This route needs it: the section's own editor cannot configure us.
+    it('reads both reporting routes and no Remote namespace', () => {
+        // Neither the allowance nor the model status has a host seam, so the
+        // panel reads the plugin's own guarded loopback routes. It must not reach
+        // for a Remote namespace it does not declare — cordis refuses those at
+        // first render, which is how this card once went blank.
         const source = readFileSync(bundle, 'utf8')
-        expect(source).toContain('settings.models.provider-card')
-        // The copy names the location; the arrow survives bundling as an escape,
-        // so assert the halves rather than the whole line.
-        expect(source).toContain('Models, allowance, and endpoint are configured in')
-        expect(source).toContain('LLM providers')
-    })
-
-    it('binds the scoped Remote namespaces in a fiber that declares them', () => {
-        // cordis refuses to resolve `ctx.remote.llm` from a context that has not
-        // declared it ("cannot get property ... without inject"). A child fiber
-        // declaring them satisfies that rule without delaying registration, and
-        // the lazy accessor form would bypass the declaration entirely.
-        const source = readFileSync(bundle, 'utf8')
-        for (const scoped of ['remote.llm', 'remote.credentials']) {
-            expect(source, `${scoped} is read but never declared`).toContain(scoped)
-        }
-        expect(source).not.toMatch(/get\(\s*["']remote["']\s*\)/)
+        expect(source).toContain('/llm-provider/quota')
+        expect(source).toContain('/llm-provider/status')
+        expect(source).not.toContain('remote.llm')
+        expect(source).not.toContain('remote.credentials')
     })
 })

@@ -1,184 +1,88 @@
 /**
- * The section's face and its snapshot must be two views of ONE controller per
- * route.
+ * The section's injected face.
  *
- * They were not, once: the actions were wired to a controller built separately
- * from the one the panel rendered, so `refresh()` and `refreshQuota()` updated
- * an orphan while the visible panel stayed at its initial state — "Not read yet"
- * under Allowance, and every pinned model marked "no longer served" because the
- * rendered controller had never read the catalog.
- *
- * These tests drive the face the way the UI does and then read the snapshot the
- * UI renders, so that class of wiring mistake fails here instead of in a
- * screenshot.
+ * A slot component gets exactly one injected hook, so the face is the whole
+ * contract between the registration and the panel: one snapshot hook, one
+ * translator bound to this plugin's namespace, and one set of actions.
  */
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import type { Context as ClientContext } from '@deepseek-ai/cordis'
 import type { ConfigForm } from '@deepseek-ai/dsh-client-ui-settings/client'
-import { createSectionFace } from '../src/client/section-face.ts'
-import type { ProviderSections, SettingsPathOp, SettingsScopeLike } from '../src/client/controller.ts'
-import { QUOTA_ROUTE_PATH } from '../src/quota-path.ts'
+import type { MonitorProfile } from '../src/config.ts'
+import { createSectionFace, NS } from '../src/client/section-face.ts'
+import { QUOTA_ROUTE_PATH, STATUS_ROUTE_PATH } from '../src/quota-path.ts'
 
-const ROUTE = 'opencode-go-session'
-
-/** A settings scope that holds a profile and accepts writes. */
-function fakeScope(): SettingsScopeLike<ProviderSections> {
-    let value: ProviderSections = { [ROUTE]: { apiKeyEnv: 'KEY' } }
-    const listeners = new Set<() => void>()
-    let snapshot = { status: 'ready' as const, value, writable: true, revision: 1 }
-    const republish = (): void => {
-        snapshot = { status: 'ready', value, writable: true, revision: snapshot.revision + 1 }
-        for (const listener of listeners) listener()
-    }
-    return {
-        getSnapshot: () => snapshot,
-        subscribe: (listener: () => void) => {
-            listeners.add(listener)
-            return () => listeners.delete(listener)
-        },
-        mutate: async (ops: readonly SettingsPathOp[]) => {
-            const next: ProviderSections = { ...value }
-            for (const op of ops) {
-                const section = { ...(next[op.path[0]!] ?? {}) } as Record<string, unknown>
-                if (op.op === 'set') section[op.path[1]!] = op.value
-                else delete section[op.path[1]!]
-                next[op.path[0]!] = section as ProviderSections[string]
-            }
-            value = next
-            republish()
-        },
-    }
+const PROFILE: MonitorProfile = {
+    route: 'opencode-go',
+    baseURL: 'https://gw.test/v1',
+    apiKeyEnv: 'OPENCODE_GO_CUSTOM_API_KEY',
+    refreshMinutes: 15,
 }
 
-/**
- * A client context with the three services this face reads: locale, the scoped
- * Remote carrier, and nothing else.
- */
+/** A settings form holding one profile. */
+function fakeScope(): ConfigForm<MonitorProfile> {
+    return {
+        getSnapshot: () => ({ status: 'ready', value: PROFILE, base: PROFILE, user: PROFILE, revision: 1, writable: true }),
+        subscribe: () => () => {},
+        set: async () => true,
+        unset: async () => true,
+        mutate: async () => true,
+    } as unknown as ConfigForm<MonitorProfile>
+}
+
+/** A client context answering the two services the face reads. */
 function fakeContext(): ClientContext {
-    const injected = {
-        remote: {
-            llm: {
-                discoverModels: async () => ({ ok: true, value: [{ id: 'live-model', name: 'Live Model', contextWindow: 1000, maxTokens: 100 }] }),
-            },
-            credentials: {
-                describe: async () => ({ ok: true, value: {} }),
-                set: async () => ({ ok: true }),
-            },
-        },
-    }
     return {
         locale: { bind: () => (key: string) => key },
-        inject: (_names: unknown, callback: (host: unknown) => unknown) => {
-            callback(injected)
-            return { dispose: () => {} }
-        },
+        effect: () => () => {},
     } as unknown as ClientContext
 }
 
-/** Answer the quota route with one window. */
-function stubQuotaFetch(): void {
+/** Answer both guarded routes. */
+function stubFetch(): void {
     vi.stubGlobal('fetch', async (input: string | URL) => {
-        if (!String(input).startsWith(QUOTA_ROUTE_PATH)) return new Response('{}', { status: 404 })
-        return new Response(
-            JSON.stringify({ route: ROUTE, windows: [{ id: 'rolling', label: '5-hour', percentUsed: 3, percentRemaining: 97, status: 'ok' }], fetchedAt: 5 }),
-            { status: 200, headers: { 'content-type': 'application/json' } },
-        )
+        const url = String(input)
+        if (url.startsWith(STATUS_ROUTE_PATH)) {
+            return new Response(JSON.stringify({ route: 'opencode-go', models: [{ id: 'alpha', known: true, live: true }], servedCount: 1, knownCount: 1, unknownIds: [], fetchedAt: 1 }), { status: 200 })
+        }
+        expect(url.startsWith(QUOTA_ROUTE_PATH)).toBe(true)
+        return new Response(JSON.stringify({ route: 'opencode-go', windows: [] }), { status: 200 })
     })
-}
-
-afterEach(() => {
-    vi.unstubAllGlobals()
-})
-
-/**
- * Let the controller's promise chain settle.
- *
- * A plain macrotask drain rather than `vi.waitFor`: the reads here resolve in a
- * microtask, and waiting on a poller would test the poller.
- */
-async function settle(): Promise<void> {
-    for (let tick = 0; tick < 5; tick += 1) await new Promise((resolve) => setTimeout(resolve, 0))
-}
-
-function face() {
-    stubQuotaFetch()
-    const scope = fakeScope()
-    const section = createSectionFace(fakeContext(), scope as unknown as ConfigForm<ProviderSections>, [ROUTE])
-    return { section, scope }
-}
-
-/** The panel state the section currently renders. */
-function rendered(section: ReturnType<typeof face>['section']) {
-    return section.hooks.providers.getSnapshot().providers[0]!.card
 }
 
 describe('the section face', () => {
-    it('renders one panel per served route', () => {
-        const { section } = face()
-        expect(section.hooks.providers.getSnapshot().providers.map((entry) => entry.route)).toEqual([ROUTE])
-        expect(section.byRoute[ROUTE]).toBeDefined()
+    it('owns the llm-provider namespace', () => {
+        expect(NS).toBe('llm-provider')
     })
 
-    it('starts idle, before anything is read', () => {
-        const { section } = face()
-        expect(rendered(section).catalog.state).toBe('idle')
-        expect(rendered(section).quota.state).toBe('idle')
+    it('binds the translator to that namespace', () => {
+        stubFetch()
+        const bind = vi.fn(() => (key: string) => key)
+        const face = createSectionFace({ ...fakeContext(), locale: { bind } } as unknown as ClientContext, fakeScope())
+        expect(bind).toHaveBeenCalledWith(NS)
+        expect(face.t('sectionNav')).toBe('sectionNav')
     })
 
-    it('shows the catalog that the actions read, not an orphan', async () => {
-        const { section } = face()
-        section.byRoute[ROUTE]!.refresh()
-        await settle()
-        expect(rendered(section).catalog.state).toBe('ready')
-        expect(rendered(section).models.map((row) => row.id)).toEqual(['live-model'])
+    it('exposes one snapshot hook and the two actions', () => {
+        stubFetch()
+        const face = createSectionFace(fakeContext(), fakeScope())
+        expect(typeof face.hooks.dashboard.getSnapshot).toBe('function')
+        expect(typeof face.hooks.dashboard.subscribe).toBe('function')
+        expect(Object.keys(face.actions).sort()).toEqual(['clear', 'edit', 'refresh'])
     })
 
-    it('shows the allowance that the actions read, not an orphan', async () => {
-        const { section } = face()
-        section.byRoute[ROUTE]!.refreshQuota()
-        await settle()
-        expect(rendered(section).quota.state).toBe('ready')
-        const quota = rendered(section).quota
-        expect(quota.state === 'ready' && quota.view.windows[0]?.label).toBe('5-hour')
+    it('answers a snapshot that already carries the profile', () => {
+        stubFetch()
+        const face = createSectionFace(fakeContext(), fakeScope())
+        const snapshot = face.hooks.dashboard.getSnapshot()
+        expect(snapshot.route).toBe('opencode-go')
+        expect(snapshot.endpoint).toBe('https://gw.test/v1')
+        expect(snapshot.credential).toBe('OPENCODE_GO_CUSTOM_API_KEY')
     })
 
-    it('reflects a picker edit in the same snapshot the actions came from', async () => {
-        const { section } = face()
-        section.byRoute[ROUTE]!.refresh()
-        await settle()
-        // Nothing pinned means every served model is allowed, so the picker opens
-        // with the catalog selected.
-        section.byRoute[ROUTE]!.openPicker()
-        expect(rendered(section).picker).toMatchObject({ open: true, selected: ['live-model'] })
-        section.byRoute[ROUTE]!.clearSelection()
-        expect(rendered(section).picker.selected).toEqual([])
-        section.byRoute[ROUTE]!.togglePickerModel('live-model')
-        expect(rendered(section).picker.selected).toEqual(['live-model'])
-    })
-
-    it('keeps the snapshot reference stable between reads, or React loops', () => {
-        const { section } = face()
-        const first = section.hooks.providers.getSnapshot()
-        expect(section.hooks.providers.getSnapshot()).toBe(first)
-    })
-
-    it('replaces the snapshot when a panel changes', async () => {
-        const { section } = face()
-        const first = section.hooks.providers.getSnapshot()
-        section.byRoute[ROUTE]!.refresh()
-        await settle()
-        expect(section.hooks.providers.getSnapshot()).not.toBe(first)
-        const second = section.hooks.providers.getSnapshot()
-        expect(section.hooks.providers.getSnapshot()).toBe(second)
-    })
-
-    it('notifies subscribers when a panel changes', async () => {
-        const { section } = face()
-        const listener = vi.fn()
-        const off = section.hooks.providers.subscribe(listener)
-        section.byRoute[ROUTE]!.refresh()
-        await settle()
-        expect(listener).toHaveBeenCalled()
-        off()
+    it('keeps the snapshot identity stable across reads', () => {
+        stubFetch()
+        const face = createSectionFace(fakeContext(), fakeScope())
+        expect(face.hooks.dashboard.getSnapshot()).toBe(face.hooks.dashboard.getSnapshot())
     })
 })
