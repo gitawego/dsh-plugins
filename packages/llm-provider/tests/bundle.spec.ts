@@ -106,6 +106,31 @@ describe('client bundle', () => {
         }
     })
 
+    it('uses the current DSH theme tokens, not the pre-0.2.2 aliases', () => {
+        const source = readFileSync(bundle, 'utf8')
+        for (const token of [
+            '--dsw-alias-border-l2',
+            '--dsw-alias-bg-layer-1',
+            '--dsw-alias-bg-layer-2',
+            '--dsw-alias-label-secondary',
+            '--dsw-alias-label-tertiary',
+            '--dsh-font-family-code',
+        ]) {
+            expect(source, `missing current theme token ${token}`).toContain(token)
+        }
+        for (const stale of [
+            '--dsw-alias-border-tertiary',
+            '--dsw-alias-bg-primary',
+            '--dsw-alias-bg-secondary',
+            '--dsw-alias-fg-secondary',
+            '--dsw-alias-fg-tertiary',
+            '--dsw-alias-fill-tertiary',
+            '--dsw-alias-font-mono',
+        ]) {
+            expect(source, `stale theme token survived: ${stale}`).not.toContain(stale)
+        }
+    })
+
     it('registers a settings SECTION, not a card in the plugin list', () => {
         // The surface grows with every gateway the plugin serves, and the plugin
         // list is the wrong home for that: `settings.section` is a list slot

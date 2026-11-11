@@ -98,7 +98,7 @@ export function QuotaToolView(props: QuotaToolViewProps): JSX.Element {
  *
  * Colour roles follow the host's own progress meter
  * (`dsh-client-ui-attachment`): the unfilled track is
- * `--dsw-alias-fill-tertiary` — a translucent neutral that reads on either
+ * `--dsw-alias-border-l2` — a translucent neutral that reads on either
  * theme, which is why `bg-layer-3` was invisible here — and the fill carries
  * state, since a meter's job is to say how much is spent:
  * `state-success-primary` while there is room, `state-warn-primary` past four
@@ -114,12 +114,12 @@ export function QuotaToolView(props: QuotaToolViewProps): JSX.Element {
 export const QUOTA_CSS = `
 .lpq{display:flex;flex-direction:column;gap:8px;padding:10px 12px;border:1px solid var(--dsw-alias-border-l2);border-radius:10px;background:var(--dsw-alias-bg-layer-1)}
 .lpq-head{display:flex;align-items:baseline;gap:8px}
-.lpq-title{font-family:var(--dsw-font-family-mono,ui-monospace,SFMono-Regular,Menlo,monospace);font-size:12px;color:var(--dsw-alias-label-primary)}
+.lpq-title{font-family:var(--dsh-font-family-code,ui-monospace,SFMono-Regular,Menlo,monospace);font-size:12px;color:var(--dsw-alias-label-primary)}
 .lpq-sub{font-size:11px;color:var(--dsw-alias-label-tertiary)}
 .lpq-rows{display:flex;flex-direction:column;gap:8px;margin:0;padding:0;list-style:none}
 .lpq-row{display:grid;grid-template-columns:64px minmax(48px,1fr) 76px 66px;align-items:center;gap:10px}
 .lpq-label{font-size:11px;color:var(--dsw-alias-label-secondary)}
-.lpq-track{height:8px;border-radius:999px;background:var(--dsw-alias-fill-tertiary,#00000014);overflow:hidden}
+.lpq-track{height:8px;border-radius:999px;background:var(--dsw-alias-border-l2,#0000001a);overflow:hidden}
 .lpq-fill{display:block;height:100%;min-width:2px;border-radius:999px;background:var(--dsw-alias-state-success-primary,#2da44e);transition:width .18s ease}
 .lpq-row[data-tone="warn"] .lpq-fill{background:var(--dsw-alias-state-warn-primary,#bf8700)}
 .lpq-row[data-tone="critical"] .lpq-fill{background:var(--dsw-alias-state-error-primary,#d54941)}
