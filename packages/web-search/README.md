@@ -4,11 +4,12 @@
 > search (keyless through the DeepSeek account sign-in), the DeepSeek Search
 > API, Exa and Perplexity providers, `web_fetch`, multi-query `web_search`,
 > and a **Settings → Web search** page. Prefer those. This package still
-> installs and works on DSH 0.2.2-rc.1 for the cases the built-ins do not
-> cover — anonymous Parallel/Exa MCP search, a fallback chain across backends,
-> and arbitrary MCP servers — but it receives no new features.
+> installs and works on the `^0.2.2-rc.1` DSH host range (tested on 0.2.2-rc.1)
+> for the cases the built-ins do not cover — anonymous Parallel/Exa MCP search,
+> a fallback chain across backends, and arbitrary MCP servers — but it receives
+> no new features.
 
-Enhanced web search provider for DeepSeek Harness (DSH) 0.2.2-rc.1.
+Enhanced web search provider for DeepSeek Harness (DSH) 0.2.x.
 Registers a `WebSearchProvider` (id `opencode-enhanced`) into `ctx.web` with
 **chained fallback** in order:
 

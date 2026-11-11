@@ -1,24 +1,26 @@
 # dsh-plugins
 
 Monorepo of DeepSeek Harness (DSH) plugins. Each package is a publishable DSH
-plugin under the `@gitawego` npm scope, targeting DSH **0.2.2-rc.1** (the
-0.1.x line is not supported by the current versions — see
-[`COMPATIBILITY.md`](COMPATIBILITY.md)).
+plugin under the `@gitawego` npm scope, targeting the DSH **`^0.2.2-rc.1`**
+compatibility range (tested against the installed `0.2.2-rc.1`; the 0.1.x line
+is not supported — see [`COMPATIBILITY.md`](COMPATIBILITY.md)).
 
 ## Commands
 
 ```bash
-pnpm check:pins   # every @deepseek-ai/* / @earendil-works/* pin must match the installed harness
+pnpm check:pins   # every @deepseek-ai/* / @earendil-works/* declaration must accept the installed harness
 pnpm verify       # check:pins + typecheck + build + tests
-pnpm fix:pins     # rewrite drifted pins to the host's resolved versions
+pnpm fix:pins     # widen declarations that reject the resolved host
 ```
 
 A plugin runs *inside* the harness process, so a host package it declares at
 runtime is a second copy: an older protocol, catalog, or endpoint than the host
 it loads into. That is not theory — one package here pinned `pi-ai@0.85.1`
-against a `1.5.0` host and grew a whole provider route to compensate.
-`pnpm check:pins` fails the build before that reaches a profile, and
-`scripts/install-plugins.sh` refuses to deploy on it.
+against a `1.5.0` host and grew a whole provider route to compensate. Runtime
+host dependencies are still forbidden. Development and peer declarations use
+ranges, and `pnpm check:pins` only fails when a range cannot accept the host
+that is actually installed. `scripts/install-plugins.sh` refuses to deploy on
+that failure.
 
 ## Packages
 

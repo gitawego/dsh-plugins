@@ -16,23 +16,22 @@
  * route, a transport, a header helper, a catalog feed, and a retry classifier to
  * compensate — all of it dead once the pin was corrected.
  *
- * Three rules, checked on every package:
+ * Two rules, checked on every package:
  *
  * 1. **No host-internal package at runtime.** `@deepseek-ai/*` and
  *    `@earendil-works/*` may appear in `devDependencies` (for types) or
  *    `peerDependencies`, never in `dependencies`.
- * 2. **Exact pins for host packages.** A `@deepseek-ai/dsh-*` or
- *    `@earendil-works/*` reference must be the version the host actually
- *    resolves, not a range: a range re-floats on the next install and produces
- *    exactly the drift this script exists to catch.
- * 3. **Ranges only where the harness tolerates them.** `@deepseek-ai/cordis`
- *    and `@deepseek-ai/schemastery` are the two exceptions (the harness's own
- *    packages keep ranges). They may still be ranges, but the installed host
- *    copy must satisfy the declared range.
+ * 2. **Every declaration must accept the host that is actually installed.**
+ *    Ranges are the normal case (`^0.2.2-rc.1`), and exact pins are also
+ *    accepted. A declaration that cannot accept the resolved host copy fails,
+ *    because the plugin would either install a second incompatible copy or
+ *    declare a peer that the running harness cannot satisfy. The lockfile still
+ *    pins the build a package was tested against; the range is the compatibility
+ *    contract, not a promise that every future host was tested.
  *
  * Usage:
  *   node scripts/check-host-pins.mjs            # check
- *   node scripts/check-host-pins.mjs --fix      # rewrite drifted pins
+ *   node scripts/check-host-pins.mjs --fix      # widen failing declarations
  *   node scripts/check-host-pins.mjs --host /path/to/@deepseek-ai/dsh
  *
  * Exit code 1 on any violation, so `pnpm check` fails a build rather than
@@ -44,9 +43,6 @@ import { fileURLToPath } from 'node:url'
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const HOST_PACKAGE = '@deepseek-ai/dsh'
-
-/** Packages allowed to keep a range instead of an exact host pin. */
-const RANGE_ALLOWED = new Set(['@deepseek-ai/cordis', '@deepseek-ai/schemastery'])
 
 /** Dependency sections in the order they are reported. */
 const SECTIONS = ['dependencies', 'devDependencies', 'peerDependencies']
@@ -159,7 +155,6 @@ if (hostDir === undefined) {
 }
 
 const host = readJson(join(hostDir, 'package.json'))
-const hostDeps = { ...host.dependencies, ...host.peerDependencies }
 console.log(`check-host-pins: host ${HOST_PACKAGE}@${host.version} at ${hostDir}`)
 
 for (const { path, manifest } of workspacePackages()) {
@@ -183,29 +178,29 @@ for (const { path, manifest } of workspacePackages()) {
                 continue
             }
             // A browser-side package ships with the harness release whose client
-            // bundle serves it; building against another release is the same
-            // drift one level down.
-            if (fromHost === undefined && name.startsWith('@deepseek-ai/dsh-') && pinned !== host.version) {
-                fail(manifest.name, `${section}.${name} resolves ${pinned} in this workspace, but the host release is ${host.version}; rebuild the client half against the host release.`)
-                continue
-            }
-
-            // Rule 3: the two tolerated ranges, if the resolved copy satisfies them.
-            if (RANGE_ALLOWED.has(name)) {
-                if (satisfies(pinned, declared)) continue
-                fail(manifest.name, `${section}.${name} = "${declared}" does not accept the resolved ${pinned}.`)
-                continue
-            }
-
-            // Rule 2: everything else is an exact host pin.
-            if (declared !== pinned) {
+            // bundle serves it. The range must cover both the copy this workspace
+            // builds against and the release that will serve it.
+            if (fromHost === undefined && name.startsWith('@deepseek-ai/dsh-')) {
+                if (satisfies(pinned, declared) && satisfies(host.version, declared)) continue
                 if (fix) {
-                    entries[name] = pinned
+                    entries[name] = `^${host.version}`
                     changed = true
-                    console.log(`  fixed ${manifest.name}: ${section}.${name} ${declared} → ${pinned}`)
+                    console.log(`  fixed ${manifest.name}: ${section}.${name} ${declared} → ^${host.version}`)
                 } else {
-                    fail(manifest.name, `${section}.${name} = "${declared}" but the host resolves ${name}@${pinned}. Run \`pnpm check:pins --fix\`.`)
+                    fail(manifest.name, `${section}.${name} = "${declared}" does not accept workspace ${pinned} and host ${host.version}; widen the range or run \`pnpm check:pins --fix\`.`)
                 }
+                continue
+            }
+
+            // Rule 2: the declaration is a compatibility contract; the installed
+            // host copy has to satisfy it.
+            if (satisfies(pinned, declared)) continue
+            if (fix) {
+                entries[name] = `^${pinned}`
+                changed = true
+                console.log(`  fixed ${manifest.name}: ${section}.${name} ${declared} → ^${pinned}`)
+            } else {
+                fail(manifest.name, `${section}.${name} = "${declared}" does not accept the resolved ${name}@${pinned}. Widen the range or run \`pnpm check:pins --fix\`.`)
             }
         }
     }

@@ -4,7 +4,8 @@
 > search with account sign-in, the DeepSeek Search API, Exa/Perplexity
 > providers, `web_fetch`, multi-query `web_search`, and a Web-search settings
 > page (`dsh-client-ui-settings-web-search`). This package is kept working on
-> 0.2.2-rc.1 and still owns the two things the built-ins do not: a credential-free
+> the `^0.2.2-rc.1` host range (tested on 0.2.2-rc.1) and still owns the two
+> things the built-ins do not: a credential-free
 > Parallel/Exa MCP path and a fallback chain. Do not add features here without a
 > concrete gap the built-ins cannot fill; prefer composing the first-party
 > providers.
@@ -15,7 +16,8 @@ this file is the architecture and rulebook.**
 
 ## What this project is
 
-A chained-fallback `WebSearchProvider` for DeepSeek Harness (DSH) 0.2.2-rc.1.
+A chained-fallback `WebSearchProvider` for DeepSeek Harness (DSH) 0.2.x
+(tested on 0.2.2-rc.1, declared as `^0.2.2-rc.1`).
 Registers into `ctx.web` with **id `opencode-enhanced`** alongside the shipped
 `dsh-web-search-deepseek` (id `deepseek-official`). The chain tries in
 order:

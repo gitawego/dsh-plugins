@@ -121,38 +121,41 @@ This rule is recorded in each package's `AGENT.md` as
 "Process restart policy (NON-NEGOTIABLE)" and in each `LESSONS.md` under
 "Tooling pitfalls".
 
-### DSH version pinning
+### DSH version compatibility
 
-Every DSH dependency must be pinned to the **exact** host version (currently
-`0.2.2-rc.1`, matching the host install at
-`<dsh prefix>/lib/node_modules/@deepseek-ai/dsh/node_modules/@deepseek-ai/*`). Caret ranges are forbidden for DSH
-packages: semver pre-release tags don't cross rc boundaries, so `^0.1.1-rc.1`
-silently resolves to a newer host level (`rc.2`, ...) and drifts from the
-running install. Only `@deepseek-ai/cordis` and
-`@deepseek-ai/schemastery` keep ranged pins — they are stable across dsh rc
-levels — and those ranges are kept at the **newest published release**
-(currently `^4.1.0` / `^3.19.0`).
+DSH host packages use a **compatibility range**, not an exact pin. The current
+range is `^0.2.2-rc.1` for `@deepseek-ai/dsh-*`; `@deepseek-ai/cordis` and
+`@deepseek-ai/schemastery` keep `^4.1.0` / `^3.19.0`. The lockfile still pins the
+exact build this workspace was tested against, so a range does not silently
+change what CI compiles; it only says which host versions a plugin claims to
+accept.
 
-**This rule is enforced, not remembered.** `pnpm check:pins`
-(`scripts/check-host-pins.mjs`) resolves the harness actually installed, then
-fails on three things: a `@deepseek-ai/*` or `@earendil-works/*` package in
-`dependencies` (the harness provides it at runtime, so declaring it installs a
-second copy), a `@deepseek-ai/dsh-*` or `@earendil-works/*` reference that is not
-the host's exact resolved version, and a ranged pin whose host copy does not
-satisfy it. `pnpm test` runs it first, and `scripts/install-plugins.sh` refuses
-to deploy a profile when it fails; `pnpm fix:pins` rewrites drifted pins.
+Semver excludes prereleases from ordinary ranges, so `^0.2.2-rc.1` accepts the
+current `0.2.2-rc.1`, `0.2.2`, and later stable `0.2.x` releases. The repository
+checker treats a `0.2.x` prerelease as inside the same line, because that is how
+the installed DSH rc line upgrades in practice. Package-manager peer warnings
+for prereleases are not install blockers; the host copy is what loads at runtime.
 
-The guard exists because the manual rule was followed and still drifted: the
-llm-provider package pinned `@earendil-works/pi-ai@0.85.1` while the host had
-moved to `1.5.0`, and the plugin served the retired `zen/go` endpoint without the
-`x-opencode-session` header, because the *pinned* build — not the host's — is the
-one its code imported.
+**Less strict is not unbounded.** `pnpm check:pins`
+(`scripts/check-host-pins.mjs`) still enforces the rule that matters:
 
-**Never bump a `@deepseek-ai/dsh-*` pin to npm's newest published version.**
-The newest published DSH line (`0.2.x` alpha/rc) is ahead of the installed
-host; pinning to it makes the plugins load against a host they were never
-typed against. "Upgrade dependencies" always means: non-DSH deps to latest,
-cordis/schemastery to latest, DSH to **the host's exact version**.
+- a `@deepseek-ai/*` or `@earendil-works/*` package must never be a runtime
+  `dependency` — the harness provides it, and a second copy is the drift that
+  broke the old `pi-ai` adapter;
+- every `devDependencies` / `peerDependencies` declaration must accept the host
+  (and, for browser-side packages, the workspace client copy) actually resolved;
+- `pnpm fix:pins` widens a rejected declaration to `^<resolved host>` instead of
+  rewriting an exact pin.
+
+`pnpm test` runs the checker first, and `scripts/install-plugins.sh` refuses to
+deploy a profile when it fails.
+
+**After a host upgrade:** run `pnpm install` in the repo to refresh the lockfile,
+run `pnpm -r typecheck && pnpm -r test`, then reinstall the profile. If the new
+host is outside the declared range, widen the range to `^<new host>` and fix the
+actual API break; do not “solve” it by adding a runtime host dependency. The
+range is a compatibility claim, so a host API change must surface as a type or
+test failure, not as a silent second copy.
 
 After every host upgrade, run `pnpm install` in the profile directory
 (`~/.dsh/profiles/web`) WITHOUT `--offline`/frozen lockfile, so stale pinned
