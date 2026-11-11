@@ -21,6 +21,7 @@ function fakeContext(overrides: Record<string, unknown> = {}) {
     const ctx = {
         logger: () => ({ debug() {}, warn() {} }),
         get: (name: string) => services[name],
+        inject: () => {},
         llm: {
             registerAdapter: () => () => {},
         },

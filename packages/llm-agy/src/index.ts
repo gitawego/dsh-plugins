@@ -21,6 +21,8 @@ import type {} from '@deepseek-ai/dsh-user-approval'
 import type {} from '@deepseek-ai/dsh-working-directory'
 import { LlmError, type ImageBlock, type ToolCallId } from '@deepseek-ai/dsh-llm'
 import { AgyAdapter, type AgyHost } from './adapter.ts'
+import { readAgyQuota, type AgyQuota } from './quota.ts'
+import { registerAgyQuotaRoute } from './quota-route.ts'
 import {
     AGY_PROVIDER,
     AGY_SETTINGS_NAMESPACE,
@@ -28,6 +30,7 @@ import {
     DEFAULT_COMMAND,
     DEFAULT_DISPLAY_NAME,
     DEFAULT_MODEL,
+    DEFAULT_QUOTA_COMMAND,
     readConfig,
     resolveConfig,
     type AgyConfigRefs,
@@ -49,8 +52,11 @@ export {
     DEFAULT_COMMAND,
     DEFAULT_DISPLAY_NAME,
     DEFAULT_MODEL,
+    DEFAULT_QUOTA_COMMAND,
 }
 export { readConfig, resolveConfig, type AgyConfigRefs, type AgyMode, type AgyPermissionMode, type ResolvedAgyConfig }
+export { parseAgyUsage, readAgyQuota, type AgyQuota, type AgyQuotaWindow } from './quota.ts'
+export { AGY_QUOTA_ROUTE_PATH, createAgyQuotaHandler, isTrustedLocalRequest, registerAgyQuotaRoute } from './quota-route.ts'
 export { AgyAdapter, type AgyHost }
 export { AcpClient, AcpAbortError, AcpProcessError, AcpRemoteError, AcpTimeoutError } from './acp-client.ts'
 export { AcpSession } from './acp-session.ts'
@@ -69,6 +75,23 @@ export { ChunkTranslator, finishReason } from './stream.ts'
 export function apply(ctx: Context, config: AgyConfigRefs | undefined = undefined): () => void {
     const adapter = new AgyAdapter({ host: createAgyHost(ctx, config), config: () => readConfig(config) })
     const registration = ctx.llm.registerAdapter([AGY_PROVIDER], adapter)
+
+    let quotaCache: { at: number; value: AgyQuota } | undefined
+    const quotaOf = async (force: boolean): Promise<AgyQuota> => {
+        const current = readConfig(config)
+        if (!force && quotaCache !== undefined && Date.now() - quotaCache.at < current.quotaRefreshMinutes * 60_000) {
+            return quotaCache.value
+        }
+        const value = await readAgyQuota({
+            command: current.quotaCommand,
+            cwd: current.cwd || process.cwd(),
+            timeoutMs: Math.min(current.promptTimeoutMs, 90_000),
+        })
+        quotaCache = { at: Date.now(), value }
+        return value
+    }
+    registerAgyQuotaRoute(ctx, { quotaOf })
+
     return () => {
         registration()
         void adapter.dispose()

@@ -29,6 +29,9 @@ export const AGY_PROVIDER = 'agy'
 /** Default ACP command. `agy acp` speaks ACP over stdio. */
 export const DEFAULT_COMMAND = ['agy', 'acp'] as const
 
+/** Default quota command; `/usage` prints the grouped plan buckets as JSON. */
+export const DEFAULT_QUOTA_COMMAND = ['agy', '--print', '/usage', '--output-format', 'json'] as const
+
 /** Label used when the profile does not override it. */
 export const DEFAULT_DISPLAY_NAME = 'Antigravity (agy ACP)'
 
@@ -52,6 +55,10 @@ export type AgyPermissionMode = 'ask' | 'deny'
 export interface ResolvedAgyConfig {
     /** Executable and arguments that start the ACP stdio server. */
     command: string[]
+    /** Executable and arguments that print the plan quota as JSON. */
+    quotaCommand: string[]
+    /** Minutes a quota read stays authoritative in the settings card. */
+    quotaRefreshMinutes: number
     /** Optional working-directory override; empty means the session's own cwd. */
     cwd: string
     /** Bound on spawn + initialize + session/new. */
@@ -81,6 +88,8 @@ export interface ResolvedAgyConfig {
 /** Configuration references the loader supplies to `apply`. */
 export interface AgyConfigRefs {
     command: Volatile<string[]>
+    quotaCommand: Volatile<string[]>
+    quotaRefreshMinutes: Volatile<number>
     cwd: Volatile<string>
     startupTimeoutMs: Volatile<number>
     promptTimeoutMs: Volatile<number>
@@ -98,6 +107,8 @@ export interface AgyConfigRefs {
 /** The schema the settings form is generated from. */
 export const Config: Schema = z.object({
     command: z.array(z.string()).default([...DEFAULT_COMMAND]).volatile(),
+    quotaCommand: z.array(z.string()).default([...DEFAULT_QUOTA_COMMAND]).volatile(),
+    quotaRefreshMinutes: z.number().default(5).volatile(),
     cwd: z.string().default('').volatile(),
     startupTimeoutMs: z.number().default(15_000).volatile(),
     promptTimeoutMs: z.number().default(30 * 60_000).volatile(),
@@ -186,11 +197,19 @@ export function resolveConfig(input: unknown): ResolvedAgyConfig {
               .map((part) => part.trim())
               .filter((part) => part.length > 0)
         : []
+    const quotaCommand = Array.isArray(raw.quotaCommand)
+        ? raw.quotaCommand
+              .filter((part): part is string => typeof part === 'string')
+              .map((part) => part.trim())
+              .filter((part) => part.length > 0)
+        : []
     const models = Array.isArray(raw.models)
         ? raw.models.map(configuredModel).filter((model): model is ConfiguredModel => model !== undefined)
         : []
     return {
         command: command.length > 0 ? command : [...DEFAULT_COMMAND],
+        quotaCommand: quotaCommand.length > 0 ? quotaCommand : [...DEFAULT_QUOTA_COMMAND],
+        quotaRefreshMinutes: positive(raw.quotaRefreshMinutes, 5),
         cwd: trimmed(raw.cwd) ?? '',
         startupTimeoutMs: positive(raw.startupTimeoutMs, 15_000),
         promptTimeoutMs: positive(raw.promptTimeoutMs, 30 * 60_000),
@@ -215,6 +234,8 @@ export function readConfig(config: AgyConfigRefs | undefined): ResolvedAgyConfig
     if (config === undefined) return resolveConfig(undefined)
     return resolveConfig({
         command: config.command.get(),
+        quotaCommand: config.quotaCommand.get(),
+        quotaRefreshMinutes: config.quotaRefreshMinutes.get(),
         cwd: config.cwd.get(),
         startupTimeoutMs: config.startupTimeoutMs.get(),
         promptTimeoutMs: config.promptTimeoutMs.get(),

@@ -15,6 +15,7 @@ Gemini models without a `GEMINI_API_KEY`.
     imageInput: true         # declare image input and send ACP image blocks
     agentMode: default       # any mode advertised by agy acp
     permissionMode: ask      # ask | deny
+    quotaRefreshMinutes: 5   # settings-card cache for the plan quota
 
 - id: agent-default-model
   name: '@deepseek-ai/dsh-agent-default-model'
@@ -120,6 +121,34 @@ the same ACP session, the next prompt is prefixed with an explicit
 ACP's experimental `PromptResponse.usage` maps to DSH token accounting:
 cache reads/writes are subtracted from the reported input total, and thought
 tokens are recorded as `reasoningTokens` (already included in `outputTokens`).
+
+## Plan quota
+
+Settings → **Antigravity** shows the same grouped allowance the
+Antigravity UI reports for the signed-in account: Gemini, Claude/GPT, and
+Gemini 4 Argon, each with its weekly and five-hour buckets, percent remaining,
+and reset countdown.
+
+The source is `agy --print /usage --output-format json`, which returns the
+`retrieveUserQuotaSummary` payload (group names, bucket ids, `window`,
+`remaining_fraction`, `reset_time`). The host reads it at most once per
+`quotaRefreshMinutes` (default 5) and the card's **Refresh** button forces a
+fresh read. Override the command for a wrapper or a different CLI build:
+
+```yaml
+- id: llm-agy
+  name: '@gitawego/dsh-llm-agy'
+  config:
+    quotaCommand: [agy, --print, /usage, --output-format, json]
+```
+
+The browser cannot spawn the CLI, so the card reads a guarded loopback-only
+route owned by this plugin (`/llm-agy/quota`). The route exposes aggregate
+percentages, bucket labels, and reset times only — no prompts, session data, or
+credentials. Like the host `/api` bridge it accepts `GET` only, requires a
+loopback `Host`, refuses `Sec-Fetch-Site: cross-site`, and refuses an `Origin`
+that disagrees with `Host`. A headless composition without a web server simply
+does not mount the route.
 
 ## Development
 

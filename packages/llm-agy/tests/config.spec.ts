@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { DEFAULT_COMMAND, DEFAULT_DISPLAY_NAME, DEFAULT_MODEL, Config, readConfig, resolveConfig } from '../src/config.ts'
+import { DEFAULT_COMMAND, DEFAULT_DISPLAY_NAME, DEFAULT_MODEL, DEFAULT_QUOTA_COMMAND, Config, readConfig, resolveConfig } from '../src/config.ts'
 
 function refs(values: Record<string, unknown>) {
     return Object.fromEntries(Object.entries(values).map(([key, value]) => [key, { get: () => value }])) as never
@@ -9,6 +9,8 @@ describe('resolveConfig', () => {
     it('materializes the shipped defaults without a baked-in model', () => {
         const config = resolveConfig(undefined)
         expect(config.command).toEqual([...DEFAULT_COMMAND])
+        expect(config.quotaCommand).toEqual([...DEFAULT_QUOTA_COMMAND])
+        expect(config.quotaRefreshMinutes).toBe(5)
         expect(config.cwd).toBe('')
         expect(config.startupTimeoutMs).toBe(15_000)
         expect(config.promptTimeoutMs).toBe(30 * 60_000)
@@ -27,6 +29,8 @@ describe('resolveConfig', () => {
     it('accepts overrides and trims strings', () => {
         const config = resolveConfig({
             command: ['node', 'agent.mjs'],
+            quotaCommand: ['node', 'quota.mjs'],
+            quotaRefreshMinutes: 2,
             cwd: '  /tmp/project  ',
             startupTimeoutMs: 500,
             promptTimeoutMs: 2_000,
@@ -41,6 +45,8 @@ describe('resolveConfig', () => {
         })
         expect(config).toMatchObject({
             command: ['node', 'agent.mjs'],
+            quotaCommand: ['node', 'quota.mjs'],
+            quotaRefreshMinutes: 2,
             cwd: '/tmp/project',
             startupTimeoutMs: 500,
             promptTimeoutMs: 2_000,
@@ -121,6 +127,8 @@ describe('readConfig', () => {
         const config = readConfig(
             refs({
                 command: ['agy', 'acp', '--dangerously-skip-permissions'],
+                quotaCommand: ['agy', '--print', '/usage', '--output-format', 'json'],
+                quotaRefreshMinutes: 3,
                 cwd: '/work',
                 startupTimeoutMs: 1_000,
                 promptTimeoutMs: 2_000,
@@ -136,6 +144,8 @@ describe('readConfig', () => {
             }),
         )
         expect(config.command).toEqual(['agy', 'acp', '--dangerously-skip-permissions'])
+        expect(config.quotaCommand).toEqual(['agy', '--print', '/usage', '--output-format', 'json'])
+        expect(config.quotaRefreshMinutes).toBe(3)
         expect(config.displayName).toBe('Configured name')
         expect(config.defaultModel).toBe('')
         expect(config.models).toEqual([{ id: 'configured-model', contextWindow: 100 }])
