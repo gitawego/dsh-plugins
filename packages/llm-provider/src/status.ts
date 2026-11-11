@@ -212,8 +212,10 @@ export async function readStatus(options: ReadStatusOptions): Promise<ProviderSt
  * @returns YAML lines, indented for `providers.<route>.models`.
  */
 export function modelsSnippet(status: ProviderStatus): string[] {
-    const rows = status.models.length > 0 ? status.models : []
-    if (rows.length === 0) return ['# no models read yet; refresh to generate this block']
+    // A catalog-only id cannot be made selectable by declaring it; the override
+    // block must list only ids the endpoint actually serves.
+    const rows = status.models.filter((row) => row.live)
+    if (rows.length === 0) return ['# the provider listed no served models; refresh to generate this block']
     const lines = [`    models:`]
     for (const row of rows) {
         lines.push(`      - id: ${row.id}`)

@@ -211,6 +211,11 @@ describe('the paste-ready models block', () => {
     })
 
     it('says why it is empty rather than emitting a stub block', () => {
-        expect(modelsSnippet(composeStatus(input()))).toEqual(['# no models read yet; refresh to generate this block'])
+        expect(modelsSnippet(composeStatus(input()))).toEqual(['# the provider listed no served models; refresh to generate this block'])
+    })
+
+    it('omits catalog-only ids that the endpoint does not serve', () => {
+        const status = composeStatus(input({ knownModels: [{ id: 'alpha' }], liveIds: [] }))
+        expect(modelsSnippet(status)).toEqual(['# the provider listed no served models; refresh to generate this block'])
     })
 })

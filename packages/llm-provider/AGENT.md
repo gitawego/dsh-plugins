@@ -66,9 +66,13 @@ code.
 - both HTTP routes share one trust guard, and neither reads a credential on a
   refused request;
 - client CSS uses the current host aliases (`--dsw-alias-label-*`,
-  `--dsw-alias-border-l2`, `--dsw-alias-bg-layer-*`, `--dsh-font-family-code`);
-  the built-bundle test rejects the pre-0.2.2 `fg-*`, `border-tertiary`,
-  `bg-primary`, `bg-secondary`, `fill-tertiary`, and `font-mono` aliases;
+  `--dsw-alias-settings-card-*`, `--dsw-alias-border-l3/l4`, and
+  `--dsh-font-family-code-default`); the built-bundle test rejects the pre-0.2.2
+  `fg-*`, `border-tertiary`, `bg-primary`, `bg-secondary`, `fill-tertiary`, and
+  `font-mono` aliases;
+- the main model list shows only served-and-known ids; catalog-only ids are not
+  selectable and are not rendered, while live-only ids stay in the warning
+  section; the paste-ready snippet lists served ids only;
 - nothing in the client reads a Remote namespace, and nothing in the package
   imports `@earendil-works/pi-ai`.
 

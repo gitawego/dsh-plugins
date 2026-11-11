@@ -38,39 +38,42 @@ declare module '@deepseek-ai/dsh-client-ui-slots' {
 
 const CSS = `
 .lpd { display: flex; flex-direction: column; gap: 16px; }
-.lpd-head h2 { margin: 0 0 4px; font-size: 16px; font-weight: 600; }
-.lpd-head p { margin: 0; color: var(--dsw-alias-label-secondary); font-size: 12.5px; line-height: 1.55; max-width: 72ch; }
-.lpd-card { display: flex; flex-direction: column; gap: 14px; padding: 14px 16px; border: 1px solid var(--dsw-alias-border-l2); border-radius: 10px; background: var(--dsw-alias-bg-layer-1); }
+.lpd-head h2 { margin: 0 0 4px; font-size: 16px; font-weight: 500; line-height: 24px; }
+.lpd-head p { margin: 0; color: var(--dsw-alias-label-tertiary); font-size: 14px; line-height: 22px; max-width: 72ch; }
+.lpd-card { display: flex; flex-direction: column; gap: 12px; padding: 12px 14px; border: .5px solid var(--dsw-alias-settings-card-stroke); border-radius: var(--dsw-radius-xl); background: var(--dsw-alias-settings-card-fill); }
 .lpd-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
-.lpd-route { font: 600 13px/1.3 var(--dsh-font-family-code, ui-monospace); }
-.lpd-badge { font-size: 11.5px; padding: 1px 7px; border-radius: 999px; border: 1px solid var(--dsw-alias-border-l2); color: var(--dsw-alias-label-secondary); }
+.lpd-route { font-family: var(--dsh-font-family-code-default, ui-monospace); font-size: 13px; font-weight: 600; line-height: 18px; }
+.lpd-badge { font-size: 11px; line-height: 16px; padding: 1px 6px; border-radius: var(--dsw-radius-xs); border: .5px solid var(--dsw-alias-border-l3); color: var(--dsw-alias-label-secondary); }
 .lpd-badge.ok { color: var(--dsw-alias-state-success-primary); border-color: currentColor; }
 .lpd-badge.warn { color: var(--dsw-alias-state-warn-primary); border-color: currentColor; }
-.lpd-endpoint { font: 11.5px/1.4 var(--dsh-font-family-code, ui-monospace); color: var(--dsw-alias-label-secondary); overflow-wrap: anywhere; }
-.lpd-fields { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 10px 14px; }
-.lpd-field { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
-.lpd-field label { font-size: 11.5px; color: var(--dsw-alias-label-secondary); }
-.lpd-field input { font: 12.5px/1.5 var(--dsh-font-family-code, ui-monospace); padding: 5px 8px; border: 1px solid var(--dsw-alias-border-l2); border-radius: 6px; background: var(--dsw-alias-bg-layer-2); color: inherit; min-width: 0; }
-.lpd-field small { font-size: 11px; color: var(--dsw-alias-label-tertiary); }
+.lpd-endpoint { font-family: var(--dsh-font-family-code-default, ui-monospace); font-size: 12px; line-height: 18px; color: var(--dsw-alias-label-tertiary); overflow-wrap: anywhere; }
+.lpd-fields { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 12px 14px; }
+.lpd-field { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.lpd-field label { font-size: 12px; font-weight: 500; line-height: 18px; color: var(--dsw-alias-label-secondary); }
+.lpd-field input { box-sizing: border-box; width: 100%; height: 32px; padding: 0 10px; border: .5px solid var(--dsw-alias-border-l4); border-radius: var(--dsw-radius-md); background: var(--dsw-alias-bg-layer-1); color: var(--dsw-alias-label-primary); font: inherit; font-size: 14px; line-height: 22px; min-width: 0; }
+.lpd-field input:focus { border-color: var(--dsw-alias-state-business-primary); outline: none; }
+.lpd-field small { font-size: 12px; line-height: 18px; color: var(--dsw-alias-label-tertiary); }
 .lpd-section { display: flex; flex-direction: column; gap: 8px; }
-.lpd-section h3 { margin: 0; font-size: 12.5px; font-weight: 600; }
-.lpd-section p { margin: 0; font-size: 11.5px; color: var(--dsw-alias-label-secondary); line-height: 1.5; }
-.lpd-counts { display: flex; gap: 14px; font-size: 12px; color: var(--dsw-alias-label-secondary); }
-.lpd-list { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 2px; max-height: 260px; overflow: auto; }
-.lpd-item { display: grid; grid-template-columns: minmax(12ch, 22ch) 1fr auto; gap: 10px; align-items: baseline; font-size: 12px; padding: 3px 0; border-bottom: 1px solid var(--dsw-alias-border-l2); }
+.lpd-section h3 { margin: 0; font-size: 14px; font-weight: 500; line-height: 22px; }
+.lpd-section p { margin: 0; font-size: 12px; color: var(--dsw-alias-label-tertiary); line-height: 18px; }
+.lpd-counts { display: flex; gap: 14px; font-size: 12px; line-height: 18px; color: var(--dsw-alias-label-tertiary); }
+.lpd-list-head { display: grid; grid-template-columns: minmax(14ch, 24ch) 1fr; gap: 12px; align-items: baseline; font-size: 11px; font-weight: 500; line-height: 16px; color: var(--dsw-alias-label-tertiary); padding: 0 0 4px; }
+.lpd-list { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 0; }
+.lpd-item { display: grid; grid-template-columns: minmax(14ch, 24ch) 1fr; gap: 12px; align-items: baseline; font-size: 12px; line-height: 18px; padding: 4px 0; border-bottom: .5px solid var(--dsw-alias-border-l2); }
 .lpd-item:last-child { border-bottom: 0; }
-.lpd-id { font: 12px/1.4 var(--dsh-font-family-code, ui-monospace); overflow-wrap: anywhere; }
+.lpd-id { font-family: var(--dsh-font-family-code-default, ui-monospace); font-size: 12.5px; line-height: 18px; overflow-wrap: anywhere; }
 .lpd-facts { color: var(--dsw-alias-label-secondary); font-variant-numeric: tabular-nums; }
-.lpd-source { font-size: 11px; color: var(--dsw-alias-label-tertiary); white-space: nowrap; }
-.lpd-source.unknown { color: var(--dsw-alias-state-warn-primary); }
-.lpd-snippet { margin: 0; padding: 10px 12px; border-radius: 8px; background: var(--dsw-alias-bg-layer-2); border: 1px solid var(--dsw-alias-border-l2); overflow: auto; max-height: 220px; }
-.lpd-snippet code { font: 11.5px/1.5 var(--dsh-font-family-code, ui-monospace); white-space: pre; }
+.lpd-details { margin-top: 2px; }
+.lpd-details summary { cursor: pointer; font-size: 12px; line-height: 18px; color: var(--dsw-alias-label-secondary); }
+.lpd-details summary:hover { color: var(--dsw-alias-label-primary); }
+.lpd-snippet { margin: 8px 0 0; padding: 10px 12px; border-radius: var(--dsw-radius-md); background: var(--dsw-alias-bg-layer-1); border: .5px solid var(--dsw-alias-border-l4); overflow: auto; max-height: 320px; }
+.lpd-snippet code { font-family: var(--dsh-font-family-code-default, ui-monospace); font-size: 12px; line-height: 18px; white-space: pre; }
 .lpd-actions { display: flex; gap: 8px; align-items: center; }
-.lpd-btn { font-size: 12px; padding: 4px 10px; border-radius: 6px; border: 1px solid var(--dsw-alias-border-l2); background: var(--dsw-alias-bg-layer-2); color: inherit; cursor: pointer; }
-.lpd-btn:hover { border-color: var(--dsw-alias-label-tertiary); }
-.lpd-btn:disabled { opacity: .55; cursor: default; }
-.lpd-when { font-size: 11.5px; color: var(--dsw-alias-label-tertiary); }
-.lpd-error { font-size: 12px; color: var(--dsw-alias-state-error-primary); }
+.lpd-btn { box-sizing: border-box; height: 28px; padding: 0 10px; border-radius: var(--dsw-radius-sm); border: .5px solid var(--dsw-alias-border-l3); background: transparent; color: var(--dsw-alias-label-primary); font: inherit; font-size: 12px; line-height: 18px; cursor: pointer; }
+.lpd-btn:hover { background: var(--dsw-alias-interactive-bg-hover); }
+.lpd-btn:disabled { opacity: .4; cursor: default; }
+.lpd-when { font-size: 12px; line-height: 18px; color: var(--dsw-alias-label-tertiary); }
+.lpd-error { font-size: 12px; line-height: 18px; color: var(--dsw-alias-state-error-primary); }
 `
 
 /** Install the panel's stylesheet once. */
@@ -140,20 +143,18 @@ function Field(props: {
     )
 }
 
-/** One model row: id, capacities, and where the id came from. */
-function ModelLine(props: { row: ModelRow; t: LlmProvidersFace['t'] }): JSX.Element {
+/** One selected model row: id and capacities. */
+function ModelLine(props: { row: ModelRow }): JSX.Element {
     const row = props.row
     const facts: string[] = []
     if (row.contextWindow !== undefined) facts.push(`${formatTokens(row.contextWindow)} ctx`)
     if (row.maxTokens !== undefined) facts.push(`${formatTokens(row.maxTokens)} out`)
     if (row.input !== undefined && row.input.length > 0) facts.push(row.input.join('+'))
     if (row.reasoning === true) facts.push('thinking')
-    const source = row.known && row.live ? 'catalog + live' : row.known ? 'catalog only' : 'live only'
     return (
         <li className="lpd-item">
             <span className="lpd-id">{row.id}</span>
             <span className="lpd-facts">{facts.join(' · ') || '—'}</span>
-            <span className={`lpd-source${row.known ? '' : ' unknown'}`}>{source}</span>
         </li>
     )
 }
@@ -168,6 +169,10 @@ export function LlmProvidersPanel(props: PropsRuntime<'settings.section'> & Inje
     const snapshot = props.useDashboard((value) => value)
     const [copied, setCopied] = useState(false)
     const snippet = useMemo(() => buildSnippet(snapshot), [snapshot])
+    // The picker can offer an id only when the endpoint serves it and the
+    // installed catalog describes it. Catalog-only ids are not selectable, and
+    // live-only ids belong in the warning section below.
+    const selected = useMemo(() => snapshot.models.filter((row) => row.live && row.known), [snapshot.models])
 
     useEffect(() => {
         if (!copied) return undefined
@@ -230,19 +235,31 @@ export function LlmProvidersPanel(props: PropsRuntime<'settings.section'> & Inje
                     <span>{fill(t('served'), { n: snapshot.servedCount })}</span>
                     <span>{fill(t('known'), { n: snapshot.knownCount })}</span>
                 </div>
-                {snapshot.models.length === 0
+                {selected.length === 0
                     ? <p>{t('empty')}</p>
                     : (
-                        <ul className="lpd-list">
-                            {snapshot.models.map((row) => <ModelLine key={row.id} row={row} t={t} />)}
-                        </ul>
+                        <>
+                            <div className="lpd-list-head" aria-hidden="true">
+                                <span>{t('modelColumn')}</span>
+                                <span>{t('detailsColumn')}</span>
+                            </div>
+                            <ul className="lpd-list">
+                                {selected.map((row) => <ModelLine key={row.id} row={row} />)}
+                            </ul>
+                        </>
                     )}
             </section>
+            {snapshot.unknownIds.length > 0 ? (
+                <section className="lpd-section">
+                    <h3>{fill(t('unknownTitle'), { n: snapshot.unknownIds.length })}</h3>
+                    <p>{t('unknownIntro')}</p>
+                    <span className="lpd-id">{snapshot.unknownIds.join(', ')}</span>
+                </section>
+            ) : null}
             <section className="lpd-section">
-                <h3>{fill(t('unknownTitle'), { n: snapshot.unknownIds.length })}</h3>
-                <p>{t('unknownIntro')}</p>
+                <h3>{fill(t('snippetTitle'), { route: snapshot.route })}</h3>
+                <p>{fill(t('snippetIntro'), { route: snapshot.route })}</p>
                 <div className="lpd-row">
-                    <span className="lpd-id">{snapshot.unknownIds.join(', ') || '—'}</span>
                     <button
                         className="lpd-btn"
                         type="button"
@@ -255,8 +272,10 @@ export function LlmProvidersPanel(props: PropsRuntime<'settings.section'> & Inje
                         {copied ? t('copied') : t('copy')}
                     </button>
                 </div>
-                <p>{fill(t('snippetIntro'), { route: snapshot.route })}</p>
-                <pre className="lpd-snippet"><code>{snippet.join('\n') || '—'}</code></pre>
+                <details className="lpd-details">
+                    <summary>{t('showSnippet')}</summary>
+                    <pre className="lpd-snippet"><code>{snippet.join('\n') || '—'}</code></pre>
+                </details>
             </section>
             <QuotaGauges view={snapshot.quota} />
         </div>
@@ -272,9 +291,12 @@ export function LlmProvidersPanel(props: PropsRuntime<'settings.section'> & Inje
  * @returns YAML lines, or an empty list when nothing was read.
  */
 export function buildSnippet(snapshot: DashboardSnapshot): string[] {
-    if (snapshot.models.length === 0) return []
+    // Only ids the endpoint actually serves belong in the override block. A
+    // catalog-only id cannot be made selectable by declaring it.
+    const served = snapshot.models.filter((row) => row.live)
+    if (served.length === 0) return []
     const lines = [`providers:`, `  ${snapshot.route || 'opencode-go'}:`, `    models:`]
-    for (const row of snapshot.models) {
+    for (const row of served) {
         lines.push(`      - id: ${row.id}`)
         if (row.contextWindow !== undefined) lines.push(`        contextWindow: ${row.contextWindow}`)
         if (row.maxTokens !== undefined) lines.push(`        maxTokens: ${row.maxTokens}`)

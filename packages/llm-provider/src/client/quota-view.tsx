@@ -112,20 +112,20 @@ export function QuotaToolView(props: QuotaToolViewProps): JSX.Element {
  * draw the same gauge.
  */
 export const QUOTA_CSS = `
-.lpq{display:flex;flex-direction:column;gap:8px;padding:10px 12px;border:1px solid var(--dsw-alias-border-l2);border-radius:10px;background:var(--dsw-alias-bg-layer-1)}
+.lpq{display:flex;flex-direction:column;gap:10px;padding:12px 14px;border:.5px solid var(--dsw-alias-settings-card-stroke);border-radius:var(--dsw-radius-xl);background:var(--dsw-alias-settings-card-fill)}
 .lpq-head{display:flex;align-items:baseline;gap:8px}
-.lpq-title{font-family:var(--dsh-font-family-code,ui-monospace,SFMono-Regular,Menlo,monospace);font-size:12px;color:var(--dsw-alias-label-primary)}
-.lpq-sub{font-size:11px;color:var(--dsw-alias-label-tertiary)}
+.lpq-title{font-family:var(--dsh-font-family-code-default,ui-monospace,SFMono-Regular,Menlo,monospace);font-size:13px;font-weight:600;line-height:18px;color:var(--dsw-alias-label-primary)}
+.lpq-sub{font-size:12px;line-height:18px;color:var(--dsw-alias-label-tertiary)}
 .lpq-rows{display:flex;flex-direction:column;gap:8px;margin:0;padding:0;list-style:none}
 .lpq-row{display:grid;grid-template-columns:64px minmax(48px,1fr) 76px 66px;align-items:center;gap:10px}
-.lpq-label{font-size:11px;color:var(--dsw-alias-label-secondary)}
+.lpq-label{font-size:12px;line-height:18px;color:var(--dsw-alias-label-secondary)}
 .lpq-track{height:8px;border-radius:999px;background:var(--dsw-alias-border-l2,#0000001a);overflow:hidden}
 .lpq-fill{display:block;height:100%;min-width:2px;border-radius:999px;background:var(--dsw-alias-state-success-primary,#2da44e);transition:width .18s ease}
 .lpq-row[data-tone="warn"] .lpq-fill{background:var(--dsw-alias-state-warn-primary,#bf8700)}
 .lpq-row[data-tone="critical"] .lpq-fill{background:var(--dsw-alias-state-error-primary,#d54941)}
-.lpq-value{font-size:11px;color:var(--dsw-alias-label-primary);font-variant-numeric:tabular-nums;text-align:right}
+.lpq-value{font-size:12px;line-height:18px;color:var(--dsw-alias-label-primary);font-variant-numeric:tabular-nums;text-align:right}
 .lpq-row[data-tone="warn"] .lpq-value{color:var(--dsw-alias-state-warn-primary,#bf8700)}
 .lpq-row[data-tone="critical"] .lpq-value{color:var(--dsw-alias-state-error-primary,#d54941)}
-.lpq-reset{font-size:11px;color:var(--dsw-alias-label-tertiary);font-variant-numeric:tabular-nums;text-align:right}
-.lpq-fallback{margin:0;font-size:11px;color:var(--dsw-alias-label-tertiary)}
+.lpq-reset{font-size:12px;line-height:18px;color:var(--dsw-alias-label-tertiary);font-variant-numeric:tabular-nums;text-align:right}
+.lpq-fallback{margin:0;font-size:12px;line-height:18px;color:var(--dsw-alias-label-tertiary)}
 `
