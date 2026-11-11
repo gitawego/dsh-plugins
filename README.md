@@ -30,6 +30,13 @@ against a `1.5.0` host and grew a whole provider route to compensate.
   catalog (plus the `models:` block that reconciles them) and the 5-hour /
   weekly / monthly allowance — through a command, a tool, a guarded loopback
   route, and a settings section.
+- [packages/llm-agy](packages/llm-agy/) — `@gitawego/dsh-llm-agy`:
+  the **Antigravity (`agy`) ACP** provider. Registers the `agy` route and drives
+  `agy acp` over ndjson JSON-RPC, discovering models and `thought_level` from
+  ACP config options and bridging ACP tool permissions into DSH approvals. It is
+  an agent-delegate:
+  `agy` runs its own tools, so DSH tool schemas are not sent. Authentication is
+  the CLI's existing Google/Antigravity login; no API key is stored.
 - [packages/web-search](packages/web-search/) — `@gitawego/dsh-web-search`:
   **deprecated** (kept working, no new features). Enhanced web search provider:
   works with **no API key** (free Parallel/Exa MCP backends) and optionally any

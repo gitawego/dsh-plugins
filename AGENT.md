@@ -58,6 +58,8 @@ together for version compatibility. Currently:
   **dashboard**: live model list versus the harness catalog, and the
   subscription quota. No route, no transport, no header — `dsh-llm-pi-ai` owns
   all of that.
+- `packages/llm-agy` — `@gitawego/dsh-llm-agy` — the `agy` ACP provider:
+  agent-delegate over `agy acp`, no DSH tools, approval bridge, no credentials.
 - `packages/web-search` — `@gitawego/dsh-web-search` — chained-fallback
   `WebSearchProvider` (Anthropic + free MCP backends).
 - `packages/lsp` — LSP bridge.

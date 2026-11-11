@@ -1,0 +1,12 @@
+# @gitawego/dsh-llm-agy bundle patch.
+#
+# This layer inserts the plugin that registers the `agy` route into ctx.llm.
+# The route is additive: no shipped adapter owns `agy`, so selecting it is a
+# normal model choice (`agent-default-model.provider: agy`).
+#
+# Uninstall removes this layer; the route and its settings namespace disappear
+# on the next boot. The plugin never writes credentials: it drives an `agy`
+# installation whose Google/Antigravity login already exists.
+- insert:
+    - id: llm-agy
+      name: '@gitawego/dsh-llm-agy'
