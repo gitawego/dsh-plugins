@@ -179,6 +179,30 @@ describe('AgyAdapter streaming (integration vs fake ACP agent)', () => {
         expect(recorded.lastPrompt).toBe('User: two')
     })
 
+    it('replays the transcript into a new ACP server after the account epoch changes', async () => {
+        const dir = await tempDir()
+        const firstCount = join(dir, 'first.json')
+        const secondCount = join(dir, 'second.json')
+        const epoch = { value: 0 }
+        const approval = host(dir)
+        const adapter = new AgyAdapter({
+            host: approval.host,
+            config: () => config(),
+            accountEpoch: () => epoch.value,
+        })
+        adapters.push(adapter)
+        setEnv({ FAKE_AGY_COUNT_FILE: firstCount, FAKE_AGY_ECHO: '1' })
+
+        const first = user('one')
+        await collect(adapter, options([first]))
+        epoch.value = 1
+        setEnv({ FAKE_AGY_COUNT_FILE: secondCount })
+        await collect(adapter, options([first, assistant('first answer'), user('two')]))
+
+        expect((await counts(firstCount)).newCount).toBe(1)
+        expect((await counts(secondCount)).newCount).toBe(1)
+    })
+
     it('opens a separate ACP session for a different DSH session', async () => {
         const dir = await tempDir()
         const firstCount = join(dir, 'first.json')

@@ -1,23 +1,30 @@
 /**
- * Antigravity quota section for Settings → Antigravity.
+ * Antigravity section for Settings → Antigravity.
  *
- * The quota is read by the plugin's guarded loopback route; this half only
- * renders the grouped buckets (Gemini, Claude/GPT, Argon) with the same meter
+ * The account list and quota come from guarded loopback routes owned by the
+ * plugin; this half renders the active account, one-click switching, the
+ * Google sign-in exchange, and the grouped quota buckets with the same meter
  * language as the OpenCode Go card.
  *
  * @module @gitawego/dsh-llm-agy/client
  */
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import type { Context as ClientContext } from '@deepseek-ai/cordis'
 import type { InjectFace, PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
 import type {} from '@deepseek-ai/dsh-client-locale/client'
 import type {} from '@deepseek-ai/dsh-client-ui-renderer/client'
 import type {} from '@deepseek-ai/dsh-client-ui-settings/client'
+import { parseAccountList, parseLoginStart, type AccountView, type LoginView } from './account-format.ts'
 import { formatCountdown, labelFor, parseQuotaView, toneFor, type QuotaView, type QuotaWindow } from './quota-format.ts'
 import { en, zh, type Translate } from './strings.ts'
 
-/** Path served by the host half. */
+/** Paths served by the host half. */
 const QUOTA_PATH = '/llm-agy/quota'
+const ACCOUNTS_PATH = '/llm-agy/accounts'
+const SWITCH_PATH = '/llm-agy/accounts/switch'
+const LOGIN_PATH = '/llm-agy/accounts/login'
+const LOGIN_CODE_PATH = '/llm-agy/accounts/login/code'
+const LOGIN_CANCEL_PATH = '/llm-agy/accounts/login/cancel'
 
 const NS = 'llm-agy-quota'
 
@@ -50,6 +57,29 @@ const CSS = `
 .aq-reset{font-size:12px;line-height:18px;color:var(--dsw-alias-label-tertiary);font-variant-numeric:tabular-nums;text-align:right}
 .aq-error{margin:0;font-size:12px;line-height:18px;color:var(--dsw-alias-state-error-primary)}
 .aq-hint{margin:0;font-size:12px;line-height:18px;color:var(--dsw-alias-label-tertiary)}
+.aq-divider{height:1px;background:var(--dsw-alias-border-l2);margin:2px 0}
+.aq-accounts{display:flex;flex-direction:column;gap:8px}
+.aq-accounts-head{display:flex;align-items:center;justify-content:space-between;gap:10px}
+.aq-accounts h3{margin:0;font-size:12px;font-weight:600;text-transform:uppercase;letter-spacing:.06em;color:var(--dsw-alias-label-secondary)}
+.aq-account-list{display:flex;flex-direction:column;gap:6px;margin:0;padding:0;list-style:none}
+.aq-account{display:grid;grid-template-columns:8px minmax(0,1fr) auto;align-items:center;gap:10px;padding:7px 10px;border:1px solid var(--dsw-alias-border-l2);border-radius:9px;background:var(--dsw-alias-bg-layer-2)}
+.aq-account[data-active="true"]{border-color:var(--dsw-alias-brand-primary)}
+.aq-account-mark{width:8px;height:8px;border-radius:50%;border:1px solid var(--dsw-alias-border-l2)}
+.aq-account[data-active="true"] .aq-account-mark{background:var(--dsw-alias-brand-primary);border-color:transparent}
+.aq-account-id{display:flex;flex-direction:column;gap:1px;min-width:0;font-size:12px;line-height:18px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.aq-account-id small{font-size:11px;line-height:16px;color:var(--dsw-alias-label-tertiary);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.aq-pill{flex:none;padding:2px 8px;border:1px solid var(--dsw-alias-brand-primary);border-radius:999px;color:var(--dsw-alias-brand-primary);font-size:11px;line-height:16px;white-space:nowrap}
+.aq-btn--small{padding:2px 8px;font-size:11px;line-height:16px}
+.aq-dialog{width:min(520px,92vw);padding:16px;border:1px solid var(--dsw-alias-border-l2);border-radius:14px;background:var(--dsw-alias-bg-layer-1);color:var(--dsw-alias-label-primary)}
+.aq-dialog::backdrop{background:#0009}
+.aq-dialog-head{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:10px}
+.aq-dialog-head h3{margin:0;font-size:15px;font-weight:600}
+.aq-dialog p{margin:8px 0 0;font-size:12px;line-height:18px;color:var(--dsw-alias-label-secondary)}
+.aq-dialog p.aq-error{color:var(--dsw-alias-state-error-primary)}
+.aq-link{display:inline-block;margin-top:10px;color:var(--dsw-alias-brand-primary);font-size:12px;line-height:18px;word-break:break-all}
+.aq-field{display:flex;flex-direction:column;gap:4px;margin-top:12px;font-size:12px;color:var(--dsw-alias-label-secondary)}
+.aq-field input{width:100%;box-sizing:border-box;padding:6px 10px;border:1px solid var(--dsw-alias-border-l2);border-radius:8px;background:var(--dsw-alias-bg-layer-2);color:var(--dsw-alias-label-primary);font:inherit;font-size:13px}
+.aq-dialog-actions{display:flex;justify-content:flex-end;gap:8px;margin-top:14px}
 `
 
 function installStyles(): () => void {
@@ -65,32 +95,166 @@ interface AgyQuotaFace {
     t: Translate
 }
 
-/** The quota card. */
+/** Human-readable message from an unknown error. */
+function messageOf(error: unknown): string {
+    return error instanceof Error ? error.message : String(error)
+}
+
+/** Read one JSON response. */
+async function getJson(path: string): Promise<unknown> {
+    const response = await fetch(path, {
+        headers: { accept: 'application/json' },
+        credentials: 'same-origin',
+    })
+    if (!response.ok) throw new Error(`request refused (${response.status})`)
+    return response.json()
+}
+
+/** POST one JSON request with the guard's required header. */
+async function postJson(path: string, body: unknown): Promise<unknown> {
+    const response = await fetch(path, {
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: {
+            accept: 'application/json',
+            'content-type': 'application/json',
+            'x-dsh-llm-agy': '1',
+        },
+        body: JSON.stringify(body),
+    })
+    const payload = await response.json().catch(() => undefined)
+    if (!response.ok) {
+        const error = payload !== null && typeof payload === 'object' && typeof (payload as Record<string, unknown>)['error'] === 'string'
+            ? (payload as Record<string, string>)['error']
+            : `request refused (${response.status})`
+        throw new Error(error)
+    }
+    return payload
+}
+
+/** The account and quota card. */
 export function AntigravityQuotaPanel(props: PropsRuntime<'settings.section'> & InjectFace<AgyQuotaFace>): JSX.Element {
     const [view, setView] = useState<QuotaView | undefined>()
     const [loading, setLoading] = useState(true)
     const [fetchedAt, setFetchedAt] = useState<number | undefined>()
+    const [accounts, setAccounts] = useState<AccountView[]>([])
+    const [accountsLoaded, setAccountsLoaded] = useState(false)
+    const [accountError, setAccountError] = useState<string | undefined>()
+    const [accountNote, setAccountNote] = useState<string | undefined>()
+    const [switchingId, setSwitchingId] = useState<string | undefined>()
+    const [dialogOpen, setDialogOpen] = useState(false)
+    const [login, setLogin] = useState<LoginView | undefined>()
+    const [loginCode, setLoginCode] = useState('')
+    const [loginBusy, setLoginBusy] = useState(false)
+    const [loginError, setLoginError] = useState<string | undefined>()
+    const dialogRef = useRef<HTMLDialogElement>(null)
+    const addAttempt = useRef(0)
 
-    const load = async (force: boolean): Promise<void> => {
+    const loadQuota = async (force: boolean): Promise<void> => {
         setLoading(true)
         try {
-            const response = await fetch(`${QUOTA_PATH}${force ? '?refresh=1' : ''}`, {
-                headers: { accept: 'application/json' },
-                credentials: 'same-origin',
-            })
-            if (!response.ok) throw new Error(`quota read refused (${response.status})`)
-            const parsed = parseQuotaView(await response.json())
+            const parsed = parseQuotaView(await getJson(`${QUOTA_PATH}${force ? '?refresh=1' : ''}`))
             setView(parsed)
             setFetchedAt(parsed?.fetchedAt ?? Date.now())
         } catch (error) {
-            setView({ windows: [], error: error instanceof Error ? error.message : String(error) })
+            setView({ windows: [], error: messageOf(error) })
             setFetchedAt(Date.now())
         } finally {
             setLoading(false)
         }
     }
 
-    useEffect(() => { void load(false) }, [])
+    const loadAccounts = async (): Promise<void> => {
+        try {
+            const parsed = parseAccountList(await getJson(ACCOUNTS_PATH))
+            setAccounts(parsed?.accounts ?? [])
+            setAccountsLoaded(true)
+            setAccountError(undefined)
+        } catch (error) {
+            setAccountsLoaded(true)
+            setAccountError(`${props.t('accountsFailed')}: ${messageOf(error)}`)
+        }
+    }
+
+    useEffect(() => {
+        void loadAccounts()
+        void loadQuota(false)
+    }, [])
+
+    useEffect(() => {
+        const dialog = dialogRef.current
+        if (dialogOpen && dialog !== null && !dialog.open) dialog.showModal()
+    }, [dialogOpen])
+
+    const switchAccount = async (account: AccountView): Promise<void> => {
+        setSwitchingId(account.id)
+        setAccountError(undefined)
+        setAccountNote(undefined)
+        try {
+            const parsed = parseAccountList(await postJson(SWITCH_PATH, { id: account.id }))
+            if (parsed !== undefined) setAccounts(parsed.accounts)
+            await loadQuota(true)
+        } catch (error) {
+            setAccountError(`${props.t('switchFailed')}: ${messageOf(error)}`)
+        } finally {
+            setSwitchingId(undefined)
+        }
+    }
+
+    const openAdd = async (): Promise<void> => {
+        const attempt = ++addAttempt.current
+        setLogin(undefined)
+        setLoginCode('')
+        setLoginError(undefined)
+        setLoginBusy(false)
+        setAccountNote(undefined)
+        setDialogOpen(true)
+        try {
+            const parsed = parseLoginStart(await postJson(LOGIN_PATH, {}))
+            if (parsed === undefined) throw new Error('unexpected sign-in response')
+            if (attempt !== addAttempt.current) {
+                // The dialog was cancelled while the CLI was starting.
+                void postJson(LOGIN_CANCEL_PATH, { loginId: parsed.loginId }).catch(() => {})
+                return
+            }
+            setLogin(parsed)
+        } catch (error) {
+            if (attempt !== addAttempt.current) return
+            setLoginError(`${props.t('loginFailed')}: ${messageOf(error)}`)
+        }
+    }
+
+    const cancelAdd = (): void => {
+        addAttempt.current += 1
+        const pending = login
+        setLogin(undefined)
+        setLoginCode('')
+        setLoginError(undefined)
+        setDialogOpen(false)
+        dialogRef.current?.close()
+        if (pending !== undefined) void postJson(LOGIN_CANCEL_PATH, { loginId: pending.loginId }).catch(() => {})
+    }
+
+    const finishLogin = async (): Promise<void> => {
+        if (login === undefined || loginCode.trim().length === 0) return
+        setLoginBusy(true)
+        setLoginError(undefined)
+        try {
+            const parsed = parseAccountList(await postJson(LOGIN_CODE_PATH, { loginId: login.loginId, code: loginCode }))
+            if (parsed !== undefined) setAccounts(parsed.accounts)
+            const email = parsed?.activeEmail
+            setAccountNote(email !== undefined && email.length > 0 ? props.t('signedIn').replace('{email}', email) : undefined)
+            setLogin(undefined)
+            setLoginCode('')
+            setDialogOpen(false)
+            dialogRef.current?.close()
+            await loadQuota(true)
+        } catch (error) {
+            setLoginError(`${props.t('loginFailed')}: ${messageOf(error)}`)
+        } finally {
+            setLoginBusy(false)
+        }
+    }
 
     const groups = useMemo(() => {
         const byGroup = new Map<string, QuotaWindow[]>()
@@ -110,10 +274,58 @@ export function AntigravityQuotaPanel(props: PropsRuntime<'settings.section'> & 
                     <h2 className="aq-title">{props.t('title')}</h2>
                     <p className="aq-intro">{props.t('intro')}</p>
                 </div>
-                <button className="aq-btn" type="button" disabled={loading} onClick={() => { void load(true) }}>
+                <button
+                    className="aq-btn"
+                    type="button"
+                    disabled={loading}
+                    onClick={() => {
+                        void loadAccounts()
+                        void loadQuota(true)
+                    }}
+                >
                     {loading ? props.t('reading') : props.t('refresh')}
                 </button>
             </div>
+
+            <section className="aq-accounts">
+                <div className="aq-accounts-head">
+                    <h3>{props.t('accounts')}</h3>
+                    <button className="aq-btn aq-btn--small" type="button" onClick={() => { void openAdd() }}>
+                        {props.t('addAccount')}
+                    </button>
+                </div>
+                {accounts.length > 0 ? (
+                    <ul className="aq-account-list">
+                        {accounts.map((account) => (
+                            <li className="aq-account" key={account.id} data-active={account.active}>
+                                <span className="aq-account-mark" aria-hidden="true" />
+                                <span className="aq-account-id">
+                                    {account.identity}
+                                    {account.label !== undefined && account.label !== account.identity ? <small>{account.label}</small> : null}
+                                </span>
+                                {account.active ? (
+                                    <span className="aq-pill">{props.t('active')}</span>
+                                ) : (
+                                    <button
+                                        className="aq-btn aq-btn--small"
+                                        type="button"
+                                        disabled={switchingId !== undefined}
+                                        onClick={() => { void switchAccount(account) }}
+                                    >
+                                        {switchingId === account.id ? props.t('switching') : props.t('switchAccount')}
+                                    </button>
+                                )}
+                            </li>
+                        ))}
+                    </ul>
+                ) : accountsLoaded ? <p className="aq-hint">{props.t('noAccounts')}</p> : null}
+                {accountError !== undefined ? <p className="aq-error">{accountError}</p> : null}
+                {accountNote !== undefined ? <p className="aq-hint">{accountNote}</p> : null}
+                <p className="aq-hint">{props.t('accountHint')}</p>
+            </section>
+
+            <div className="aq-divider" />
+
             {view?.error !== undefined ? <p className="aq-error">{`${props.t('failed')}: ${view.error}`}</p> : null}
             {view !== undefined && view.windows.length === 0 && view.error === undefined ? <p className="aq-hint">{props.t('empty')}</p> : null}
             {groups.map(([group, windows]) => (
@@ -140,6 +352,59 @@ export function AntigravityQuotaPanel(props: PropsRuntime<'settings.section'> & 
                 </section>
             ))}
             {fetchedAt !== undefined ? <p className="aq-hint">{props.t('readAt').replace('{time}', new Date(fetchedAt).toLocaleTimeString())}</p> : null}
+
+            <dialog
+                ref={dialogRef}
+                className="aq-dialog"
+                onCancel={(event) => {
+                    event.preventDefault()
+                    cancelAdd()
+                }}
+                onClose={() => {
+                    addAttempt.current += 1
+                    setDialogOpen(false)
+                    setLogin(undefined)
+                    setLoginCode('')
+                    setLoginError(undefined)
+                }}
+            >
+                <div className="aq-dialog-head">
+                    <h3>{props.t('addTitle')}</h3>
+                    <button className="aq-btn aq-btn--small" type="button" aria-label={props.t('close')} onClick={cancelAdd}>×</button>
+                </div>
+                {login === undefined && loginError === undefined ? <p>{props.t('waitingLink')}</p> : null}
+                {loginError !== undefined ? <p className="aq-error">{loginError}</p> : null}
+                {login !== undefined ? (
+                    <>
+                        <p>{props.t('addIntro')}</p>
+                        <a className="aq-link" href={login.url} target="_blank" rel="noreferrer noopener">{props.t('openSignIn')}</a>
+                        <label className="aq-field">
+                            <span>{props.t('codeLabel')}</span>
+                            <input
+                                value={loginCode}
+                                onChange={(event) => setLoginCode(event.target.value)}
+                                autoComplete="off"
+                                spellCheck={false}
+                            />
+                        </label>
+                        <div className="aq-dialog-actions">
+                            <button className="aq-btn" type="button" onClick={cancelAdd}>{props.t('cancel')}</button>
+                            <button
+                                className="aq-btn aq-btn--primary"
+                                type="button"
+                                disabled={loginBusy || loginCode.trim().length === 0}
+                                onClick={() => { void finishLogin() }}
+                            >
+                                {loginBusy ? props.t('signingIn') : props.t('finish')}
+                            </button>
+                        </div>
+                    </>
+                ) : (
+                    <div className="aq-dialog-actions">
+                        <button className="aq-btn" type="button" onClick={cancelAdd}>{props.t('cancel')}</button>
+                    </div>
+                )}
+            </dialog>
         </div>
     )
 }

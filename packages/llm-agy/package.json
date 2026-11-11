@@ -1,7 +1,7 @@
 {
     "name": "@gitawego/dsh-llm-agy",
     "version": "0.2.0",
-    "description": "Antigravity (agy) ACP provider for DeepSeek Harness at the ctx.llm adapter seam. Registers the `agy` route, drives `agy acp` over newline-delimited JSON-RPC, discovers models and thought levels from ACP config options, forwards image attachments as ACP image blocks, and bridges ACP tool permissions to the harness approval service.",
+    "description": "Antigravity (agy) ACP provider for DeepSeek Harness at the ctx.llm adapter seam. Registers the `agy` route, drives `agy acp` over newline-delimited JSON-RPC, discovers models and thought levels from ACP config options, forwards image attachments as ACP image blocks, supports multiple Antigravity accounts with background token refresh and one-click switching, and bridges ACP tool permissions to the harness approval service.",
     "type": "module",
     "main": "lib/index.js",
     "types": "lib/types/index.d.ts",

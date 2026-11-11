@@ -16,6 +16,8 @@ Gemini models without a `GEMINI_API_KEY`.
     agentMode: default       # any mode advertised by agy acp
     permissionMode: ask      # ask | deny
     quotaRefreshMinutes: 5   # settings-card cache for the plan quota
+    accountsFile: ''         # empty = $DSH_HOME/llm-agy/accounts.json
+    loginCommand: [agy, acp, --login]  # Add account sign-in
 
 - id: agent-default-model
   name: '@deepseek-ai/dsh-agent-default-model'
@@ -25,10 +27,11 @@ Gemini models without a `GEMINI_API_KEY`.
     reasoningEffort: medium
 ```
 
-`agy` must already be signed in. The plugin never stores a credential; it
-spawns the CLI and lets it use its own login. If the CLI is not authenticated,
-the request fails with `AUTH` and the remediation text tells you to run `agy`
-interactively (or `agy acp --login`).
+`agy` must be signed in. The CLI owns its Google login; the plugin spawns the
+CLI and lets it use that login. If the CLI is not authenticated, the request
+fails with `AUTH` and the remediation text tells you to run `agy` interactively
+(or `agy acp --login`). The optional multi-account store described below keeps
+refresh tokens under the DSH home, never in this configuration.
 
 Install into a profile (this only registers the additive `agy` route; select it
 as the model provider when you want it):
@@ -121,6 +124,34 @@ the same ACP session, the next prompt is prefixed with an explicit
 ACP's experimental `PromptResponse.usage` maps to DSH token accounting:
 cache reads/writes are subtracted from the reported input total, and thought
 tokens are recorded as `reasoningTokens` (already included in `outputTokens`).
+
+## Multiple accounts
+
+Settings → **Antigravity** lists the accounts this plugin knows about and makes
+switching one click. The currently active CLI login is imported automatically.
+**Add account** starts `agy acp --login`, shows the Google URL, and accepts the
+authorization code or the final callback URL; the CLI writes the new login and
+the plugin saves its refresh token.
+
+The plugin is self-contained: it reads only the Antigravity keyring
+(`service=gemini`, `username=antigravity`) and its own store at
+`$DSH_HOME/llm-agy/accounts.json` (mode 0600). On Linux the keyring is the
+Secret Service and `secret-tool` must be installed and unlocked; when it is not
+available, the CLI token file
+(`~/.gemini/antigravity-cli/antigravity-oauth-token`) is used instead. It does
+not read another app's account directory, and it sends tokens only to Google's
+token and userinfo endpoints.
+
+Switching:
+
+1. refreshes the target account's access token with its refresh token
+   (Antigravity's public installed-app OAuth client);
+2. writes the fresh token to the keyring, with the CLI token file as a fallback;
+3. bumps an account epoch so the next prompt starts a new `agy acp` server,
+   rather than continuing on the previous account's authenticated transport.
+
+Running ACP sessions finish on their current account; the restart happens on
+the next prompt. Quota reads are invalidated on every switch.
 
 ## Plan quota
 

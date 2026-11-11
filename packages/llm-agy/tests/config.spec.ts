@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { DEFAULT_COMMAND, DEFAULT_DISPLAY_NAME, DEFAULT_MODEL, DEFAULT_QUOTA_COMMAND, Config, readConfig, resolveConfig } from '../src/config.ts'
+import { DEFAULT_COMMAND, DEFAULT_DISPLAY_NAME, DEFAULT_LOGIN_COMMAND, DEFAULT_MODEL, DEFAULT_QUOTA_COMMAND, Config, readConfig, resolveConfig } from '../src/config.ts'
 
 function refs(values: Record<string, unknown>) {
     return Object.fromEntries(Object.entries(values).map(([key, value]) => [key, { get: () => value }])) as never
@@ -11,6 +11,8 @@ describe('resolveConfig', () => {
         expect(config.command).toEqual([...DEFAULT_COMMAND])
         expect(config.quotaCommand).toEqual([...DEFAULT_QUOTA_COMMAND])
         expect(config.quotaRefreshMinutes).toBe(5)
+        expect(config.accountsFile).toMatch(/llm-agy[/\\]accounts\.json$/)
+        expect(config.loginCommand).toEqual([...DEFAULT_LOGIN_COMMAND])
         expect(config.cwd).toBe('')
         expect(config.startupTimeoutMs).toBe(15_000)
         expect(config.promptTimeoutMs).toBe(30 * 60_000)
@@ -31,6 +33,8 @@ describe('resolveConfig', () => {
             command: ['node', 'agent.mjs'],
             quotaCommand: ['node', 'quota.mjs'],
             quotaRefreshMinutes: 2,
+            accountsFile: '  /tmp/accounts.json  ',
+            loginCommand: ['node', 'login.mjs'],
             cwd: '  /tmp/project  ',
             startupTimeoutMs: 500,
             promptTimeoutMs: 2_000,
@@ -47,6 +51,8 @@ describe('resolveConfig', () => {
             command: ['node', 'agent.mjs'],
             quotaCommand: ['node', 'quota.mjs'],
             quotaRefreshMinutes: 2,
+            accountsFile: '/tmp/accounts.json',
+            loginCommand: ['node', 'login.mjs'],
             cwd: '/tmp/project',
             startupTimeoutMs: 500,
             promptTimeoutMs: 2_000,
@@ -129,6 +135,8 @@ describe('readConfig', () => {
                 command: ['agy', 'acp', '--dangerously-skip-permissions'],
                 quotaCommand: ['agy', '--print', '/usage', '--output-format', 'json'],
                 quotaRefreshMinutes: 3,
+                accountsFile: '/tmp/accounts.json',
+                loginCommand: ['agy', 'acp', '--login'],
                 cwd: '/work',
                 startupTimeoutMs: 1_000,
                 promptTimeoutMs: 2_000,
@@ -146,6 +154,8 @@ describe('readConfig', () => {
         expect(config.command).toEqual(['agy', 'acp', '--dangerously-skip-permissions'])
         expect(config.quotaCommand).toEqual(['agy', '--print', '/usage', '--output-format', 'json'])
         expect(config.quotaRefreshMinutes).toBe(3)
+        expect(config.accountsFile).toBe('/tmp/accounts.json')
+        expect(config.loginCommand).toEqual(['agy', 'acp', '--login'])
         expect(config.displayName).toBe('Configured name')
         expect(config.defaultModel).toBe('')
         expect(config.models).toEqual([{ id: 'configured-model', contextWindow: 100 }])

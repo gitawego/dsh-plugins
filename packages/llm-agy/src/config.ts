@@ -6,8 +6,8 @@
  * to the next session without re-installing the plugin.
  *
  * There is deliberately no credential field. The provider's authentication is
- * the Antigravity CLI's own Google login; the adapter never reads or stores a
- * secret.
+ * the Antigravity CLI's own Google login. Multi-account support keeps account
+ * refresh tokens in a plugin-owned 0600 store, never in this configuration.
  *
  * `models` is empty by default. An empty list means "discover the catalog from
  * `agy acp`"; a non-empty list is an explicit configuration override. No model
@@ -18,6 +18,7 @@
 import type { Volatile } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
 import type Schema from '@deepseek-ai/schemastery'
+import { defaultAccountsFile } from './accounts.ts'
 import type { ConfiguredModel } from './catalog.ts'
 
 /** Settings namespace shared with the loader entry id. */
@@ -31,6 +32,9 @@ export const DEFAULT_COMMAND = ['agy', 'acp'] as const
 
 /** Default quota command; `/usage` prints the grouped plan buckets as JSON. */
 export const DEFAULT_QUOTA_COMMAND = ['agy', '--print', '/usage', '--output-format', 'json'] as const
+
+/** Default terminal-auth command used by the Add account flow. */
+export const DEFAULT_LOGIN_COMMAND = ['agy', 'acp', '--login'] as const
 
 /** Label used when the profile does not override it. */
 export const DEFAULT_DISPLAY_NAME = 'Antigravity (agy ACP)'
@@ -59,6 +63,10 @@ export interface ResolvedAgyConfig {
     quotaCommand: string[]
     /** Minutes a quota read stays authoritative in the settings card. */
     quotaRefreshMinutes: number
+    /** Plugin-owned multi-account registry; empty resolves under the DSH home. */
+    accountsFile: string
+    /** Executable and arguments that start the interactive Google sign-in. */
+    loginCommand: string[]
     /** Optional working-directory override; empty means the session's own cwd. */
     cwd: string
     /** Bound on spawn + initialize + session/new. */
@@ -90,6 +98,8 @@ export interface AgyConfigRefs {
     command: Volatile<string[]>
     quotaCommand: Volatile<string[]>
     quotaRefreshMinutes: Volatile<number>
+    accountsFile: Volatile<string>
+    loginCommand: Volatile<string[]>
     cwd: Volatile<string>
     startupTimeoutMs: Volatile<number>
     promptTimeoutMs: Volatile<number>
@@ -109,6 +119,8 @@ export const Config: Schema = z.object({
     command: z.array(z.string()).default([...DEFAULT_COMMAND]).volatile(),
     quotaCommand: z.array(z.string()).default([...DEFAULT_QUOTA_COMMAND]).volatile(),
     quotaRefreshMinutes: z.number().default(5).volatile(),
+    accountsFile: z.string().default('').volatile(),
+    loginCommand: z.array(z.string()).default([...DEFAULT_LOGIN_COMMAND]).volatile(),
     cwd: z.string().default('').volatile(),
     startupTimeoutMs: z.number().default(15_000).volatile(),
     promptTimeoutMs: z.number().default(30 * 60_000).volatile(),
@@ -203,6 +215,12 @@ export function resolveConfig(input: unknown): ResolvedAgyConfig {
               .map((part) => part.trim())
               .filter((part) => part.length > 0)
         : []
+    const loginCommand = Array.isArray(raw.loginCommand)
+        ? raw.loginCommand
+              .filter((part): part is string => typeof part === 'string')
+              .map((part) => part.trim())
+              .filter((part) => part.length > 0)
+        : []
     const models = Array.isArray(raw.models)
         ? raw.models.map(configuredModel).filter((model): model is ConfiguredModel => model !== undefined)
         : []
@@ -210,6 +228,8 @@ export function resolveConfig(input: unknown): ResolvedAgyConfig {
         command: command.length > 0 ? command : [...DEFAULT_COMMAND],
         quotaCommand: quotaCommand.length > 0 ? quotaCommand : [...DEFAULT_QUOTA_COMMAND],
         quotaRefreshMinutes: positive(raw.quotaRefreshMinutes, 5),
+        accountsFile: trimmed(raw.accountsFile) ?? defaultAccountsFile(),
+        loginCommand: loginCommand.length > 0 ? loginCommand : [...DEFAULT_LOGIN_COMMAND],
         cwd: trimmed(raw.cwd) ?? '',
         startupTimeoutMs: positive(raw.startupTimeoutMs, 15_000),
         promptTimeoutMs: positive(raw.promptTimeoutMs, 30 * 60_000),
@@ -236,6 +256,8 @@ export function readConfig(config: AgyConfigRefs | undefined): ResolvedAgyConfig
         command: config.command.get(),
         quotaCommand: config.quotaCommand.get(),
         quotaRefreshMinutes: config.quotaRefreshMinutes.get(),
+        accountsFile: config.accountsFile.get(),
+        loginCommand: config.loginCommand.get(),
         cwd: config.cwd.get(),
         startupTimeoutMs: config.startupTimeoutMs.get(),
         promptTimeoutMs: config.promptTimeoutMs.get(),

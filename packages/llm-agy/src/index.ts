@@ -5,11 +5,13 @@
  * route drives `agy acp` as an agent-delegate: the CLI brings its own tools and
  * Google/Antigravity login, while DSH sees the agent's text/reasoning stream.
  *
- * The plugin never stores or reads a credential. The only host services it
- * touches are optional lookups: `sessions`/`workingDirectory` for the session's
- * cwd, and `agents`/`approval` to route ACP tool permission questions into the
- * normal DSH approval UI. Missing services degrade to `process.cwd()` and a
- * fail-closed permission decision.
+ * The CLI owns the Google login. Multi-account support adds a plugin-owned,
+ * 0600 registry of refresh tokens under the DSH home; it never reads another
+ * app's account store and never sends a token to the browser. The only host
+ * services touched are optional lookups: `sessions`/`workingDirectory` for the
+ * session's cwd, and `agents`/`approval` to route ACP tool permission questions
+ * into the normal DSH approval UI. Missing services degrade to
+ * `process.cwd()` and a fail-closed permission decision.
  *
  * @module @gitawego/dsh-llm-agy
  */
@@ -21,14 +23,19 @@ import type {} from '@deepseek-ai/dsh-user-approval'
 import type {} from '@deepseek-ai/dsh-working-directory'
 import { LlmError, type ImageBlock, type ToolCallId } from '@deepseek-ai/dsh-llm'
 import { AgyAdapter, type AgyHost } from './adapter.ts'
+import { AgyAccountManager } from './account-manager.ts'
+import { defaultCliTokenFile } from './accounts.ts'
+import { registerAgyAccountRoutes } from './accounts-route.ts'
 import { readAgyQuota, type AgyQuota } from './quota.ts'
 import { registerAgyQuotaRoute } from './quota-route.ts'
+import { AgyTokenStorage } from './token-storage.ts'
 import {
     AGY_PROVIDER,
     AGY_SETTINGS_NAMESPACE,
     Config,
     DEFAULT_COMMAND,
     DEFAULT_DISPLAY_NAME,
+    DEFAULT_LOGIN_COMMAND,
     DEFAULT_MODEL,
     DEFAULT_QUOTA_COMMAND,
     readConfig,
@@ -51,12 +58,20 @@ export {
     AGY_SETTINGS_NAMESPACE,
     DEFAULT_COMMAND,
     DEFAULT_DISPLAY_NAME,
+    DEFAULT_LOGIN_COMMAND,
     DEFAULT_MODEL,
     DEFAULT_QUOTA_COMMAND,
 }
 export { readConfig, resolveConfig, type AgyConfigRefs, type AgyMode, type AgyPermissionMode, type ResolvedAgyConfig }
 export { parseAgyUsage, readAgyQuota, type AgyQuota, type AgyQuotaWindow } from './quota.ts'
 export { AGY_QUOTA_ROUTE_PATH, createAgyQuotaHandler, isTrustedLocalRequest, registerAgyQuotaRoute } from './quota-route.ts'
+export { AgyAccountManager, type AgyAccountManagerOptions, type PendingLogin } from './account-manager.ts'
+export { accountId, defaultAccountsFile, findAccount, parseAccountStore, summarizeAccounts, type AccountList, type AccountRecord, type AccountSource, type AccountSummary } from './accounts.ts'
+export { AGY_ACCOUNTS_ROUTE_PATH, AGY_ACCOUNT_LOGIN_CANCEL_PATH, AGY_ACCOUNT_LOGIN_CODE_PATH, AGY_ACCOUNT_LOGIN_PATH, AGY_ACCOUNT_SWITCH_PATH, createAgyAccountHandlers, registerAgyAccountRoutes } from './accounts-route.ts'
+export { authorizationCodeOf, startAgyLogin, type AgyLoginHandle, type AgyLoginOptions } from './login.ts'
+export { ANTIGRAVITY_OAUTH_CLIENT_ID, decodeJwtEmail, refreshAgyToken, type RefreshedToken } from './oauth.ts'
+export { AgyTokenStorage, credentialFromTokenPayload, credentialNeedsRefresh, tokenPayloadOf, type OAuthCredential } from './token-storage.ts'
+export { MUTATION_HEADER, isTrustedLocalMutation } from './route-guard.ts'
 export { AgyAdapter, type AgyHost }
 export { AcpClient, AcpAbortError, AcpProcessError, AcpRemoteError, AcpTimeoutError } from './acp-client.ts'
 export { AcpSession } from './acp-session.ts'
@@ -73,7 +88,19 @@ export { ChunkTranslator, finishReason } from './stream.ts'
  * @returns a disposer that unregisters the route and closes every session.
  */
 export function apply(ctx: Context, config: AgyConfigRefs | undefined = undefined): () => void {
-    const adapter = new AgyAdapter({ host: createAgyHost(ctx, config), config: () => readConfig(config) })
+    const logger = ctx.logger(name)
+    const storage = new AgyTokenStorage({ cliTokenFile: defaultCliTokenFile() })
+    const accounts = new AgyAccountManager({
+        storePath: () => readConfig(config).accountsFile,
+        storage,
+        loginCommand: () => readConfig(config).loginCommand,
+        loginCwd: () => readConfig(config).cwd || process.cwd(),
+    })
+    const adapter = new AgyAdapter({
+        host: createAgyHost(ctx, config),
+        config: () => readConfig(config),
+        accountEpoch: () => accounts.epoch(),
+    })
     const registration = ctx.llm.registerAdapter([AGY_PROVIDER], adapter)
 
     let quotaCache: { at: number; value: AgyQuota } | undefined
@@ -88,11 +115,33 @@ export function apply(ctx: Context, config: AgyConfigRefs | undefined = undefine
             timeoutMs: Math.min(current.promptTimeoutMs, 90_000),
         })
         quotaCache = { at: Date.now(), value }
+        // The CLI refreshes its own access token during a read; save the rotated
+        // token so switching back to this account later starts from fresh data.
+        void accounts.captureActive().catch((error: unknown) => {
+            logger.warn(`llm-agy: could not capture the active account token: ${error instanceof Error ? error.message : String(error)}`)
+        })
         return value
     }
     registerAgyQuotaRoute(ctx, { quotaOf })
 
+    registerAgyAccountRoutes(ctx, {
+        list: () => accounts.list(),
+        switchTo: async (id) => {
+            const value = await accounts.switchTo(id)
+            quotaCache = undefined
+            return value
+        },
+        startLogin: () => accounts.startLogin(),
+        submitLogin: async (loginId, code) => {
+            const value = await accounts.submitLogin(loginId, code)
+            quotaCache = undefined
+            return value
+        },
+        cancelLogin: (loginId) => accounts.cancelLogin(loginId),
+    })
+
     return () => {
+        accounts.dispose()
         registration()
         void adapter.dispose()
     }

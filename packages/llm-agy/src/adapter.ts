@@ -52,6 +52,8 @@ export interface AgyHost {
 export interface AgyAdapterOptions {
     host: AgyHost
     config: () => ResolvedAgyConfig
+    /** Epoch that changes when the active Antigravity account changes. */
+    accountEpoch?: () => number
 }
 
 interface SessionEntry {
@@ -65,6 +67,7 @@ interface SessionEntry {
     model: string
     effort?: string
     mode: string
+    epoch: number
 }
 
 /** A single-consumer async queue used to bridge callback updates into a generator. */
@@ -141,6 +144,7 @@ export class AgyAdapter extends LlmAdapter {
     private readonly live = new Set<AcpSession>()
     private readonly host: AgyHost
     private readonly config: () => ResolvedAgyConfig
+    private readonly accountEpoch: () => number
     private catalogCache?: { key: string; at: number; value: Catalog }
     private catalogPending?: { key: string; promise: Promise<Catalog> }
     private disposed = false
@@ -149,6 +153,7 @@ export class AgyAdapter extends LlmAdapter {
         super()
         this.host = options.host
         this.config = options.config
+        this.accountEpoch = options.accountEpoch ?? (() => 0)
     }
 
     override providerInfo(provider: string): LlmProviderInfo {
@@ -389,7 +394,12 @@ export class AgyAdapter extends LlmAdapter {
             let entry: SessionEntry | undefined
             try {
                 entry = await existing
-                if (entry.session.alive) {
+                if (entry.session.alive && entry.epoch !== this.accountEpoch()) {
+                    // The account changed under this ACP server; its authenticated
+                    // transport still belongs to the previous login. Drop it and
+                    // replay the transcript into a new process.
+                    await this.drop(key, entry)
+                } else if (entry.session.alive) {
                     if (entry.session.cwd !== input.cwd) {
                         // A DSH `cd` cannot move an already-spawned agent; start a
                         // fresh ACP session and replay the harness transcript.
@@ -469,6 +479,7 @@ export class AgyAdapter extends LlmAdapter {
             model: input.model,
             ...(input.effort !== undefined ? { effort: input.effort } : {}),
             mode: input.config.agentMode,
+            epoch: this.accountEpoch(),
         }
     }
 
