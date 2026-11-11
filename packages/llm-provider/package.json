@@ -1,7 +1,7 @@
 {
     "name": "@gitawego/dsh-llm-provider",
     "version": "0.2.0",
-    "description": "First-party LLM provider routes for DeepSeek Harness at the ctx.llm adapter seam. Ships the OpenCode Go route (opencode.ai/zen/go) with the x-opencode-session routing header the gateway requires \u2014 a missing header is the `400 MissingSessionID` failure \u2014 resolved per request from the harness session id.",
+    "description": "OpenCode Go dashboard for DeepSeek Harness: live models versus the installed catalog, the route's enabled-model allowlist, and the subscription quota. The host dsh-llm-pi-ai adapter owns the route, endpoint, catalog, and session header; this plugin reports and writes only llm-pi-ai.providers.<route>.models.",
     "type": "module",
     "main": "lib/index.js",
     "types": "lib/types/index.d.ts",

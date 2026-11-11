@@ -1,7 +1,10 @@
 # @gitawego/dsh-llm-provider — agent notes
 
-**Scope: reporting only.** This plugin serves no model route. It does not build a
-request, parse a tool call, retry a stream, or stamp an HTTP header.
+**Scope: reporting plus one host-owned write.** This plugin serves no model
+route. It does not build a request, parse a tool call, retry a stream, or stamp an
+HTTP header. It reads the gateway and the harness catalog, and from the settings
+card it writes exactly one host field: `llm-pi-ai.providers.<route>.models`, the
+enabled-model allowlist.
 
 ## Why that boundary is not negotiable
 
@@ -41,6 +44,9 @@ parallel stack.
 - **Four settings fields.** `route`, `baseURL`, `apiKeyEnv`, `refreshMinutes`.
   No secrets: the key stays in the credential store and the profile only holds
   its reference name.
+- **One host-provider write.** The “Choose models” dialog mutates
+  `llm-pi-ai.providers.<route>.models` through the shared `ConfigForm`; it never
+  edits another provider field and never writes routing config directly.
 
 ## What this package must never contain again
 
@@ -58,8 +64,8 @@ code.
   meaningful ("report unauthenticated"), not a fallback trigger;
 - `composeStatus` sorts known ids first and never invents a capacity it was not
   given;
-- `modelsSnippet` lists **every** id, because a declared `models` list replaces
-  the route catalog instead of extending it;
+- `modelsSnippet` lists **every served** id, because the snippet describes what
+  the endpoint can serve; the card’s enabled subset is a separate decision;
 - the dashboard's snapshot keeps its identity between reads
   (`useSyncExternalStore` compares by reference; a per-call rebuild is React
   error #185, which this card has already shipped once);
@@ -70,9 +76,12 @@ code.
   `--dsh-font-family-code-default`); the built-bundle test rejects the pre-0.2.2
   `fg-*`, `border-tertiary`, `bg-primary`, `bg-secondary`, `fill-tertiary`, and
   `font-mono` aliases;
-- the main model list shows only served-and-known ids; catalog-only ids are not
-  selectable and are not rendered, while live-only ids stay in the warning
-  section; the paste-ready snippet lists served ids only;
+- the card lists only `enabledIds`; with no host `models` field it shows the
+  whole served set; the picker lists every served id, including ids the installed
+  catalog does not describe;
+- **Apply** writes `llm-pi-ai.providers.<route>.models` only; **All** writes the
+  served set explicitly and **None** writes an empty list;
+- the dashboard clears a previous read error after a successful status read;
 - nothing in the client reads a Remote namespace, and nothing in the package
   imports `@earendil-works/pi-ai`.
 

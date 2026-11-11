@@ -10,8 +10,9 @@
  * ever reported — a missing session header, a legacy endpoint, markup instead
  * of tool calls — was a bug in that duplicate.
  *
- * What is left is the one thing no host seam owns: **reporting**. Two
- * read-only questions, both answered over plain GETs:
+ * What is left is **reporting plus one host-owned write**: the settings card
+ * edits `llm-pi-ai.providers.<route>.models` through the shared config form.
+ * Two read-only questions are answered over plain GETs:
  *
  * - which models the gateway serves (`GET {endpoint}/models`) versus which the
  *   installed catalog describes (`ctx.llm.listModels(route)`) — the difference

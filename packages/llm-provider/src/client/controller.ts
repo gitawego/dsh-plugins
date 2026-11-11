@@ -18,6 +18,16 @@ import type { MonitorProfile } from '../config.ts'
 import { parseQuotaView, type QuotaView } from './quota-format.ts'
 import { createQuotaReader } from './quota-client.ts'
 
+/** Minimal shape of the host `llm-pi-ai` provider profile this card edits. */
+interface PiAiProviderProfile {
+    models?: Array<{ id?: unknown } | string>
+}
+
+/** Minimal shape of the host `llm-pi-ai` settings namespace. */
+interface PiAiSettings {
+    providers?: Record<string, PiAiProviderProfile>
+}
+
 /** One model row, as the card renders it. */
 export interface ModelRow {
     id: string
@@ -60,6 +70,13 @@ export interface DashboardSnapshot {
     error?: string
     /** Last allowance report, or a placeholder while it loads. */
     quota: QuotaView
+    /**
+     * Ids explicitly enabled in `llm-pi-ai.providers.<route>.models`, or null
+     * when that field is absent (the whole catalog is enabled).
+     */
+    enabledIds: string[] | null
+    /** Whether the host `llm-pi-ai` profile accepts writes. */
+    providerWritable: boolean
 }
 
 /** The card's write and refresh actions. */
@@ -70,6 +87,8 @@ export interface DashboardActions {
     edit: (field: keyof MonitorProfile, value: string | number) => void
     /** Revert one settings field to the composition default. */
     clear: (field: keyof MonitorProfile) => void
+    /** Write the enabled-model allowlist, or null to restore the whole catalog. */
+    setEnabledModels: (rows: readonly ModelRow[] | null) => Promise<boolean>
 }
 
 /** One dashboard instance: a stable snapshot plus actions. */
@@ -80,7 +99,7 @@ export interface Dashboard {
 }
 
 /** Parse one status reply into the card's view, tolerating a partial document. */
-export function parseStatus(document: unknown, fallback: MonitorProfile): Omit<DashboardSnapshot, 'quota'> {
+export function parseStatus(document: unknown, fallback: MonitorProfile): Omit<DashboardSnapshot, 'quota' | 'enabledIds' | 'providerWritable'> {
     const raw = typeof document === 'object' && document !== null ? (document as Record<string, unknown>) : {}
     const rows = Array.isArray(raw['models']) ? raw['models'] : []
     const models: ModelRow[] = []
@@ -142,6 +161,7 @@ function emptyQuota(route: string): QuotaView {
 export function createDashboard(ctx: ClientContext, scope: ConfigForm<MonitorProfile>, fetchImpl?: typeof fetch): Dashboard {
     const doFetch = fetchImpl ?? fetch
     const readQuota = createQuotaReader(doFetch)
+    const providerScope = ctx.configForms.get<PiAiSettings>('llm-pi-ai')
     const listeners = new Set<() => void>()
 
     let local: DashboardSnapshot = {
@@ -157,6 +177,8 @@ export function createDashboard(ctx: ClientContext, scope: ConfigForm<MonitorPro
         unknownIds: [],
         fetchedAt: 0,
         quota: emptyQuota(EMPTY_PROFILE.route),
+        enabledIds: null,
+        providerWritable: false,
     }
     let snapshot: DashboardSnapshot = local
     let generation = 0
@@ -166,6 +188,26 @@ export function createDashboard(ctx: ClientContext, scope: ConfigForm<MonitorPro
         // re-render forever (useSyncExternalStore compares by identity).
         snapshot = { ...local, ...profileFacts(), quota: local.quota }
         for (const listener of listeners) listener()
+    }
+
+    /** The host provider profile this dashboard edits, for the current route. */
+    const providerProfile = (): PiAiProviderProfile | undefined => {
+        const value = providerScope.getSnapshot().value
+        const route = profile().route
+        if (route.length === 0 || value === undefined) return undefined
+        return value.providers?.[route]
+    }
+
+    /** The explicit allowlist, or null when `models` is absent. */
+    const enabledIds = (): string[] | null => {
+        const models = providerProfile()?.models
+        if (!Array.isArray(models)) return null
+        const ids: string[] = []
+        for (const entry of models) {
+            const id = typeof entry === 'string' ? entry : typeof entry?.id === 'string' ? entry.id : undefined
+            if (id !== undefined && id.length > 0 && !ids.includes(id)) ids.push(id)
+        }
+        return ids
     }
 
     /** The settings profile as the form currently holds it. */
@@ -180,8 +222,12 @@ export function createDashboard(ctx: ClientContext, scope: ConfigForm<MonitorPro
         }
     }
 
-    const profileFacts = (): Pick<DashboardSnapshot, 'status' | 'writable' | 'route' | 'endpoint' | 'credential'> => {
+    const profileFacts = (): Pick<
+        DashboardSnapshot,
+        'status' | 'writable' | 'route' | 'endpoint' | 'credential' | 'enabledIds' | 'providerWritable'
+    > => {
         const form = scope.getSnapshot()
+        const provider = providerScope.getSnapshot()
         const current = profile()
         return {
             status: form.status,
@@ -189,6 +235,8 @@ export function createDashboard(ctx: ClientContext, scope: ConfigForm<MonitorPro
             route: current.route,
             endpoint: current.baseURL,
             credential: current.apiKeyEnv,
+            enabledIds: enabledIds(),
+            providerWritable: provider.status === 'ready' && provider.writable,
         }
     }
 
@@ -201,7 +249,8 @@ export function createDashboard(ctx: ClientContext, scope: ConfigForm<MonitorPro
             if (!response.ok) throw new Error(`status read refused (${response.status})`)
             const parsed = parseStatus(await response.json(), { ...current, route: current.route })
             if (sequence !== generation) return
-            local = { ...parsed, writable: scope.getSnapshot().writable, quota: local.quota }
+            local = { ...local, ...parsed, writable: scope.getSnapshot().writable, quota: local.quota }
+            if (parsed.error === undefined) delete local.error
         } catch (error) {
             if (sequence !== generation) return
             local = { ...local, status: scope.getSnapshot().status, error: error instanceof Error ? error.message : String(error) }
@@ -237,6 +286,7 @@ export function createDashboard(ctx: ClientContext, scope: ConfigForm<MonitorPro
         publish()
         refresh()
     })
+    ctx.effect(() => providerScope.subscribe(() => { publish() }), 'llm-provider: host provider profile')
     ctx.effect(() => () => { generation += 1 }, 'llm-provider: dashboard stop')
     // First paint reflects the profile immediately; the two reads follow.
     publish()
@@ -255,6 +305,27 @@ export function createDashboard(ctx: ClientContext, scope: ConfigForm<MonitorPro
             },
             clear: (field) => {
                 void scope.unset(field as never)
+            },
+            setEnabledModels: async (rows) => {
+                const route = profile().route
+                if (route.length === 0) return false
+                const entries = rows?.map((row) => ({
+                    id: row.id,
+                    ...(row.name.length > 0 && row.name !== row.id ? { name: row.name } : {}),
+                    ...(row.contextWindow !== undefined ? { contextWindow: row.contextWindow } : {}),
+                    ...(row.maxTokens !== undefined ? { maxTokens: row.maxTokens } : {}),
+                    ...(row.input !== undefined && row.input.length > 0 ? { input: [...row.input] } : {}),
+                }))
+                try {
+                    const ops = entries === undefined
+                        ? [{ op: 'unset' as const, path: ['providers', route, 'models'] }]
+                        : [{ op: 'set' as const, path: ['providers', route, 'models'], value: entries }]
+                    const accepted = await providerScope.mutate(ops)
+                    publish()
+                    return accepted
+                } catch {
+                    return false
+                }
             },
         },
     }

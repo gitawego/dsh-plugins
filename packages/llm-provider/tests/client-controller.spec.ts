@@ -5,8 +5,9 @@
  *
  * 1. the snapshot is a **stable reference** between changes — a snapshot that
  *    rebuilt itself per call re-renders forever (React error #185);
- * 2. the card **cannot** write anything but its own four fields — the route,
- *    the catalog, and the credential are the host adapter's.
+ * 2. the card **cannot** write anything but its own four fields and the host
+ *    provider's enabled-model list — the route, the transport, and the
+ *    credential are the host adapter's.
  */
 import { describe, expect, it, vi } from 'vitest'
 import type { Context as ClientContext } from '@deepseek-ai/cordis'
@@ -58,9 +59,29 @@ function fakeScope(value: Partial<MonitorProfile> = {}): ConfigForm<MonitorProfi
     } as unknown as ConfigForm<MonitorProfile> & { writes: unknown[] }
 }
 
-/** A client context with only `effect` (the refresher's disposer). */
-function fakeContext(): ClientContext {
-    return { effect: () => () => {} } as unknown as ClientContext
+/** A host provider form, optionally carrying an enabled-model allowlist. */
+function fakeProviderScope(models?: Array<{ id: string }>): ConfigForm<unknown> & { mutations: unknown[] } {
+    const mutations: unknown[] = []
+    const value = { providers: { 'opencode-go': models === undefined ? {} : { models } } }
+    return {
+        mutations,
+        getSnapshot: () => ({ status: 'ready', value, base: value, user: value, revision: 1, writable: true }),
+        subscribe: () => () => {},
+        set: async () => true,
+        unset: async () => true,
+        mutate: async (ops: unknown) => {
+            mutations.push(ops)
+            return true
+        },
+    } as unknown as ConfigForm<unknown> & { mutations: unknown[] }
+}
+
+/** A client context with the services the dashboard reads. */
+function fakeContext(provider = fakeProviderScope()): ClientContext {
+    return {
+        effect: () => () => {},
+        configForms: { get: () => provider },
+    } as unknown as ClientContext
 }
 
 /** One gateway status reply. */
@@ -139,6 +160,33 @@ describe('the dashboard', () => {
         const dashboard = createDashboard(fakeContext(), fakeScope())
         expect(dashboard.getSnapshot().route).toBe('opencode-go')
         expect(dashboard.getSnapshot().status).toBe('ready')
+        expect(dashboard.getSnapshot().enabledIds).toBeNull()
+    })
+
+    it('reads the enabled-model allowlist from the host provider profile', () => {
+        stubFetch()
+        const provider = fakeProviderScope([{ id: 'alpha' }, { id: 'beta' }])
+        const dashboard = createDashboard(fakeContext(provider), fakeScope())
+        expect(dashboard.getSnapshot().enabledIds).toEqual(['alpha', 'beta'])
+        expect(dashboard.getSnapshot().providerWritable).toBe(true)
+    })
+
+    it('writes the enabled-model allowlist through the host provider form', async () => {
+        stubFetch()
+        const provider = fakeProviderScope()
+        const dashboard = createDashboard(fakeContext(provider), fakeScope())
+        await expect(dashboard.actions.setEnabledModels([
+            { id: 'alpha', name: 'Alpha', known: true, live: true, contextWindow: 100, maxTokens: 20, input: ['text'] },
+            { id: 'beta', name: 'beta', known: false, live: true },
+        ])).resolves.toBe(true)
+        expect(provider.mutations).toEqual([
+            [{ op: 'set', path: ['providers', 'opencode-go', 'models'], value: [
+                { id: 'alpha', name: 'Alpha', contextWindow: 100, maxTokens: 20, input: ['text'] },
+                { id: 'beta' },
+            ] }],
+        ])
+        await expect(dashboard.actions.setEnabledModels(null)).resolves.toBe(true)
+        expect(provider.mutations[1]).toEqual([{ op: 'unset', path: ['providers', 'opencode-go', 'models'] }])
     })
 
     it('reads status and allowance from the guarded routes', async () => {

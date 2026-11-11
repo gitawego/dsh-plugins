@@ -222,7 +222,6 @@ export function modelsSnippet(status: ProviderStatus): string[] {
         if (row.contextWindow !== undefined) lines.push(`        contextWindow: ${row.contextWindow}`)
         if (row.maxTokens !== undefined) lines.push(`        maxTokens: ${row.maxTokens}`)
         if (row.input !== undefined && row.input.length > 0) lines.push(`        input: [${row.input.join(', ')}]`)
-        if (row.reasoning === true) lines.push('        reasoning: true')
     }
     return lines
 }

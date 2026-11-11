@@ -206,7 +206,6 @@ describe('the paste-ready models block', () => {
             '        contextWindow: 1000000',
             '        maxTokens: 384000',
             '        input: [text, image]',
-            '        reasoning: true',
         ])
     })
 

@@ -111,11 +111,13 @@ describe('client bundle', () => {
         for (const token of [
             '--dsw-alias-settings-card-fill',
             '--dsw-alias-settings-card-stroke',
-            '--dsw-alias-border-l3',
-            '--dsw-alias-border-l4',
+            '--dsw-alias-border-l2',
             '--dsw-alias-bg-layer-1',
+            '--dsw-alias-bg-layer-2',
             '--dsw-alias-label-secondary',
             '--dsw-alias-label-tertiary',
+            '--dsw-alias-brand-primary',
+            '--dsw-alias-button-primary-fill',
             '--dsh-font-family-code-default',
         ]) {
             expect(source, `missing current theme token ${token}`).toContain(token)

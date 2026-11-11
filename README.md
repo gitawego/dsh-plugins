@@ -27,11 +27,11 @@ that failure.
 - [packages/llm-provider](packages/llm-provider/) — `@gitawego/dsh-llm-provider`:
   the **OpenCode Go** dashboard. It serves no route: `dsh-llm-pi-ai` owns the
   route, the endpoint, the model catalog, and the `x-opencode-session` header
-  (pi-ai 1.5.0 stamps it from the session id). The plugin reports the two facts
-  no host seam owns — the provider's live model list versus the installed
-  catalog (plus the `models:` block that reconciles them) and the 5-hour /
-  weekly / monthly allowance — through a command, a tool, a guarded loopback
-  route, and a settings section.
+  (pi-ai 1.5.0 stamps it from the session id). The plugin reports the provider's
+  live model list and the 5-hour / weekly / monthly allowance through a command,
+  a tool, a guarded loopback route, and a settings section. The same section
+  shows only the route's enabled models and writes their allowlist to
+  `llm-pi-ai.providers.<route>.models` through the shared settings form.
 - [packages/llm-agy](packages/llm-agy/) — `@gitawego/dsh-llm-agy`:
   the **Antigravity (`agy`) ACP** provider. Registers the `agy` route and drives
   `agy acp` over ndjson JSON-RPC, discovering models and `thought_level` from

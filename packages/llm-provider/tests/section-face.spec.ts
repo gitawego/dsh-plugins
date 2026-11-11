@@ -30,11 +30,19 @@ function fakeScope(): ConfigForm<MonitorProfile> {
     } as unknown as ConfigForm<MonitorProfile>
 }
 
-/** A client context answering the two services the face reads. */
+/** A client context answering the services the face reads. */
 function fakeContext(): ClientContext {
+    const provider = {
+        getSnapshot: () => ({ status: 'ready', value: { providers: { 'opencode-go': {} } }, base: undefined, user: undefined, revision: 1, writable: true }),
+        subscribe: () => () => {},
+        set: async () => true,
+        unset: async () => true,
+        mutate: async () => true,
+    }
     return {
         locale: { bind: () => (key: string) => key },
         effect: () => () => {},
+        configForms: { get: () => provider },
     } as unknown as ClientContext
 }
 
@@ -63,12 +71,12 @@ describe('the section face', () => {
         expect(face.t('sectionNav')).toBe('sectionNav')
     })
 
-    it('exposes one snapshot hook and the two actions', () => {
+    it('exposes one snapshot hook and the dashboard actions', () => {
         stubFetch()
         const face = createSectionFace(fakeContext(), fakeScope())
         expect(typeof face.hooks.dashboard.getSnapshot).toBe('function')
         expect(typeof face.hooks.dashboard.subscribe).toBe('function')
-        expect(Object.keys(face.actions).sort()).toEqual(['clear', 'edit', 'refresh'])
+        expect(Object.keys(face.actions).sort()).toEqual(['clear', 'edit', 'refresh', 'setEnabledModels'])
     })
 
     it('answers a snapshot that already carries the profile', () => {
