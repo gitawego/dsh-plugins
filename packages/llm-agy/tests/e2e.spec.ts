@@ -36,6 +36,7 @@ describe.skipIf(!enabled)('real agy acp', () => {
                 host: {
                     logger: silentLogger,
                     resolveCwd: () => dir,
+                    readImage: async () => ({ data: '', mimeType: 'image/png' }),
                     requestApproval: async () => 'rejected',
                 },
                 config: () =>

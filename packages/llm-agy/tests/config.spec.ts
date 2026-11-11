@@ -18,6 +18,7 @@ describe('resolveConfig', () => {
         expect(config.defaultModel).toBe(DEFAULT_MODEL)
         expect(config.defaultModel).toBe('')
         expect(config.models).toEqual([])
+        expect(config.imageInput).toBe(true)
         expect(config.agentMode).toBe('default')
         expect(config.permissionMode).toBe('ask')
         expect(config.systemPromptSuffix).toBe('')
@@ -33,6 +34,7 @@ describe('resolveConfig', () => {
             discoveryMinutes: 2,
             displayName: '  My Antigravity  ',
             defaultModel: ' gemini-3.8-flash ',
+            imageInput: false,
             agentMode: 'plan',
             permissionMode: 'deny',
             systemPromptSuffix: 'be terse',
@@ -46,6 +48,7 @@ describe('resolveConfig', () => {
             discoveryMinutes: 2,
             displayName: 'My Antigravity',
             defaultModel: 'gemini-3.8-flash',
+            imageInput: false,
             agentMode: 'plan',
             permissionMode: 'deny',
             systemPromptSuffix: 'be terse',
@@ -126,6 +129,7 @@ describe('readConfig', () => {
                 displayName: 'Configured name',
                 defaultModel: '',
                 models: [{ id: 'configured-model', contextWindow: 100 }],
+                imageInput: false,
                 agentMode: 'accept-edits',
                 permissionMode: 'deny',
                 systemPromptSuffix: 'suffix',

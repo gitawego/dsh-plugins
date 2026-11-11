@@ -12,6 +12,7 @@ Gemini models without a `GEMINI_API_KEY`.
   config:
     defaultModel: ''         # empty = the model ACP currently has selected
     models: []               # empty = discover from agy acp
+    imageInput: true         # declare image input and send ACP image blocks
     agentMode: default       # any mode advertised by agy acp
     permissionMode: ask      # ask | deny
 
@@ -95,6 +96,10 @@ Practical consequences:
   final text and reasoning are the visible result.
 - `agy` may edit files and run commands, subject to the approval bridge and the
   selected ACP mode.
+- With `imageInput: true` (the default), image attachments are resolved through
+  `ctx.attachments` and sent as ACP `image` content blocks; Gemini models are
+  therefore advertised as `text+image`. Set `imageInput: false` for a text-only
+  route.
 - ACP has no per-request `temperature`, `maxTokens`, or `stop` field. Those
   `GenerateOptions` fields are ignored; the model's own defaults apply.
 

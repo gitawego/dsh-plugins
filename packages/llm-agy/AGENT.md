@@ -27,6 +27,10 @@ the only way to put that subscription behind `ctx.llm`.
    `GenerateOptions.tools` is intentional, not an omission.
 5. **Do not claim ACP supports `temperature`, `maxTokens`, or `stop`.** It does
    not; those request fields are ignored.
+6. **Image input is explicit.** `imageInput: true` (default) advertises
+   `text+image` and resolves attachments through `ctx.attachments` into ACP
+   `image` blocks; without the attachment service the request fails with
+   `UNSUPPORTED_CONTENT`, never a silent text placeholder.
 6. **Keep the ACP client local.** The host ships
    `@agentclientprotocol/sdk@1.4.0`, but the plugin owns the small ndjson
    JSON-RPC subset it needs. That avoids a second SDK copy and makes the

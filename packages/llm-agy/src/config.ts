@@ -68,6 +68,8 @@ export interface ResolvedAgyConfig {
     defaultModel: string
     /** Explicit model catalog override; empty means discover from ACP. */
     models: ConfiguredModel[]
+    /** Declare image input and forward attachments as ACP image blocks. */
+    imageInput: boolean
     /** ACP mode applied after `session/new`. */
     agentMode: AgyMode
     /** Approval policy for ACP tool permission requests. */
@@ -87,6 +89,7 @@ export interface AgyConfigRefs {
     displayName: Volatile<string>
     defaultModel: Volatile<string>
     models: Volatile<ConfiguredModel[]>
+    imageInput: Volatile<boolean>
     agentMode: Volatile<AgyMode>
     permissionMode: Volatile<AgyPermissionMode>
     systemPromptSuffix: Volatile<string>
@@ -116,6 +119,7 @@ export const Config: Schema = z.object({
         )
         .default([])
         .volatile(),
+    imageInput: z.boolean().default(true).volatile(),
     agentMode: z.string().default('default').volatile(),
     permissionMode: z.union(['ask', 'deny']).default('ask').volatile(),
     systemPromptSuffix: z.string().default('').volatile(),
@@ -195,6 +199,7 @@ export function resolveConfig(input: unknown): ResolvedAgyConfig {
         displayName: trimmed(raw.displayName) ?? DEFAULT_DISPLAY_NAME,
         defaultModel: trimmed(raw.defaultModel) ?? DEFAULT_MODEL,
         models,
+        imageInput: raw.imageInput !== false,
         agentMode: trimmed(raw.agentMode) ?? 'default',
         permissionMode: permissionMode(raw.permissionMode, 'ask'),
         systemPromptSuffix: typeof raw.systemPromptSuffix === 'string' ? raw.systemPromptSuffix : '',
@@ -218,6 +223,7 @@ export function readConfig(config: AgyConfigRefs | undefined): ResolvedAgyConfig
         displayName: config.displayName.get(),
         defaultModel: config.defaultModel.get(),
         models: config.models.get(),
+        imageInput: config.imageInput.get(),
         agentMode: config.agentMode.get(),
         permissionMode: config.permissionMode.get(),
         systemPromptSuffix: config.systemPromptSuffix.get(),

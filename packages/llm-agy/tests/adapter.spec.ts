@@ -70,6 +70,7 @@ function host(cwd: string, outcome: 'allowed-once' | 'rejected' | 'cancelled' | 
     const value: AgyHost = {
         logger: silentLogger,
         resolveCwd: () => cwd,
+        readImage: async () => ({ data: '', mimeType: 'image/png' }),
         requestApproval: async (input) => {
             calls.push({ toolName: input.toolName, callId: input.callId, reason: input.reason, sessionId: input.sessionId })
             return outcome
@@ -236,6 +237,7 @@ describe('AgyAdapter streaming (integration vs fake ACP agent)', () => {
         const customHost: AgyHost = {
             logger: silentLogger,
             resolveCwd: () => cwd,
+            readImage: async () => ({ data: '', mimeType: 'image/png' }),
             requestApproval: async (input) => {
                 calls.push({ toolName: input.toolName })
                 return 'allowed-once'
@@ -375,7 +377,7 @@ describe('AgyAdapter catalog', () => {
             provider: 'agy',
             id: 'gemini-4-argon',
             name: 'Gemini 4 Argon',
-            inputModalities: ['text'],
+            inputModalities: ['text', 'image'],
         })
         expect(models.map((model) => model.id)).toEqual([
             'gemini-4-argon',
@@ -423,7 +425,7 @@ describe('AgyAdapter catalog', () => {
                 id: 'declared-model',
                 name: 'Declared Model',
                 description: 'from config',
-                inputModalities: ['text'],
+                inputModalities: ['text', 'image'],
             },
         ])
         const resolved = await adapter.resolveModel('agy', 'declared-model')

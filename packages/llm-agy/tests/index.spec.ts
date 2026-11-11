@@ -66,6 +66,30 @@ describe('createAgyHost', () => {
         })
     })
 
+    it('resolves an image through the attachment service as base64 ACP data', async () => {
+        const { ctx } = fakeContext({
+            attachments: {
+                readImageRequest: async (ref: unknown, target: unknown) => {
+                    expect(ref).toMatchObject({ attachmentId: 'img-1' })
+                    expect(target).toEqual({ width: 2048, height: 2048, maxBytes: 4 * 1024 * 1024 })
+                    return { data: new Uint8Array([1, 2, 3]), mediaType: 'image/png' }
+                },
+            },
+        })
+        const host = createAgyHost(ctx, undefined)
+        await expect(host.readImage({ attachmentId: 'img-1' } as never)).resolves.toEqual({
+            data: 'AQID',
+            mimeType: 'image/png',
+        })
+    })
+
+    it('fails image input with UNSUPPORTED_CONTENT when the attachment service is missing', async () => {
+        const host = createAgyHost(fakeContext({ attachments: undefined }).ctx, undefined)
+        await expect(host.readImage({ attachmentId: 'img-1' } as never)).rejects.toMatchObject({
+            code: 'UNSUPPORTED_CONTENT',
+        })
+    })
+
     it('fails closed when the approval or agent service is missing', async () => {
         const withoutApproval = fakeContext({ approval: undefined }).ctx
         await expect(createAgyHost(withoutApproval, undefined).requestApproval({ toolName: 'x' })).resolves.toBe('unavailable')

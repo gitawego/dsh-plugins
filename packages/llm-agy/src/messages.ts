@@ -12,10 +12,11 @@
  *
  * @module @gitawego/dsh-llm-agy/messages
  */
-import type { ContentBlock, GenerateOptions, RequestMessage } from '@deepseek-ai/dsh-llm'
+import { LlmError, type ContentBlock, type GenerateOptions, type ImageBlock, type RequestMessage } from '@deepseek-ai/dsh-llm'
+import type { AcpContentBlock } from './protocol.ts'
 
 /** Text carried by one content-block list, excluding internal reasoning. */
-export function contentText(content: readonly ContentBlock[]): string {
+export function contentText(content: readonly ContentBlock[], options: { imagePlaceholders?: boolean } = {}): string {
     const parts: string[] = []
     for (const block of content) {
         switch (block.type) {
@@ -26,7 +27,9 @@ export function contentText(content: readonly ContentBlock[]): string {
                 // Reasoning is provider-private; do not replay it as user-visible history.
                 break
             case 'image':
-                parts.push(`[image: ${block.attachment.name ?? block.attachment.mediaType}]`)
+                if (options.imagePlaceholders !== false) {
+                    parts.push(`[image: ${block.attachment.name ?? block.attachment.mediaType}]`)
+                }
                 break
             case 'file':
                 parts.push(`[file: ${block.attachment.name}]`)
@@ -133,6 +136,79 @@ export function buildPrompt(options: GenerateOptions, delivered: ReadonlySet<str
         text: `New messages since your last turn:\n\n${fresh.map(renderMessage).join('\n\n')}`,
         deliveredIds,
     }
+}
+
+/** One image resolved to the bytes an ACP prompt block carries. */
+export interface PromptImage {
+    data: string
+    mimeType: string
+}
+
+/** Resolve one durable image attachment to request bytes. */
+export type ImageResolver = (ref: ImageBlock['attachment'], signal?: AbortSignal) => Promise<PromptImage>
+
+/** A prompt assembled as ordered ACP content blocks. */
+export interface PromptContent {
+    content: AcpContentBlock[]
+    deliveredIds: string[]
+}
+
+/**
+ * Build the next ACP prompt with images preserved as image blocks.
+ *
+ * Text-only history is role-labelled exactly like {@link buildPrompt}; images in
+ * a selected message are resolved to base64 blocks and appended after that
+ * message's text. An offloaded image stays a text placeholder.
+ * @param options - the exact model request.
+ * @param delivered - message ids already delivered to this ACP session.
+ * @param resolveImage - attachment reader.
+ * @param signal - cancellation for attachment reads.
+ * @returns ordered content blocks and delivered ids.
+ */
+export async function buildPromptContent(
+    options: GenerateOptions,
+    delivered: ReadonlySet<string>,
+    resolveImage: ImageResolver,
+    signal?: AbortSignal,
+): Promise<PromptContent> {
+    const conversation = conversationMessages(options.messages)
+    const firstCall = delivered.size === 0
+    const fresh = conversation.filter((message) => {
+        if (!firstCall && message.role === 'assistant') return false
+        if (!('id' in message) || typeof message.id !== 'string') return true
+        return !delivered.has(message.id)
+    })
+    const selected = firstCall ? conversation : fresh
+    const content: AcpContentBlock[] = []
+    const addText = (text: string): void => {
+        if (text.trim().length > 0) content.push({ type: 'text', text })
+    }
+
+    if (firstCall && conversation.length > 1) addText(FIRST_CALL_PREAMBLE)
+    if (selected.length === 0) addText('Continue.')
+
+    for (const message of selected) {
+        const text = contentText(message.content, { imagePlaceholders: false })
+        const label = message.role === 'user'
+            ? 'User: '
+            : message.role === 'assistant'
+                ? 'Assistant: '
+                : message.role === 'tool'
+                    ? (message.isError === true ? 'Tool error: ' : 'Tool result: ')
+                    : ''
+        if (text.length > 0) addText(`${label}${text}`)
+        for (const block of message.content) {
+            if (block.type !== 'image') continue
+            if (block.offloaded === true) {
+                addText(`[image: ${block.attachment.name ?? block.attachment.mediaType}]`)
+                continue
+            }
+            const image = await resolveImage(block.attachment, signal)
+            content.push({ type: 'image', data: image.data, mimeType: image.mimeType })
+        }
+    }
+
+    return { content, deliveredIds: messageIds(conversation) }
 }
 
 /** A system-prompt change delivered mid-session, where ACP has no update slot. */

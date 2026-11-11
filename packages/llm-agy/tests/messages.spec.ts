@@ -8,7 +8,7 @@ import {
     type RequestMessage,
 } from '@deepseek-ai/dsh-llm'
 import { describe, expect, it } from 'vitest'
-import { buildPrompt, contentText, messageIds, renderMessage, systemPromptOf, systemUpdateText } from '../src/messages.ts'
+import { buildPrompt, buildPromptContent, contentText, messageIds, renderMessage, systemPromptOf, systemUpdateText } from '../src/messages.ts'
 
 function user(text: string) {
     return createUserMessage({ content: [{ type: 'text', text }], source: { kind: 'user' } })
@@ -108,6 +108,64 @@ describe('buildPrompt', () => {
 
     it('handles an empty conversation', () => {
         expect(buildPrompt(options([]), new Set()).text).toBe('Continue.')
+    })
+})
+
+describe('buildPromptContent', () => {
+    const image = {
+        type: 'image' as const,
+        attachment: {
+            attachmentId: 'img-1' as never,
+            mediaType: 'image/png' as const,
+            bytes: 4,
+            width: 1,
+            height: 1,
+            name: 'shot.png',
+        },
+    }
+
+    it('forwards an image block with its resolved bytes', async () => {
+        const message = createUserMessage({ content: [{ type: 'text', text: 'look' }, image], source: { kind: 'user' } })
+        const built = await buildPromptContent(
+            options([message]),
+            new Set(),
+            async (ref) => ({ data: `bytes:${ref.attachmentId}`, mimeType: ref.mediaType }),
+        )
+        expect(built.content).toEqual([
+            { type: 'text', text: 'User: look' },
+            { type: 'image', data: 'bytes:img-1', mimeType: 'image/png' },
+        ])
+        expect(built.deliveredIds).toEqual([message.id])
+    })
+
+    it('keeps an offloaded image as a text placeholder', async () => {
+        const message = createUserMessage({
+            content: [{ type: 'image', attachment: image.attachment, offloaded: true }],
+            source: { kind: 'user' },
+        })
+        const built = await buildPromptContent(options([message]), new Set(), async () => {
+            throw new Error('should not read an offloaded image')
+        })
+        expect(built.content).toEqual([{ type: 'text', text: '[image: shot.png]' }])
+    })
+
+    it('labels images in replayed history', async () => {
+        const first = user('one')
+        const withImage = createUserMessage({
+            content: [{ type: 'text', text: 'two' }, image],
+            source: { kind: 'user' },
+        })
+        const built = await buildPromptContent(
+            options([first, withImage]),
+            new Set(),
+            async () => ({ data: 'b64', mimeType: 'image/png' }),
+        )
+        expect(built.content).toEqual([
+            { type: 'text', text: 'The following is the conversation so far. Continue it by responding to the latest user message. Do not repeat the transcript.' },
+            { type: 'text', text: 'User: one' },
+            { type: 'text', text: 'User: two' },
+            { type: 'image', data: 'b64', mimeType: 'image/png' },
+        ])
     })
 })
 

@@ -18,6 +18,7 @@ import {
     ReasoningEffortId,
     ToolCallId,
     type GenerateOptions,
+    type ImageBlock,
     type LlmModelInfo,
     type LlmProviderInfo,
     type LlmResolvedModelInfo,
@@ -28,7 +29,7 @@ import { AcpSession, type PermissionHandler, type SessionLogger } from './acp-se
 import { configCatalog, type Catalog, type CatalogModel } from './catalog.ts'
 import type { ResolvedAgyConfig } from './config.ts'
 import { classifyAcpError } from './errors.ts'
-import { buildPrompt, systemPromptOf, systemUpdateText } from './messages.ts'
+import { buildPrompt, buildPromptContent, systemPromptOf, systemUpdateText, type PromptImage } from './messages.ts'
 import { permissionReason, permissionResponse, permissionToolName } from './permissions.ts'
 import type { AcpContentBlock, AcpRequestPermissionRequest } from './protocol.ts'
 import { ChunkTranslator } from './stream.ts'
@@ -37,6 +38,8 @@ import { ChunkTranslator } from './stream.ts'
 export interface AgyHost {
     logger: SessionLogger
     resolveCwd(sessionId?: string): string
+    /** Resolve one durable attachment to request bytes for an ACP image block. */
+    readImage(ref: ImageBlock['attachment'], signal?: AbortSignal): Promise<PromptImage>
     requestApproval(input: {
         sessionId?: string
         toolName: string
@@ -103,20 +106,20 @@ class AsyncQueue<T> implements AsyncIterable<T> {
 }
 
 /** Map one catalog entry to the list-model shape. */
-function modelInfo(model: CatalogModel): LlmModelInfo {
+function modelInfo(model: CatalogModel, imageInput: boolean): LlmModelInfo {
     return {
         provider: 'agy',
         id: model.id,
         name: model.name,
         ...(model.description !== undefined ? { description: model.description } : {}),
-        inputModalities: ['text'],
+        inputModalities: imageInput ? ['text', 'image'] : ['text'],
     }
 }
 
 /** Resolve one model with only the metadata the catalog actually carries. */
-function resolvedModel(model: CatalogModel): LlmResolvedModelInfo {
+function resolvedModel(model: CatalogModel, imageInput: boolean): LlmResolvedModelInfo {
     return {
-        ...modelInfo(model),
+        ...modelInfo(model, imageInput),
         ...(model.contextWindow !== undefined ? { context: { contextWindow: model.contextWindow } } : {}),
         ...(model.maxTokens !== undefined ? { defaultMaxTokens: model.maxTokens } : {}),
         ...(model.efforts.length > 0
@@ -155,7 +158,8 @@ export class AgyAdapter extends LlmAdapter {
     override async listModels(provider: string): Promise<readonly LlmModelInfo[]> {
         if (provider !== 'agy') return []
         const catalog = await this.catalog()
-        return catalog.models.map(modelInfo)
+        const imageInput = this.config().imageInput
+        return catalog.models.map((model) => modelInfo(model, imageInput))
     }
 
     override async resolveModel(provider: string, model: string): Promise<LlmResolvedModelInfo> {
@@ -170,7 +174,7 @@ export class AgyAdapter extends LlmAdapter {
                 'UNKNOWN_MODEL',
             )
         }
-        return resolvedModel(found)
+        return resolvedModel(found, this.config().imageInput)
     }
 
     override async *stream(options: GenerateOptions): AsyncIterable<StreamChunk> {
@@ -200,12 +204,6 @@ export class AgyAdapter extends LlmAdapter {
             throw classifyAcpError(error)
         }
 
-        const built = buildPrompt(options, entry.delivered)
-        let promptText = built.text
-        if (entry.delivered.size > 0 && system !== undefined && entry.systemPrompt !== system) {
-            promptText = `${systemUpdateText(system)}\n\n${promptText}`
-        }
-        const content: AcpContentBlock[] = [{ type: 'text', text: promptText }]
         const translator = new ChunkTranslator()
         const queue = new AsyncQueue<StreamChunk>()
         const controller = new AbortController()
@@ -213,6 +211,31 @@ export class AgyAdapter extends LlmAdapter {
         const signal = linked.signal
         let settled = false
         let failed = false
+
+        let content: AcpContentBlock[]
+        let deliveredIds: string[]
+        if (config.imageInput) {
+            const built = await buildPromptContent(
+                options,
+                entry.delivered,
+                (ref, readSignal) => this.host.readImage(ref, readSignal),
+                signal,
+            )
+            content = built.content
+            deliveredIds = built.deliveredIds
+            if (entry.delivered.size > 0 && system !== undefined && entry.systemPrompt !== system) {
+                content.unshift({ type: 'text', text: systemUpdateText(system) })
+            }
+        } else {
+            const built = buildPrompt(options, entry.delivered)
+            let promptText = built.text
+            if (entry.delivered.size > 0 && system !== undefined && entry.systemPrompt !== system) {
+                promptText = `${systemUpdateText(system)}\n\n${promptText}`
+            }
+            content = [{ type: 'text', text: promptText }]
+            deliveredIds = built.deliveredIds
+        }
+        if (content.length === 0) content.push({ type: 'text', text: 'Continue.' })
 
         entry.state.signal = signal
         const prompt = entry.session.prompt(
@@ -233,7 +256,7 @@ export class AgyAdapter extends LlmAdapter {
                     const finished = translator.finish(response)
                     const aborted = finished.some((chunk) => chunk.type === 'finish' && chunk.reason.kind === 'aborted')
                     for (const chunk of finished) queue.push(chunk)
-                    for (const id of built.deliveredIds) entry.delivered.add(id)
+                    for (const id of deliveredIds) entry.delivered.add(id)
                     entry.systemPrompt = system
                     entry.lastUsed = Date.now()
                     if (aborted) failed = true

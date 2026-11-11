@@ -19,7 +19,7 @@ import type {} from '@deepseek-ai/dsh-agent'
 import type {} from '@deepseek-ai/dsh-session'
 import type {} from '@deepseek-ai/dsh-user-approval'
 import type {} from '@deepseek-ai/dsh-working-directory'
-import type { ToolCallId } from '@deepseek-ai/dsh-llm'
+import { LlmError, type ImageBlock, type ToolCallId } from '@deepseek-ai/dsh-llm'
 import { AgyAdapter, type AgyHost } from './adapter.ts'
 import {
     AGY_PROVIDER,
@@ -97,6 +97,27 @@ export function createAgyHost(ctx: Context, config: AgyConfigRefs | undefined): 
                 if (session.header.cwd !== undefined && session.header.cwd.length > 0) return session.header.cwd
             }
             return readConfig(config).cwd || process.cwd()
+        },
+        async readImage(ref: ImageBlock['attachment'], signal?: AbortSignal) {
+            const attachments = ctx.get('attachments') as {
+                readImageRequest: (
+                    attachment: ImageBlock['attachment'],
+                    target: { width: number; height: number; maxBytes: number },
+                    signal?: AbortSignal,
+                ) => Promise<{ data: Uint8Array; mediaType: string }>
+            } | undefined
+            if (attachments === undefined) {
+                throw new LlmError(
+                    'Antigravity image input requires the durable attachment service',
+                    'UNSUPPORTED_CONTENT',
+                )
+            }
+            const image = await attachments.readImageRequest(
+                ref,
+                { width: 2048, height: 2048, maxBytes: 4 * 1024 * 1024 },
+                signal,
+            )
+            return { data: Buffer.from(image.data).toString('base64'), mimeType: image.mediaType }
         },
         async requestApproval(input) {
             const approval = ctx.get('approval')

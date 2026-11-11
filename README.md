@@ -35,8 +35,8 @@ that failure.
 - [packages/llm-agy](packages/llm-agy/) — `@gitawego/dsh-llm-agy`:
   the **Antigravity (`agy`) ACP** provider. Registers the `agy` route and drives
   `agy acp` over ndjson JSON-RPC, discovering models and `thought_level` from
-  ACP config options and bridging ACP tool permissions into DSH approvals. It is
-  an agent-delegate:
+  ACP config options, forwarding image attachments as ACP image blocks, and
+  bridging ACP tool permissions into DSH approvals. It is an agent-delegate:
   `agy` runs its own tools, so DSH tool schemas are not sent. Authentication is
   the CLI's existing Google/Antigravity login; no API key is stored.
 - [packages/web-search](packages/web-search/) — `@gitawego/dsh-web-search`:
