@@ -15,11 +15,11 @@ import { createServer, type Server } from 'node:http'
 import type { AddressInfo } from 'node:net'
 import {
     ANTIGRAVITY_OAUTH_CLIENT_ID,
-    ANTIGRAVITY_OAUTH_CLIENT_SECRET,
     GOOGLE_TOKEN_ENDPOINT,
     decodeJwtClaims,
     fetchAgyUserInfo,
 } from './oauth.ts'
+import { MISSING_OAUTH_SECRET_MESSAGE, resolveOAuthClientSecret } from './oauth-secret.ts'
 import type { OAuthCredential } from './token-storage.ts'
 
 /** Google's authorization endpoint. */
@@ -65,6 +65,7 @@ export interface GoogleLoginOptions {
     timeoutMs?: number
     fetch?: typeof fetch
     exchange?: CodeExchanger
+    clientSecret?: string
     successPage?: (result: GoogleLoginResult) => string
     errorPage?: (message: string) => string
 }
@@ -119,13 +120,15 @@ export async function exchangeGoogleCode(
     code: string,
     redirectUri: string,
     codeVerifier: string,
-    options: { fetch?: typeof fetch; now?: () => number; signal?: AbortSignal } = {},
+    options: { fetch?: typeof fetch; now?: () => number; signal?: AbortSignal; clientSecret?: string } = {},
 ): Promise<GoogleLoginResult> {
+    const clientSecret = options.clientSecret ?? (await resolveOAuthClientSecret())
+    if (clientSecret === undefined) throw new Error(MISSING_OAUTH_SECRET_MESSAGE)
     const fetchImpl = options.fetch ?? fetch
     const now = options.now ?? Date.now
     const form = new URLSearchParams({
         client_id: ANTIGRAVITY_OAUTH_CLIENT_ID,
-        client_secret: ANTIGRAVITY_OAUTH_CLIENT_SECRET,
+        client_secret: clientSecret,
         code,
         code_verifier: codeVerifier,
         grant_type: 'authorization_code',
@@ -304,6 +307,7 @@ export async function startGoogleLogin(options: GoogleLoginOptions = {}): Promis
         try {
             const exchange = options.exchange ?? ((value, uri, secret) => exchangeGoogleCode(value, uri, secret, {
                 ...(options.fetch !== undefined ? { fetch: options.fetch } : {}),
+                ...(options.clientSecret !== undefined ? { clientSecret: options.clientSecret } : {}),
                 signal: AbortSignal.timeout(20_000),
             }))
             const value = await exchange(code, redirectUri, verifier)

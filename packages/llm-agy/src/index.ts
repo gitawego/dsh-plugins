@@ -70,6 +70,7 @@ export { accountId, defaultAccountsFile, findAccount, parseAccountStore, summari
 export { AGY_ACCOUNTS_ROUTE_PATH, AGY_ACCOUNT_LOGIN_CANCEL_PATH, AGY_ACCOUNT_LOGIN_PATH, AGY_ACCOUNT_LOGIN_STATUS_PATH, AGY_ACCOUNT_QUOTA_PATH, AGY_ACCOUNT_SWITCH_PATH, createAgyAccountHandlers, registerAgyAccountRoutes } from './accounts-route.ts'
 export { buildGoogleAuthUrl, exchangeGoogleCode, startGoogleLogin, type GoogleLoginHandle, type GoogleLoginOptions, type GoogleLoginResult } from './oauth-login.ts'
 export { ANTIGRAVITY_OAUTH_CLIENT_ID, decodeJwtClaims, decodeJwtEmail, refreshAgyToken, type JwtIdentity, type RefreshedToken } from './oauth.ts'
+export { MISSING_OAUTH_SECRET_MESSAGE, OAUTH_SECRET_ENV, defaultOAuthSecretFile, resolveOAuthClientSecret } from './oauth-secret.ts'
 export { AgyTokenStorage, credentialFromTokenPayload, credentialNeedsRefresh, tokenPayloadOf, type OAuthCredential } from './token-storage.ts'
 export { MUTATION_HEADER, isTrustedLocalMutation } from './route-guard.ts'
 export { AgyAdapter, type AgyHost }

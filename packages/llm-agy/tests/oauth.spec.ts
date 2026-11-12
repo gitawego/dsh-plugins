@@ -1,7 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import {
     ANTIGRAVITY_OAUTH_CLIENT_ID,
-    ANTIGRAVITY_OAUTH_CLIENT_SECRET,
     GOOGLE_TOKEN_ENDPOINT,
     decodeJwtEmail,
     refreshAgyToken,
@@ -31,7 +30,7 @@ describe('refreshAgyToken', () => {
             expect(init?.method).toBe('POST')
             const body = new URLSearchParams(String(init?.body))
             expect(body.get('client_id')).toBe(ANTIGRAVITY_OAUTH_CLIENT_ID)
-            expect(body.get('client_secret')).toBe(ANTIGRAVITY_OAUTH_CLIENT_SECRET)
+            expect(body.get('client_secret')).toBe('test-secret')
             expect(body.get('refresh_token')).toBe('refresh-old')
             expect(body.get('grant_type')).toBe('refresh_token')
             return new Response(JSON.stringify({
@@ -42,7 +41,7 @@ describe('refreshAgyToken', () => {
                 id_token: idToken('user@example.com'),
             }), { status: 200 })
         }) as unknown as typeof fetch
-        const token = await refreshAgyToken('refresh-old', { fetch: fetchImpl, now: () => 1_700_000_000_000 })
+        const token = await refreshAgyToken('refresh-old', { fetch: fetchImpl, now: () => 1_700_000_000_000, clientSecret: 'test-secret' })
         expect(token).toEqual({
             accessToken: 'access-new',
             expiresAt: 1_700_003_599,
@@ -60,7 +59,7 @@ describe('refreshAgyToken', () => {
             expires_in: 60,
             token_type: 'Bearer',
         }), { status: 200 })) as unknown as typeof fetch
-        const token = await refreshAgyToken('refresh-old', { fetch: fetchImpl, now: () => 0 })
+        const token = await refreshAgyToken('refresh-old', { fetch: fetchImpl, now: () => 0, clientSecret: 'test-secret' })
         expect(token.refreshToken).toBe('refresh-new')
     })
 
@@ -69,14 +68,14 @@ describe('refreshAgyToken', () => {
             error: 'invalid_grant',
             error_description: 'Token has been expired or revoked.',
         }), { status: 400 })) as unknown as typeof fetch
-        await expect(refreshAgyToken('refresh-old', { fetch: fetchImpl })).rejects.toThrow(
+        await expect(refreshAgyToken('refresh-old', { fetch: fetchImpl, clientSecret: 'test-secret' })).rejects.toThrow(
             'Google token refresh failed (invalid_grant: Token has been expired or revoked.)',
         )
     })
 
     it('refuses an empty refresh token and a response without an access token', async () => {
-        await expect(refreshAgyToken('   ')).rejects.toThrow('no refresh token')
+        await expect(refreshAgyToken('   ', { clientSecret: 'test-secret' })).rejects.toThrow('no refresh token')
         const fetchImpl = vi.fn(async () => new Response(JSON.stringify({ expires_in: 60 }), { status: 200 })) as unknown as typeof fetch
-        await expect(refreshAgyToken('refresh-old', { fetch: fetchImpl })).rejects.toThrow('no access token')
+        await expect(refreshAgyToken('refresh-old', { fetch: fetchImpl, clientSecret: 'test-secret' })).rejects.toThrow('no access token')
     })
 })

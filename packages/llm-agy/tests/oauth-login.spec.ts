@@ -62,6 +62,7 @@ describe('exchangeGoogleCode', () => {
             expect(String(url)).toBe(GOOGLE_TOKEN_ENDPOINT)
             const form = new URLSearchParams(String(init?.body))
             expect(form.get('grant_type')).toBe('authorization_code')
+            expect(form.get('client_secret')).toBe('test-secret')
             expect(form.get('code')).toBe('code-1')
             expect(form.get('code_verifier')).toBe('verifier')
             expect(form.get('redirect_uri')).toBe('http://127.0.0.1:41234/oauth/callback')
@@ -77,6 +78,7 @@ describe('exchangeGoogleCode', () => {
         const value = await exchangeGoogleCode('code-1', 'http://127.0.0.1:41234/oauth/callback', 'verifier', {
             fetch: fetchImpl,
             now: () => 1_700_000_000_000,
+            clientSecret: 'test-secret',
         })
         expect(value.email).toBe('user@example.com')
         expect(value.name).toBe('User Name')
@@ -93,7 +95,7 @@ describe('exchangeGoogleCode', () => {
             error: 'access_denied',
             error_description: 'The user denied the request.',
         }), { status: 400 })) as unknown as typeof fetch
-        await expect(exchangeGoogleCode('secret-code', 'http://127.0.0.1:1/oauth/callback', 'verifier', { fetch: fetchImpl }))
+        await expect(exchangeGoogleCode('secret-code', 'http://127.0.0.1:1/oauth/callback', 'verifier', { fetch: fetchImpl, clientSecret: 'test-secret' }))
             .rejects.toThrow('Google sign-in failed (access_denied: The user denied the request.)')
     })
 })

@@ -7,19 +7,16 @@
  * token *before* the keyring is replaced, so a target account whose last use
  * was days ago still works on the first click.
  *
- * The client id and secret below are the public installed-app credentials the
- * Antigravity CLI itself uses (its `acp --login` URL names the same client).
- * They are not user credentials, and they grant nothing without a refresh
- * token the user already owns.
+ * The client id is the public installed-app client the Antigravity CLI uses
+ * (its `acp --login` URL names it). The matching client secret is supplied
+ * locally at runtime; see `oauth-secret.ts`.
  *
  * @module @gitawego/dsh-llm-agy/oauth
  */
+import { MISSING_OAUTH_SECRET_MESSAGE, resolveOAuthClientSecret } from './oauth-secret.ts'
 
 /** Antigravity's installed-app OAuth client. */
 export const ANTIGRAVITY_OAUTH_CLIENT_ID = '1071006060591-tmhssin2h21lcre235vtolojh4g403ep.apps.googleusercontent.com'
-
-/** Antigravity's installed-app client secret; public by construction. */
-export const ANTIGRAVITY_OAUTH_CLIENT_SECRET = '[redacted]'
 
 /** Token endpoint used by installed apps. */
 export const GOOGLE_TOKEN_ENDPOINT = 'https://oauth2.googleapis.com/token'
@@ -41,6 +38,8 @@ export interface RefreshTokenOptions {
     fetch?: typeof fetch
     now?: () => number
     signal?: AbortSignal
+    /** Test/integration override; normally resolved from the local config. */
+    clientSecret?: string
 }
 
 /** Identity claims carried by an OpenID id_token. */
@@ -136,11 +135,13 @@ export async function fetchAgyUserInfo(
 export async function refreshAgyToken(refreshToken: string, options: RefreshTokenOptions = {}): Promise<RefreshedToken> {
     const token = refreshToken.trim()
     if (token.length === 0) throw new Error('account has no refresh token')
+    const clientSecret = options.clientSecret ?? (await resolveOAuthClientSecret())
+    if (clientSecret === undefined) throw new Error(MISSING_OAUTH_SECRET_MESSAGE)
     const fetchImpl = options.fetch ?? fetch
     const now = options.now ?? Date.now
     const body = new URLSearchParams({
         client_id: ANTIGRAVITY_OAUTH_CLIENT_ID,
-        client_secret: ANTIGRAVITY_OAUTH_CLIENT_SECRET,
+        client_secret: clientSecret,
         refresh_token: token,
         grant_type: 'refresh_token',
     })

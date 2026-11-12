@@ -47,7 +47,8 @@
         "prepare": "npm run build",
         "build": "tsc -p tsconfig.build.json && tsc -p tsconfig.client.json && node scripts/build-client.mjs",
         "typecheck": "tsc --noEmit && tsc -p tsconfig.client.json --noEmit",
-        "test": "vitest run"
+        "test": "vitest run",
+        "oauth-secret": "node scripts/antigravity-oauth-secret.mjs"
     },
     "peerDependencies": {
         "@deepseek-ai/cordis": "^4.1.0",

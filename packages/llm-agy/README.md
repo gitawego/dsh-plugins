@@ -155,6 +155,23 @@ The OAuth callback asks the OS for a free ephemeral port (`listen(0)` on
 state-checked callback and closes immediately; cancelling the dialog closes it
 too.
 
+### OAuth client secret
+
+The repository does not contain Antigravity's OAuth client secret. It is a
+property of the installed CLI, not of this plugin, and keeping it out of source
+keeps GitHub secret scanning meaningful. Configure it once, either:
+
+```bash
+# Extract and test the candidates from the installed agy binary
+pnpm --filter @gitawego/dsh-llm-agy oauth-secret
+```
+
+or set `ANTIGRAVITY_OAUTH_CLIENT_SECRET`. The extractor writes
+`$DSH_HOME/llm-agy/oauth-client.json` with mode 0600; token refresh and OAuth
+sign-in read it automatically. While the active CLI login is present, the
+extractor can verify the candidate by refreshing that login; it never prints
+the secret.
+
 Switching:
 
 1. refreshes the target account's access token with its refresh token
