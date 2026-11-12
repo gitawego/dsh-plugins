@@ -43,18 +43,34 @@ export interface RefreshTokenOptions {
     signal?: AbortSignal
 }
 
-/** Pull the email claim out of an unverified JWT payload. */
-export function decodeJwtEmail(idToken: string): string | undefined {
+/** Identity claims carried by an OpenID id_token. */
+export interface JwtIdentity {
+    email?: string
+    name?: string
+}
+
+/** Pull the identity claims out of an unverified JWT payload. */
+export function decodeJwtClaims(idToken: string): JwtIdentity {
     const parts = idToken.split('.')
-    if (parts.length < 2) return undefined
+    if (parts.length < 2) return {}
     try {
         const payload = JSON.parse(Buffer.from(parts[1]!, 'base64url').toString('utf8')) as Record<string, unknown>
-        return typeof payload['email'] === 'string' && payload['email'].trim().length > 0
-            ? payload['email'].trim()
-            : undefined
+        return {
+            ...(typeof payload['email'] === 'string' && payload['email'].trim().length > 0
+                ? { email: payload['email'].trim() }
+                : {}),
+            ...(typeof payload['name'] === 'string' && payload['name'].trim().length > 0
+                ? { name: payload['name'].trim() }
+                : {}),
+        }
     } catch {
-        return undefined
+        return {}
     }
+}
+
+/** Pull the email claim out of an unverified JWT payload. */
+export function decodeJwtEmail(idToken: string): string | undefined {
+    return decodeJwtClaims(idToken).email
 }
 
 /** Read a Google error body without echoing sensitive material. */

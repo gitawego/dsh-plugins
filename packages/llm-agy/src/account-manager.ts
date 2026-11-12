@@ -11,8 +11,8 @@
  * @module @gitawego/dsh-llm-agy/account-manager
  */
 import { readAccountStore, writeAccountStore, accountFromCredential, findAccount, summarizeAccounts, upsertAccount, type AccountList, type AccountRecord, type AccountStore } from './accounts.ts'
-import { startAgyLogin, type AgyLoginHandle } from './login.ts'
 import { fetchAgyUserInfo, refreshAgyToken } from './oauth.ts'
+import { startGoogleLogin, type GoogleLoginHandle, type GoogleLoginResult } from './oauth-login.ts'
 import {
     credentialFromTokenPayload,
     credentialNeedsRefresh,
@@ -32,11 +32,8 @@ export interface AgyAccountManagerOptions {
     /** Current store path; resolved per call so a config change is honored. */
     storePath: () => string
     storage: ManagerTokenStorage
-    /** Current login command and working directory. */
-    loginCommand: () => readonly string[]
-    loginCwd: () => string
     /** Test seams. */
-    login?: typeof startAgyLogin
+    login?: typeof startGoogleLogin
     refresh?: typeof refreshAgyToken
     userInfo?: typeof fetchAgyUserInfo
     now?: () => number
@@ -48,13 +45,19 @@ export interface PendingLogin {
     url: string
 }
 
+/** Result of polling one sign-in. */
+export type LoginStatus =
+    | { status: 'pending' }
+    | { status: 'success'; accounts: AccountList }
+    | { status: 'error'; error: string }
+
 /** Abandon a sign-in the browser never completed. */
 const LOGIN_TTL_MS = 10 * 60_000
 
 /** The manager's public surface. */
 export class AgyAccountManager {
     private readonly options: AgyAccountManagerOptions
-    private pending?: { id: string; handle: AgyLoginHandle; timer: NodeJS.Timeout; beforeSecret: string | undefined }
+    private pending?: { id: string; handle: GoogleLoginHandle; timer: NodeJS.Timeout; state: LoginStatus; emailHint?: string }
     private accountEpoch = 0
 
     constructor(options: AgyAccountManagerOptions) {
@@ -81,6 +84,22 @@ export class AgyAccountManager {
     }
 
     /**
+     * Resolve one account's access token without changing the active keyring.
+     * The token is refreshed and persisted when it is expired.
+     */
+    async accessToken(idOrEmail: string): Promise<{ identity: string; accessToken: string }> {
+        const store = await this.load()
+        let changed = await this.capture(store)
+        const account = findAccount(store, idOrEmail)
+        if (account === undefined) throw new Error(`unknown Antigravity account "${idOrEmail}"`)
+        const before = account.credential.accessToken
+        await this.ensureFresh(account)
+        if (account.credential.accessToken !== before) changed = true
+        if (changed) await this.save(store)
+        return { identity: account.identity, accessToken: account.credential.accessToken }
+    }
+
+    /**
      * Make one account active.
      *
      * The target token is refreshed first when it is missing, expired, or close
@@ -92,7 +111,7 @@ export class AgyAccountManager {
         if (await this.capture(store)) await this.save(store)
         const account = findAccount(store, idOrEmail)
         if (account === undefined) throw new Error(`unknown Antigravity account "${idOrEmail}"`)
-        if (this.pending !== undefined) throw new Error('a sign-in is still waiting for its authorization code')
+        if (this.pending?.state.status === 'pending') throw new Error('a sign-in is still waiting for its authorization callback')
 
         await this.ensureFresh(account)
         const backup = await this.options.storage.read()
@@ -110,59 +129,65 @@ export class AgyAccountManager {
         return this.view(store)
     }
 
-    /** Start `agy acp --login` and return its Google URL. */
-    async startLogin(): Promise<PendingLogin> {
+    /** Start a loopback Google sign-in and return its URL. */
+    async startLogin(emailHint?: string): Promise<PendingLogin> {
         if (this.pending !== undefined) {
-            if (!this.pending.handle.done) {
-                // A previous dialog/tab left this sign-in waiting. Reuse it so the
-                // card can still show the URL and accept the code.
+            if (this.pending.state.status === 'pending') {
+                // A previous dialog/tab left this sign-in waiting. Reuse its
+                // listener and URL instead of opening a second browser flow.
                 return { loginId: this.pending.id, url: this.pending.handle.url }
             }
             clearTimeout(this.pending.timer)
             this.pending = undefined
         }
-        // Save the current keyring login before the CLI replaces it, so adding a
+        // Save the current keyring login before Google replaces it, so adding a
         // second account does not lose the first one.
         const store = await this.load()
         if (await this.capture(store)) await this.save(store)
-        const beforeSecret = await this.options.storage.read()
-        const handle = await (this.options.login ?? startAgyLogin)({
-            command: this.options.loginCommand(),
-            cwd: this.options.loginCwd(),
+        const handle = await (this.options.login ?? startGoogleLogin)({
+            ...(emailHint !== undefined && emailHint.trim().length > 0 ? { loginHint: emailHint.trim() } : {}),
         })
         const timer = setTimeout(() => {
             if (this.pending?.id !== handle.id) return
             handle.cancel()
-            this.pending = undefined
+            this.pending.state = { status: 'error', error: 'Google sign-in timed out' }
         }, LOGIN_TTL_MS)
         timer.unref?.()
-        this.pending = { id: handle.id, handle, timer, beforeSecret }
+        const pending = {
+            id: handle.id,
+            handle,
+            timer,
+            state: { status: 'pending' } as LoginStatus,
+            ...(emailHint !== undefined && emailHint.trim().length > 0 ? { emailHint: emailHint.trim() } : {}),
+        }
+        this.pending = pending
+        void handle.result.then(async (result) => {
+            if (this.pending?.id !== handle.id) return
+            try {
+                const accounts = await this.completeLogin(result)
+                if (this.pending?.id === handle.id) {
+                    clearTimeout(this.pending.timer)
+                    this.pending.state = { status: 'success', accounts }
+                }
+            } catch (error) {
+                if (this.pending?.id === handle.id) {
+                    clearTimeout(this.pending.timer)
+                    this.pending.state = { status: 'error', error: error instanceof Error ? error.message : String(error) }
+                }
+            }
+        }).catch((error: unknown) => {
+            if (this.pending?.id === handle.id) {
+                clearTimeout(this.pending.timer)
+                this.pending.state = { status: 'error', error: error instanceof Error ? error.message : String(error) }
+            }
+        })
         return { loginId: handle.id, url: handle.url }
     }
 
-    /** Finish a pending sign-in and make the resulting account active. */
-    async submitLogin(loginId: string, code: string): Promise<AccountList> {
-        const pending = this.pending
-        if (pending === undefined || pending.id !== loginId) throw new Error('no sign-in is waiting for that id')
-        clearTimeout(pending.timer)
-        this.pending = undefined
-        await pending.handle.submit(code)
-        const afterSecret = await this.options.storage.read()
-        if (afterSecret === undefined || afterSecret === pending.beforeSecret) {
-            throw new Error('agy finished signing in but the keyring token did not change')
-        }
-        const store = await this.load()
-        const changed = await this.capture(store)
-        if (changed) await this.save(store)
-        if (store.activeId === undefined) throw new Error('agy finished signing in but no token was stored')
-        const current = store.accounts.find((account) => account.id === store.activeId)
-        if (current !== undefined) {
-            current.source = 'login'
-            current.updatedAt = this.now()
-            await this.save(store)
-        }
-        this.accountEpoch += 1
-        return this.view(store)
+    /** Poll one sign-in's state. */
+    loginStatus(loginId: string): LoginStatus {
+        if (this.pending?.id !== loginId) return { status: 'error', error: 'no sign-in is waiting for that id' }
+        return this.pending.state
     }
 
     /** Stop a pending sign-in. */
@@ -179,6 +204,41 @@ export class AgyAccountManager {
         clearTimeout(this.pending.timer)
         this.pending.handle.cancel()
         this.pending = undefined
+    }
+
+    /** Save a completed OAuth login and make it the active keyring account. */
+    private async completeLogin(result: GoogleLoginResult): Promise<AccountList> {
+        const store = await this.load()
+        if (await this.capture(store)) await this.save(store)
+        const existing = findAccount(store, result.email)
+        const refreshToken = result.credential.refreshToken.length > 0
+            ? result.credential.refreshToken
+            : existing?.credential.refreshToken ?? ''
+        if (refreshToken.length === 0) {
+            throw new Error('Google did not return a refresh token; keep the consent prompt enabled and try again')
+        }
+        const credential: OAuthCredential = { ...result.credential, refreshToken }
+        const account = accountFromCredential(credential, 'login', {
+            ...(result.name !== undefined ? { label: result.name } : {}),
+            now: this.now(),
+        })
+        if (account === undefined) throw new Error('Google did not return an account email')
+        // Keep the account even if the keyring write fails; a later Switch can
+        // retry activation.
+        upsertAccount(store, account)
+        await this.save(store)
+        try {
+            await this.options.storage.write(credentialSecret(credential))
+        } catch (error) {
+            throw new Error(`signed in as ${result.email} but could not activate the keyring: ${error instanceof Error ? error.message : String(error)}`)
+        }
+        store.activeId = account.id
+        account.source = 'login'
+        account.updatedAt = this.now()
+        upsertAccount(store, account)
+        await this.save(store)
+        this.accountEpoch += 1
+        return this.view(store)
     }
 
     /** Refresh an account when it cannot be used as-is. */

@@ -17,7 +17,6 @@ Gemini models without a `GEMINI_API_KEY`.
     permissionMode: ask      # ask | deny
     quotaRefreshMinutes: 5   # settings-card cache for the plan quota
     accountsFile: ''         # empty = $DSH_HOME/llm-agy/accounts.json
-    loginCommand: [agy, acp, --login]  # Add account sign-in
 
 - id: agent-default-model
   name: '@deepseek-ai/dsh-agent-default-model'
@@ -129,9 +128,18 @@ tokens are recorded as `reasoningTokens` (already included in `outputTokens`).
 
 Settings → **Antigravity** lists the accounts this plugin knows about and makes
 switching one click. The currently active CLI login is imported automatically.
-**Add account** starts `agy acp --login`, shows the Google URL, and accepts the
-authorization code or the final callback URL; the CLI writes the new login and
-the plugin saves its refresh token.
+**Add account** starts a Google OAuth flow on an ephemeral `127.0.0.1` port,
+opens the consent page in a new tab, and saves the account when Google redirects
+back to the local callback. There is no authorization code to paste.
+
+**Re-auth** on an account row starts the same flow with a `login_hint` for that
+email, so a revoked or expired refresh token can be replaced in place. The
+dialog can be cancelled at any point; cancelling closes the loopback listener.
+
+Each row also shows that account's Gemini weekly and five-hour quota. Those
+numbers are read directly with the account's own access token through
+`retrieveUserQuotaSummary`, so viewing them never switches the active account.
+The full grouped quota below the list still follows the active CLI account.
 
 The plugin is self-contained: it reads only the Antigravity keyring
 (`service=gemini`, `username=antigravity`) and its own store at
@@ -140,7 +148,12 @@ Secret Service and `secret-tool` must be installed and unlocked; when it is not
 available, the CLI token file
 (`~/.gemini/antigravity-cli/antigravity-oauth-token`) is used instead. It does
 not read another app's account directory, and it sends tokens only to Google's
-token and userinfo endpoints.
+authorization, token, and userinfo endpoints.
+
+The OAuth callback asks the OS for a free ephemeral port (`listen(0)` on
+`127.0.0.1`), so a fixed port cannot already be taken. The listener accepts one
+state-checked callback and closes immediately; cancelling the dialog closes it
+too.
 
 Switching:
 

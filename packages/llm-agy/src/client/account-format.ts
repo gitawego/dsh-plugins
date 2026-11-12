@@ -32,6 +32,12 @@ export interface LoginView {
     url: string
 }
 
+/** Poll result for one sign-in. */
+export type LoginStatusView =
+    | { status: 'pending' }
+    | { status: 'success'; accounts: AccountView[]; activeEmail?: string }
+    | { status: 'error'; error: string }
+
 function str(value: unknown): string | undefined {
     return typeof value === 'string' && value.trim().length > 0 ? value.trim() : undefined
 }
@@ -86,4 +92,28 @@ export function parseLoginStart(payload: unknown): LoginView | undefined {
     }
     if (parsed.protocol !== 'https:' || parsed.hostname !== 'accounts.google.com') return undefined
     return { loginId, url }
+}
+
+/**
+ * Parse `GET /llm-agy/accounts/login/status`.
+ * @param payload - the decoded body.
+ * @returns the status, or undefined when the body is unusable.
+ */
+export function parseLoginStatus(payload: unknown): LoginStatusView | undefined {
+    if (payload === null || typeof payload !== 'object' || Array.isArray(payload)) return undefined
+    const raw = payload as Record<string, unknown>
+    if (raw['status'] === 'pending') return { status: 'pending' }
+    if (raw['status'] === 'error') {
+        return { status: 'error', error: str(raw['error']) ?? 'sign-in failed' }
+    }
+    if (raw['status'] === 'success') {
+        const list = parseAccountList(raw)
+        if (list === undefined) return undefined
+        return {
+            status: 'success',
+            accounts: list.accounts,
+            ...(list.activeEmail !== undefined ? { activeEmail: list.activeEmail } : {}),
+        }
+    }
+    return undefined
 }

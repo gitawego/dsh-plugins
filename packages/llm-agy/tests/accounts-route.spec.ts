@@ -4,11 +4,11 @@ import { describe, expect, it, vi } from 'vitest'
 import { createAgyAccountHandlers, type AgyAccountRouteDeps } from '../src/accounts-route.ts'
 import type { AccountList } from '../src/accounts.ts'
 
-function request(over: { method?: string; headers?: Record<string, string> } = {}, body?: unknown): IncomingMessage {
+function request(over: { method?: string; url?: string; headers?: Record<string, string> } = {}, body?: unknown): IncomingMessage {
     const stream = Readable.from(body === undefined ? [] : [Buffer.from(JSON.stringify(body))])
     return Object.assign(stream, {
         method: over.method ?? 'GET',
-        url: '/llm-agy/accounts',
+        url: over.url ?? '/llm-agy/accounts',
         headers: over.headers ?? { host: '127.0.0.1:3080' },
     }) as unknown as IncomingMessage
 }
@@ -44,9 +44,10 @@ const LIST: AccountList = {
 function deps(overrides: Partial<AgyAccountRouteDeps> = {}): AgyAccountRouteDeps {
     return {
         list: async () => LIST,
+        accountQuota: async () => ({ windows: [], fetchedAt: 1 }),
         switchTo: async () => LIST,
         startLogin: async () => ({ loginId: 'login-1', url: 'https://accounts.google.com/o/oauth2/auth?client_id=fake' }),
-        submitLogin: async () => LIST,
+        loginStatus: () => ({ status: 'pending' }),
         cancelLogin: () => {},
         ...overrides,
     }
@@ -85,6 +86,20 @@ describe('account routes', () => {
         expect(switchTo).not.toHaveBeenCalled()
     })
 
+    it('reads one account quota without switching', async () => {
+        const accountQuota = vi.fn(async () => ({ windows: [], fetchedAt: 9 }))
+        const handlers = createAgyAccountHandlers(deps({ accountQuota }))
+        const { res, written } = response()
+        await handlers.accountQuota(request({ url: '/llm-agy/accounts/quota?id=target%40example.com&refresh=1' }), res)
+        expect(accountQuota).toHaveBeenCalledWith('target@example.com', true)
+        expect(written.status).toBe(200)
+        expect(JSON.parse(written.body ?? '{}')).toEqual({ windows: [], fetchedAt: 9 })
+
+        const missing = response()
+        await handlers.accountQuota(request({ url: '/llm-agy/accounts/quota' }), missing.res)
+        expect(missing.written.status).toBe(400)
+    })
+
     it('switches through a trusted JSON POST', async () => {
         const switchTo = vi.fn(async () => LIST)
         const handlers = createAgyAccountHandlers(deps({ switchTo }))
@@ -109,19 +124,37 @@ describe('account routes', () => {
         expect(unknown.written.status).toBe(404)
     })
 
-    it('starts, completes, and cancels a sign-in', async () => {
-        const submitLogin = vi.fn(async () => LIST)
-        const cancelLogin = vi.fn()
-        const handlers = createAgyAccountHandlers(deps({ submitLogin, cancelLogin }))
+    it('starts a sign-in with an optional email hint', async () => {
+        const startLogin = vi.fn(async (emailHint?: string) => ({
+            loginId: 'login-1',
+            url: 'https://accounts.google.com/o/oauth2/auth?client_id=fake',
+            ...(emailHint !== undefined ? { emailHint } : {}),
+        }))
+        const handlers = createAgyAccountHandlers(deps({ startLogin }))
         const started = response()
-        await handlers.startLogin(request({ method: 'POST', headers: MUTATION }, {}), started.res)
+        await handlers.startLogin(request({ method: 'POST', headers: MUTATION }, { email: 'a@example.com' }), started.res)
+        expect(startLogin).toHaveBeenCalledWith('a@example.com')
         expect(started.written.status).toBe(200)
         expect(JSON.parse(started.written.body ?? '{}').loginId).toBe('login-1')
 
-        const finished = response()
-        await handlers.submitLogin(request({ method: 'POST', headers: MUTATION }, { loginId: 'login-1', code: '4/abc' }), finished.res)
-        expect(submitLogin).toHaveBeenCalledWith('login-1', '4/abc')
-        expect(finished.written.status).toBe(200)
+        const plain = response()
+        await handlers.startLogin(request({ method: 'POST', headers: MUTATION }, {}), plain.res)
+        expect(startLogin).toHaveBeenLastCalledWith(undefined)
+    })
+
+    it('polls sign-in status and cancels it', async () => {
+        const loginStatus = vi.fn(() => ({ status: 'success' as const, accounts: LIST }))
+        const cancelLogin = vi.fn()
+        const handlers = createAgyAccountHandlers(deps({ loginStatus, cancelLogin }))
+        const status = response()
+        await handlers.loginStatus(request({ url: '/llm-agy/accounts/login/status?loginId=login-1' }), status.res)
+        expect(loginStatus).toHaveBeenCalledWith('login-1')
+        expect(status.written.status).toBe(200)
+        expect(JSON.parse(status.written.body ?? '{}')).toEqual({ status: 'success', accounts: LIST })
+
+        const missing = response()
+        await handlers.loginStatus(request({ url: '/llm-agy/accounts/login/status' }), missing.res)
+        expect(missing.written.status).toBe(400)
 
         const cancelled = response()
         await handlers.cancelLogin(request({ method: 'POST', headers: MUTATION }, { loginId: 'login-1' }), cancelled.res)
@@ -129,14 +162,10 @@ describe('account routes', () => {
         expect(cancelled.written.status).toBe(200)
     })
 
-    it('rejects malformed bodies and codes without calling the manager', async () => {
-        const submitLogin = vi.fn(async () => LIST)
-        const handlers = createAgyAccountHandlers(deps({ submitLogin }))
-        for (const body of [{ loginId: 'login-1' }, { code: 'x' }]) {
-            const { res, written } = response()
-            await handlers.submitLogin(request({ method: 'POST', headers: MUTATION }, body), res)
-            expect(written.status).toBe(400)
-        }
-        expect(submitLogin).not.toHaveBeenCalled()
+    it('refuses a non-GET status request', async () => {
+        const handlers = createAgyAccountHandlers(deps())
+        const { res, written } = response()
+        await handlers.loginStatus(request({ method: 'POST', url: '/llm-agy/accounts/login/status?loginId=x' }), res)
+        expect(written.status).toBe(403)
     })
 })

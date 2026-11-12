@@ -40,17 +40,22 @@ interface UsageReport {
     }
 }
 
-interface UsageGroup {
+export interface UsageGroup {
     name?: unknown
+    displayName?: unknown
     buckets?: UsageBucket[]
 }
 
 interface UsageBucket {
     id?: unknown
+    bucketId?: unknown
     name?: unknown
+    displayName?: unknown
     window?: unknown
     remaining_fraction?: unknown
+    remainingFraction?: unknown
     reset_time?: unknown
+    resetTime?: unknown
     description?: unknown
 }
 
@@ -66,8 +71,43 @@ function str(value: unknown): string | undefined {
 
 /** A stable key for one bucket. */
 function windowId(group: string, bucket: UsageBucket, index: number): string {
-    const id = str(bucket.id) ?? str(bucket.name) ?? String(index)
+    const id = str(bucket.id) ?? str(bucket.bucketId) ?? str(bucket.name) ?? str(bucket.displayName) ?? String(index)
     return `${group}:${id}`
+}
+
+/**
+ * Normalize the grouped bucket shape shared by the CLI JSON and
+ * `retrieveUserQuotaSummary`.
+ * @param groups - raw groups from either source.
+ * @param fetchedAt - epoch milliseconds for the read.
+ * @returns measured windows, dropping buckets without a remaining fraction.
+ */
+export function parseQuotaGroups(groups: readonly UsageGroup[], fetchedAt: number = Date.now()): AgyQuotaWindow[] {
+    const windows: AgyQuotaWindow[] = []
+    for (const rawGroup of groups) {
+        const group = str(rawGroup.name) ?? str(rawGroup.displayName) ?? 'Quota'
+        const buckets = Array.isArray(rawGroup.buckets) ? rawGroup.buckets : []
+        for (const [index, bucket] of buckets.entries()) {
+            const remaining = num(bucket.remaining_fraction) ?? num(bucket.remainingFraction)
+            if (remaining === undefined) continue
+            const clamped = Math.max(0, Math.min(1, remaining))
+            const percentRemaining = Math.round(clamped * 10_000) / 100
+            const reset = str(bucket.reset_time) ?? str(bucket.resetTime)
+            const description = str(bucket.description)
+            windows.push({
+                id: windowId(group, bucket, index),
+                group,
+                label: str(bucket.name) ?? str(bucket.displayName) ?? str(bucket.window) ?? 'Limit',
+                window: str(bucket.window) ?? 'window',
+                percentRemaining,
+                percentUsed: Math.round((100 - percentRemaining) * 100) / 100,
+                ...(reset !== undefined ? { resetsAt: reset } : {}),
+                ...(description !== undefined ? { description } : {}),
+                status: clamped <= 0 ? 'exhausted' : 'ok',
+            })
+        }
+    }
+    return windows
 }
 
 /**
@@ -90,29 +130,7 @@ export function parseAgyUsage(stdout: string, fetchedAt: number = Date.now()): A
     if (!Array.isArray(groups) || groups.length === 0) {
         return { windows: [], fetchedAt, error: 'agy /usage returned no quota groups' }
     }
-    const windows: AgyQuotaWindow[] = []
-    for (const rawGroup of groups) {
-        const group = str(rawGroup.name) ?? 'Quota'
-        const buckets = Array.isArray(rawGroup.buckets) ? rawGroup.buckets : []
-        for (const [index, bucket] of buckets.entries()) {
-            const remaining = num(bucket.remaining_fraction)
-            if (remaining === undefined) continue
-            const clamped = Math.max(0, Math.min(1, remaining))
-            const percentRemaining = Math.round(clamped * 10_000) / 100
-            const reset = str(bucket.reset_time)
-            windows.push({
-                id: windowId(group, bucket, index),
-                group,
-                label: str(bucket.name) ?? str(bucket.window) ?? 'Limit',
-                window: str(bucket.window) ?? 'window',
-                percentRemaining,
-                percentUsed: Math.round((100 - percentRemaining) * 100) / 100,
-                ...(reset !== undefined ? { resetsAt: reset } : {}),
-                ...(str(bucket.description) !== undefined ? { description: str(bucket.description) } : {}),
-                status: clamped <= 0 ? 'exhausted' : 'ok',
-            })
-        }
-    }
+    const windows = parseQuotaGroups(groups, fetchedAt)
     return windows.length > 0
         ? { windows, fetchedAt }
         : { windows: [], fetchedAt, error: 'agy /usage returned no measured quota buckets' }

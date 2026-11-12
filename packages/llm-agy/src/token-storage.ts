@@ -11,7 +11,8 @@
  * @module @gitawego/dsh-llm-agy/token-storage
  */
 import { spawn } from 'node:child_process'
-import { chmod, mkdir, readFile, writeFile } from 'node:fs/promises'
+import { randomUUID } from 'node:crypto'
+import { chmod, mkdir, readFile, rename, unlink, writeFile } from 'node:fs/promises'
 import { dirname } from 'node:path'
 import { decodeJwtEmail } from './oauth.ts'
 
@@ -262,7 +263,14 @@ export class AgyTokenStorage {
     /** Create a private directory and write a 0600 token file. */
     private async writeFile(path: string, secret: string): Promise<void> {
         await mkdir(dirname(path), { recursive: true, mode: 0o700 })
-        await writeFile(path, secret, { encoding: 'utf8', mode: 0o600 })
-        await chmod(path, 0o600).catch(() => {})
+        const temporary = `${path}.${process.pid}.${randomUUID()}.tmp`
+        try {
+            await writeFile(temporary, secret, { encoding: 'utf8', mode: 0o600 })
+            await rename(temporary, path)
+            await chmod(path, 0o600).catch(() => {})
+        } catch (error) {
+            await unlink(temporary).catch(() => {})
+            throw error
+        }
     }
 }

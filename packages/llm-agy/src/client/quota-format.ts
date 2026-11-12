@@ -121,3 +121,19 @@ export function formatCountdown(iso: string, now: number, t: Translate): string 
     }
     return t('inDays').replace('{n}', String(Math.floor(hours / 24))).replace('{h}', String(hours % 24))
 }
+
+
+/** Compact weekly/five-hour summary for an account row. */
+export function geminiQuota(view: QuotaView | undefined): { weekly?: number; fiveHour?: number; lowest?: number } {
+    const windows = view?.windows ?? []
+    const gemini = windows.filter((window) => /gemini/iu.test(window.group) && !/argon/iu.test(window.group))
+    const pool = gemini.length > 0 ? gemini : windows
+    const weekly = pool.find((window) => window.window === 'weekly')?.percentRemaining
+    const fiveHour = pool.find((window) => window.window === '5h')?.percentRemaining
+    const values = [weekly, fiveHour].filter((value): value is number => value !== undefined)
+    return {
+        ...(weekly !== undefined ? { weekly } : {}),
+        ...(fiveHour !== undefined ? { fiveHour } : {}),
+        ...(values.length > 0 ? { lowest: Math.min(...values) } : {}),
+    }
+}

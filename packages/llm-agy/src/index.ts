@@ -27,6 +27,7 @@ import { AgyAccountManager } from './account-manager.ts'
 import { defaultCliTokenFile } from './accounts.ts'
 import { registerAgyAccountRoutes } from './accounts-route.ts'
 import { readAgyQuota, type AgyQuota } from './quota.ts'
+import { readAccountQuota } from './quota-api.ts'
 import { registerAgyQuotaRoute } from './quota-route.ts'
 import { AgyTokenStorage } from './token-storage.ts'
 import {
@@ -35,7 +36,6 @@ import {
     Config,
     DEFAULT_COMMAND,
     DEFAULT_DISPLAY_NAME,
-    DEFAULT_LOGIN_COMMAND,
     DEFAULT_MODEL,
     DEFAULT_QUOTA_COMMAND,
     readConfig,
@@ -58,18 +58,18 @@ export {
     AGY_SETTINGS_NAMESPACE,
     DEFAULT_COMMAND,
     DEFAULT_DISPLAY_NAME,
-    DEFAULT_LOGIN_COMMAND,
     DEFAULT_MODEL,
     DEFAULT_QUOTA_COMMAND,
 }
 export { readConfig, resolveConfig, type AgyConfigRefs, type AgyMode, type AgyPermissionMode, type ResolvedAgyConfig }
-export { parseAgyUsage, readAgyQuota, type AgyQuota, type AgyQuotaWindow } from './quota.ts'
+export { parseAgyUsage, parseQuotaGroups, readAgyQuota, type AgyQuota, type AgyQuotaWindow } from './quota.ts'
+export { readAccountQuota, type ReadAccountQuotaOptions } from './quota-api.ts'
 export { AGY_QUOTA_ROUTE_PATH, createAgyQuotaHandler, isTrustedLocalRequest, registerAgyQuotaRoute } from './quota-route.ts'
-export { AgyAccountManager, type AgyAccountManagerOptions, type PendingLogin } from './account-manager.ts'
+export { AgyAccountManager, type AgyAccountManagerOptions, type LoginStatus, type PendingLogin } from './account-manager.ts'
 export { accountId, defaultAccountsFile, findAccount, parseAccountStore, summarizeAccounts, type AccountList, type AccountRecord, type AccountSource, type AccountSummary } from './accounts.ts'
-export { AGY_ACCOUNTS_ROUTE_PATH, AGY_ACCOUNT_LOGIN_CANCEL_PATH, AGY_ACCOUNT_LOGIN_CODE_PATH, AGY_ACCOUNT_LOGIN_PATH, AGY_ACCOUNT_SWITCH_PATH, createAgyAccountHandlers, registerAgyAccountRoutes } from './accounts-route.ts'
-export { authorizationCodeOf, startAgyLogin, type AgyLoginHandle, type AgyLoginOptions } from './login.ts'
-export { ANTIGRAVITY_OAUTH_CLIENT_ID, decodeJwtEmail, refreshAgyToken, type RefreshedToken } from './oauth.ts'
+export { AGY_ACCOUNTS_ROUTE_PATH, AGY_ACCOUNT_LOGIN_CANCEL_PATH, AGY_ACCOUNT_LOGIN_PATH, AGY_ACCOUNT_LOGIN_STATUS_PATH, AGY_ACCOUNT_QUOTA_PATH, AGY_ACCOUNT_SWITCH_PATH, createAgyAccountHandlers, registerAgyAccountRoutes } from './accounts-route.ts'
+export { buildGoogleAuthUrl, exchangeGoogleCode, startGoogleLogin, type GoogleLoginHandle, type GoogleLoginOptions, type GoogleLoginResult } from './oauth-login.ts'
+export { ANTIGRAVITY_OAUTH_CLIENT_ID, decodeJwtClaims, decodeJwtEmail, refreshAgyToken, type JwtIdentity, type RefreshedToken } from './oauth.ts'
 export { AgyTokenStorage, credentialFromTokenPayload, credentialNeedsRefresh, tokenPayloadOf, type OAuthCredential } from './token-storage.ts'
 export { MUTATION_HEADER, isTrustedLocalMutation } from './route-guard.ts'
 export { AgyAdapter, type AgyHost }
@@ -93,8 +93,6 @@ export function apply(ctx: Context, config: AgyConfigRefs | undefined = undefine
     const accounts = new AgyAccountManager({
         storePath: () => readConfig(config).accountsFile,
         storage,
-        loginCommand: () => readConfig(config).loginCommand,
-        loginCwd: () => readConfig(config).cwd || process.cwd(),
     })
     const adapter = new AgyAdapter({
         host: createAgyHost(ctx, config),
@@ -104,6 +102,21 @@ export function apply(ctx: Context, config: AgyConfigRefs | undefined = undefine
     const registration = ctx.llm.registerAdapter([AGY_PROVIDER], adapter)
 
     let quotaCache: { at: number; value: AgyQuota } | undefined
+    const accountQuotaCache = new Map<string, { at: number; value: AgyQuota }>()
+    const accountQuotaOf = async (id: string, force: boolean): Promise<AgyQuota> => {
+        const current = readConfig(config)
+        const key = id.trim().toLowerCase()
+        const cached = accountQuotaCache.get(key)
+        if (!force && cached !== undefined && Date.now() - cached.at < current.quotaRefreshMinutes * 60_000) {
+            return cached.value
+        }
+        const { accessToken } = await accounts.accessToken(id)
+        const value = await readAccountQuota(accessToken, {
+            timeoutMs: Math.min(current.promptTimeoutMs, 30_000),
+        })
+        accountQuotaCache.set(key, { at: Date.now(), value })
+        return value
+    }
     const quotaOf = async (force: boolean): Promise<AgyQuota> => {
         const current = readConfig(config)
         if (!force && quotaCache !== undefined && Date.now() - quotaCache.at < current.quotaRefreshMinutes * 60_000) {
@@ -131,11 +144,15 @@ export function apply(ctx: Context, config: AgyConfigRefs | undefined = undefine
             quotaCache = undefined
             return value
         },
-        startLogin: () => accounts.startLogin(),
-        submitLogin: async (loginId, code) => {
-            const value = await accounts.submitLogin(loginId, code)
-            quotaCache = undefined
-            return value
+        accountQuota: (id, force) => accountQuotaOf(id, force),
+        startLogin: (emailHint) => accounts.startLogin(emailHint),
+        loginStatus: (loginId) => {
+            const status = accounts.loginStatus(loginId)
+            if (status.status === 'success') {
+                quotaCache = undefined
+                accountQuotaCache.clear()
+            }
+            return status
         },
         cancelLogin: (loginId) => accounts.cancelLogin(loginId),
     })

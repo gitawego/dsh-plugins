@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { formatCountdown, labelFor, parseQuotaView, toneFor, type QuotaWindow } from '../src/client/quota-format.ts'
+import { formatCountdown, geminiQuota, labelFor, parseQuotaView, toneFor, type QuotaWindow } from '../src/client/quota-format.ts'
 import { en, zh, type Translate } from '../src/client/strings.ts'
 
 /** Bind a dictionary the way the locale service does. */
@@ -48,6 +48,27 @@ describe('parseQuotaView', () => {
         expect(parseQuotaView({ windows: [], error: 'agy missing' })).toEqual({ windows: [], error: 'agy missing' })
         expect(parseQuotaView('nope')).toBeUndefined()
         expect(parseQuotaView(null)).toBeUndefined()
+    })
+})
+
+describe('geminiQuota', () => {
+    it('summarizes the Gemini weekly and five-hour buckets', () => {
+        const view = parseQuotaView({
+            windows: [
+                { id: 'g:w', group: 'Gemini Models', label: 'Weekly', window: 'weekly', percentRemaining: 94.01, percentUsed: 5.99, status: 'ok' },
+                { id: 'g:h', group: 'Gemini Models', label: 'Five Hour', window: '5h', percentRemaining: 99.39, percentUsed: 0.61, status: 'ok' },
+                { id: 'a:w', group: 'Gemini 4 Argon', label: 'Weekly', window: 'weekly', percentRemaining: 91.79, percentUsed: 8.21, status: 'ok' },
+            ],
+        })
+        expect(geminiQuota(view)).toEqual({ weekly: 94.01, fiveHour: 99.39, lowest: 94.01 })
+    })
+
+    it('falls back to the first cadence when no Gemini group exists and tolerates absence', () => {
+        const view = parseQuotaView({
+            windows: [{ id: 'x:w', group: 'Other', label: 'Weekly', window: 'weekly', percentRemaining: 50, percentUsed: 50, status: 'ok' }],
+        })
+        expect(geminiQuota(view)).toEqual({ weekly: 50, lowest: 50 })
+        expect(geminiQuota(undefined)).toEqual({})
     })
 })
 

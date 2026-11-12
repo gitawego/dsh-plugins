@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { parseAccountList, parseLoginStart } from '../src/client/account-format.ts'
+import { parseAccountList, parseLoginStart, parseLoginStatus } from '../src/client/account-format.ts'
 
 describe('parseAccountList', () => {
     it('keeps valid rows and drops malformed ones', () => {
@@ -24,6 +24,28 @@ describe('parseAccountList', () => {
     it('rejects a non-object body and normalizes an unknown source', () => {
         expect(parseAccountList(null)).toBeUndefined()
         expect(parseAccountList({ accounts: [{ id: 'a', identity: 'A', source: 'other' }] })?.accounts[0]?.source).toBe('keyring')
+    })
+})
+
+describe('parseLoginStatus', () => {
+    it('parses pending, success, and error states', () => {
+        expect(parseLoginStatus({ status: 'pending' })).toEqual({ status: 'pending' })
+        expect(parseLoginStatus({
+            status: 'success',
+            activeEmail: 'a@example.com',
+            accounts: [{ id: 'a@example.com', identity: 'a@example.com', source: 'login', active: true }],
+        })).toEqual({
+            status: 'success',
+            activeEmail: 'a@example.com',
+            accounts: [{ id: 'a@example.com', identity: 'a@example.com', source: 'login', active: true }],
+        })
+        expect(parseLoginStatus({ status: 'error', error: 'access_denied' })).toEqual({ status: 'error', error: 'access_denied' })
+        expect(parseLoginStatus({ status: 'error' })).toEqual({ status: 'error', error: 'sign-in failed' })
+    })
+
+    it('rejects unknown and malformed states', () => {
+        expect(parseLoginStatus(null)).toBeUndefined()
+        expect(parseLoginStatus({ status: 'other' })).toBeUndefined()
     })
 })
 
