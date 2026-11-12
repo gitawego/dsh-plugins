@@ -155,6 +155,7 @@ export function AntigravityQuotaPanel(props: PropsRuntime<'settings.section'> & 
     const [loginError, setLoginError] = useState<string | undefined>()
     const dialogRef = useRef<HTMLDialogElement>(null)
     const addAttempt = useRef(0)
+    const lastAutoRefresh = useRef(0)
 
     const loadQuota = async (force: boolean): Promise<void> => {
         setLoading(true)
@@ -211,6 +212,27 @@ export function AntigravityQuotaPanel(props: PropsRuntime<'settings.section'> & 
         if (dialogOpen && dialog !== null && !dialog.open) dialog.showModal()
     }, [dialogOpen])
 
+    // Returning from the Google tab (or another window) must reconcile the
+    // account list even if the dialog was closed before its last poll.
+    useEffect(() => {
+        const refresh = (): void => {
+            if (document.visibilityState === 'hidden') return
+            const now = Date.now()
+            if (now - lastAutoRefresh.current < 1500) return
+            lastAutoRefresh.current = now
+            void loadAccounts()
+            void loadQuota(false)
+        }
+        window.addEventListener('focus', refresh)
+        document.addEventListener('visibilitychange', refresh)
+        const timer = window.setInterval(refresh, 10_000)
+        return () => {
+            window.removeEventListener('focus', refresh)
+            document.removeEventListener('visibilitychange', refresh)
+            window.clearInterval(timer)
+        }
+    }, [])
+
     const switchAccount = async (account: AccountView): Promise<void> => {
         setSwitchingId(account.id)
         setAccountError(undefined)
@@ -256,6 +278,8 @@ export function AntigravityQuotaPanel(props: PropsRuntime<'settings.section'> & 
         setDialogOpen(false)
         dialogRef.current?.close()
         if (pending !== undefined) void postJson(LOGIN_CANCEL_PATH, { loginId: pending.loginId }).catch(() => {})
+        // A callback may have completed just before the cancel; reconcile.
+        void loadAccounts()
     }
 
     useEffect(() => {
@@ -425,6 +449,7 @@ export function AntigravityQuotaPanel(props: PropsRuntime<'settings.section'> & 
                     setDialogOpen(false)
                     setLogin(undefined)
                     setLoginError(undefined)
+                    void loadAccounts()
                 }}
             >
                 <div className="aq-dialog-head">
