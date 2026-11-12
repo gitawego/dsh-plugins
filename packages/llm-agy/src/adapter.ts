@@ -308,6 +308,10 @@ export class AgyAdapter extends LlmAdapter {
             command: config.command,
             cwd: config.cwd,
             discoveryMinutes: config.discoveryMinutes,
+            // Accounts can expose different model catalogs (for example a
+            // newly released model on one plan). A switch must not reuse the
+            // previous account's cached discovery.
+            accountEpoch: this.accountEpoch(),
         })
         if (this.catalogCache?.key === key && Date.now() - this.catalogCache.at < config.discoveryMinutes * 60_000) {
             return this.catalogCache.value

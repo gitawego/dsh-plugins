@@ -413,6 +413,37 @@ describe('AgyAdapter catalog', () => {
         expect(await adapter.listModels('other')).toEqual([])
     })
 
+    it('re-discovers the catalog when the account epoch changes', async () => {
+        const dir = await tempDir()
+        const firstCount = join(dir, 'first-catalog.json')
+        const secondCount = join(dir, 'second-catalog.json')
+        const epoch = { value: 0 }
+        const approval = host(dir)
+        const adapter = new AgyAdapter({
+            host: approval.host,
+            config: () => config(),
+            accountEpoch: () => epoch.value,
+        })
+        adapters.push(adapter)
+
+        setEnv({ FAKE_AGY_COUNT_FILE: firstCount })
+        const first = await adapter.listModels('agy')
+        expect(first.map((model) => model.id)).toEqual([
+            'gemini-4-argon',
+            'gemini-3.8-flash',
+            'claude-opus-5-5',
+            'claude-sonnet-5-5',
+            'gpt-oss-120b-medium',
+        ])
+
+        epoch.value = 1
+        setEnv({ FAKE_AGY_COUNT_FILE: secondCount })
+        const second = await adapter.listModels('agy')
+        expect(second.map((model) => model.id)).toEqual(first.map((model) => model.id))
+        expect((await counts(firstCount)).newCount).toBe(1)
+        expect((await counts(secondCount)).newCount).toBe(1)
+    })
+
     it('resolves only metadata ACP actually advertises', async () => {
         const dir = await tempDir()
         const { adapter } = makeAdapter(dir)
