@@ -1,6 +1,31 @@
-# AGENT.md
+# AGENTS.md
 
 Project conventions for AI agents working in this repo.
+
+## Security and content integrity (NON-NEGOTIABLE)
+
+**Never hard-code or fabricate content.**
+
+- Do not invent model IDs, capabilities, context windows, endpoints, versions,
+  quotas, prices, dates, test results, benchmarks, or platform behavior. If a
+  value is not discovered at runtime or verified against a primary source, do
+  not ship it as fact. Label examples as examples, and keep protocol constants
+  (for example an upstream client identifier) named and explained.
+- Do not commit generated filler that looks real, such as fake model catalogs,
+  mock quota numbers presented as live data, or placeholder API responses.
+
+**Never store secrets in git.**
+
+- No credentials, access or refresh tokens, cookies, private keys, OAuth client
+  secrets, session IDs, personal email addresses, or local host paths in source,
+  tests, fixtures, documentation, commit messages, or history.
+- Runtime secrets belong in the OS keyring, environment variables, or a private
+  file outside the repository (mode `0600`). Tests use obviously fake values
+  such as `example.com` and `test-secret`; never a real credential or token.
+- Before every commit and push, scan both the working tree and the unpushed
+  history for secret patterns. If a secret is committed, rotate it first, then
+  rewrite the history and force-push; removing the visible file alone is not
+  enough.
 
 ## TDD is mandatory
 
@@ -59,7 +84,8 @@ together for version compatibility. Currently:
   subscription quota. No route, no transport, no header — `dsh-llm-pi-ai` owns
   all of that.
 - `packages/llm-agy` — `@gitawego/dsh-llm-agy` — the `agy` ACP provider:
-  agent-delegate over `agy acp`, no DSH tools, approval bridge, no credentials.
+  agent-delegate over `agy acp`, no DSH tools, approval bridge; the CLI owns
+  login, and the optional multi-account store stays outside this repository.
 - `packages/web-search` — `@gitawego/dsh-web-search` — chained-fallback
   `WebSearchProvider` (Anthropic + free MCP backends).
 - `packages/lsp` — LSP bridge.
@@ -186,8 +212,8 @@ The DSH dependency set:
   and the `SettingsScope` type)
 - `@deepseek-ai/dsh-client-ui-slots` (client side, types only — the slot map)
 - `@deepseek-ai/dsh-client-ui-chat` / `-conversation` / `-tool` (client side, tool cards)
-- `@deepseek-ai/cordis` (peer, `^4.0.4`)
-- `@deepseek-ai/schemastery` (peer, `^3.18.4`)
+- `@deepseek-ai/cordis` (peer, `^4.1.0`)
+- `@deepseek-ai/schemastery` (peer, `^3.19.0`)
 
 A `pnpm install` against a host at a different rc level will fail or
 silently use the wrong type contracts.
@@ -199,7 +225,7 @@ The toolchain is kept at latest: `typescript` (7.x), `vitest` (5.x),
 host:
 
 - **React stays on 18.x** (`react@^18.3.1`, `@types/react@~18.3.31`,
-  `@types/react-dom@~18.3.7`). The 0.1.5 client runtime is built against
+  `@types/react-dom@~18.3.7`). The host client runtime is built against
   React 18 (`dsh-client-ui-renderer` devDepends on `react ^18.2.0`), and the
   browser bundle resolves `react` from the host page. React 19 typings would
   typecheck against a runtime the host does not have.
@@ -322,19 +348,17 @@ Don't guess at UI behavior on mobile. Use headless Chrome + the Chrome
 DevTools Protocol:
 
 ```bash
-# Start CDP (idempotent)
-bash ~/workspace/agent-skills/skills/chrome-devtools-mcp-pi/scripts/start-cdp.sh
-
-# Probe the live page from this session
-node ~/.local/share/dsh-test/probe-click.mjs
+# Launch a local headless browser with a throwaway profile and CDP enabled
+google-chrome --headless=new --no-sandbox --disable-gpu \
+  --remote-debugging-port=0 --user-data-dir="$(mktemp -d)"
 ```
 
-The probe scripts (under `~/.local/share/dsh-test/`) connect to the
-existing dsh, open a fresh CDP tab, navigate to the GUI, click through
-the settings flow, and dump the rendered DOM + console logs. Add
-diagnostic `console.log` lines to the plugin's React component, rebuild
-(`pnpm install --offline` in the profile dir), open a new CDP tab, and
-read the logs.
+Use the printed DevTools endpoint to open the DSH URL, click through the
+settings flow, and dump the rendered DOM plus console logs. Keep probe
+scripts and browser profiles outside this repository. Add diagnostic
+`console.log` lines to the plugin's React component, rebuild
+(`pnpm install --offline` in the profile dir), open a new tab, and read
+the logs.
 
 This is the only way to verify `useSyncExternalStore` behavior, `useState`
 re-renders, and mobile touch target hit-tests without a real device.
@@ -343,7 +367,7 @@ re-renders, and mobile touch target hit-tests without a real device.
 
 ```
 dsh-plugins/
-├── AGENT.md                # this file (monorepo-wide + agent rules)
+├── AGENTS.md               # this file (monorepo-wide + agent rules)
 ├── README.md
 ├── package.json            # pnpm workspace root
 ├── pnpm-workspace.yaml
@@ -368,7 +392,7 @@ dsh-plugins/
 ## Resume / dev workflow
 
 1. `cd dsh-plugins && pnpm install` (resolves workspace deps)
-2. For each package you want to touch: `cd packages/<name> && pnpm typecheck && pnpm test && pnpm build` (2026-11: 431 tests green across web-search/lsp/llm-provider on dsh 0.2.2-rc.1, typecheck clean)
+2. For each package you want to touch: `cd packages/<name> && pnpm typecheck && pnpm test && pnpm build`. Report only the counts from the run you just performed.
 3. `cd ~/.dsh/profiles/web && rm -rf node_modules/<your-package> && pnpm install --offline` (refresh the worker)
 4. Open a new browser tab; the rebuilt bundle is picked up by the
    `__DSH_BOOT__` script.

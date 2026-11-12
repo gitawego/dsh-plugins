@@ -37,8 +37,8 @@
  * Exit code 1 on any violation, so `pnpm check` fails a build rather than
  * letting a stale pin reach a profile.
  */
-import { readFileSync, writeFileSync, readdirSync, existsSync } from 'node:fs'
-import { dirname, join, resolve } from 'node:path'
+import { accessSync, constants, existsSync, readFileSync, readdirSync, writeFileSync } from 'node:fs'
+import { delimiter, dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..')
@@ -58,6 +58,21 @@ function isHostInternal(name) {
     return name.startsWith('@deepseek-ai/') || name.startsWith('@earendil-works/')
 }
 
+/** Find an executable on PATH without assuming a user's home or Node install. */
+function findOnPath(name) {
+    for (const directory of (process.env['PATH'] ?? '').split(delimiter)) {
+        if (directory.length === 0) continue
+        const candidate = join(directory, name)
+        try {
+            accessSync(candidate, constants.X_OK)
+            return candidate
+        } catch {
+            /* keep looking */
+        }
+    }
+    return undefined
+}
+
 /** Locate the harness installation. */
 function findHost(explicit) {
     const candidates = []
@@ -68,9 +83,11 @@ function findHost(explicit) {
     if (existsSync(profiles)) {
         for (const entry of readdirSync(profiles)) candidates.push(join(profiles, entry, 'node_modules', HOST_PACKAGE))
     }
-    // `which dsh` → the package root above its bin.
-    const bin = process.env['DSH_BIN'] ?? '~/.nvm/versions/node/v26.3.0/bin/dsh'
-    if (existsSync(bin)) candidates.push(resolve(bin, '..', '..', 'lib', 'node_modules', HOST_PACKAGE))
+    // The running Node prefix contains the global harness package.
+    candidates.push(resolve(process.execPath, '..', '..', 'lib', 'node_modules', HOST_PACKAGE))
+    // `which dsh` → the package root above its bin, if PATH points there.
+    const bin = process.env['DSH_BIN'] ?? findOnPath('dsh')
+    if (bin !== undefined && existsSync(bin)) candidates.push(resolve(bin, '..', '..', 'lib', 'node_modules', HOST_PACKAGE))
 
     for (const candidate of candidates) {
         const pkg = readJson(join(candidate, 'package.json'))

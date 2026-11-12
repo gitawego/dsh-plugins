@@ -6,7 +6,7 @@ Audit date: 2026-11-03. Repo commit: `9f34a80`.
 
 | | |
 |---|---|
-| Installed host | `@deepseek-ai/dsh@0.1.5-rc.1` (npm global, node 26.3.0 at `~/.nvm/versions/node/v26.3.0`) |
+| Installed host | `@deepseek-ai/dsh@0.1.5-rc.1` (npm global, node 26.3.0) |
 | Live GUI | `dsh web` on 127.0.0.1:3080 (same 0.1.5-rc.1 install) |
 | Repo pins | every `@deepseek-ai/dsh-*` peer/dev dep pinned `0.1.5-rc.1` |
 | Newest published | `0.2.1-rc.5` (2026-10-29), `0.2.2-alpha.3` (2026-11-03) |
@@ -41,7 +41,7 @@ errors).
 Nothing in the port changed for it — the pin bump plus the ranged
 `@deepseek-ai/cordis` `^4.1.0` / `@deepseek-ai/schemastery` `^3.19.0` (the
 versions the 0.2.2 host bundles) was enough: `pnpm -r typecheck` clean and
-**431 tests** green, with the profile copies refreshed by
+The recorded suites were green, with the profile copies refreshed by
 `scripts/install-plugins.sh`. The audit below is left as written for 0.2.1,
 the line the break analysis was done against.
 
@@ -176,10 +176,10 @@ version. Port `lsp` and `llm-provider`.
    `No API key for provider: opencode-go-session` (chat) and
    `usage endpoint answered 401` (quota card). Verify with
    `dsh --profile web --dump-config` (the `llm-provider` entry must show the
-   `config:` block). See `AGENT.md` → "Upgrading an existing profile".
+   `config:` block). See `AGENTS.md` → "Upgrading an existing profile".
 
 ## Policy note
 
-`AGENT.md` says DSH pins follow the **installed host**, and warns against
+`AGENTS.md` says DSH pins follow the **installed host**, and warns against
 bumping to npm's newest. That rule is what keeps the plugins loadable: this
 audit is the evidence for why the pin must not move until the host does.

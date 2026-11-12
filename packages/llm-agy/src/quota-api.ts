@@ -22,7 +22,11 @@ const ENDPOINTS = [
     'https://cloudcode-pa.googleapis.com',
 ] as const
 
-/** User agent the CLI and the desktop app use for this API. */
+/**
+ * Client signature observed in the CLI's own quota request. This is a protocol
+ * constant, not a claim about the installed CLI version; update it only from a
+ * recorded CLI request when the endpoint changes.
+ */
 const USER_AGENT = 'antigravity/cli/1.1.25 (aidev_client; os_type=linux; arch=amd64; cl=975399401; auth_method=consumer)'
 
 /** Fallback project when loadCodeAssist does not name one. */

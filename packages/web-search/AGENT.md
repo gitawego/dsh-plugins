@@ -292,7 +292,7 @@ user's interactive shell, not from this session.
 
 ## Cross-reference
 
-- [../../AGENT.md](../../AGENT.md) — monorepo-wide rules (process
+- [../../AGENTS.md](../../AGENTS.md) — monorepo-wide rules (process
   restart policy, DSH version pinning, bundle install contract, Settings
   Card extension point, real-browser debugging). The "do not kill dsh"
   rule is recorded here and in the root; per-package docs may elaborate

@@ -142,7 +142,7 @@ binary attempt a managed install first.
 
 ```bash
 pnpm install
-pnpm test            # vitest (34 tests; run serially — the fake-server integrations use stdio)
+pnpm test            # vitest (run serially — the fake-server integrations use stdio)
 pnpm typecheck       # tsc --noEmit (server + client)
 pnpm build           # tsc x2 + build-client → lib/
 ```

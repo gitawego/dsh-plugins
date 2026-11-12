@@ -137,19 +137,17 @@ suffix.
 
 ## Environment facts a resuming session needs
 
-- **DSH base**: `~/dsh-global` (rc.7).
-- **DSH user home**: `~/.dsh` (settings in
-  `settings.yaml`, mode `600`, provisioned by `setup-dsh-termux.sh`).
-- **Headless Chrome for CDP**: `~/.omp/puppeteer/chrome/linux_arm-150.0.7871.24/chrome-linux64/chrome`
-  (Termux native, glibc-via-runner). Launched via
-  `bash ~/workspace/agent-skills/skills/chrome-devtools-mcp-pi/scripts/start-cdp.sh`.
-- **Live GUI**: `http://127.0.0.1:3080` (running, PID changes per session).
-- **WebCDP debug port**: `9222`.
-- **Default agent model**: `minimax-cn / MiniMax-M3` (`/MiniMax-M3`,
-  $0.30/$1.20 per 1M tokens).
-- **Cheapest Anthropic-format model with confirmed `web_search_20250305`
-  support**: `deepseek-v4-flash` ($0.14/$0.28). `xiaomi/mimo-v2.5` is
-  the same price but the gateway implementation is unclear.
+- **DSH base**: `$HOME/dsh-global` (the exact rc level is whatever the
+  profile currently boots).
+- **DSH user home**: `$HOME/.dsh` (settings in `settings.yaml`, mode `600`,
+  provisioned by the host's setup script).
+- **Headless Chrome for CDP**: a local Chrome/Chromium binary; launch it with
+  a temporary `--user-data-dir` and a local debugging port.
+- **Live GUI**: `http://127.0.0.1:3080` (the host chooses the port; confirm it
+  from `dsh web` output rather than assuming this default).
+- **WebCDP debug port**: choose one per session; do not assume `9222` is free.
+- **Default agent model**: selected by the active DSH profile, not by this
+  repository. Do not bake a provider, model, or price into plugin code.
 - **Plugin registration**: `dsh.plugin add <bare-path>` fails on pnpm
   12.0.0-rc.3 (the `anchorPathSpec` regex only matches `.` / `..` paths).
   Workaround: `pnpm add "name@file:path"` directly in the profile dir,

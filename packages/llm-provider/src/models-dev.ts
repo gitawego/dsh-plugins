@@ -4,11 +4,10 @@
  *
  * The gateway's own `GET /v1/models` answers *which ids this key can call* and
  * nothing else — no context window, no output cap, no thinking levels. The
- * installed pi-ai catalog carries that metadata but is a snapshot: it knows 27
- * of the 36 models the gateway serves, and the one the live configuration runs
- * (`deepseek-v4.1-flash`) is not among them.
+ * installed pi-ai catalog carries that metadata but is a snapshot: it can lag
+ * the models the gateway serves, including the one the live configuration runs.
  *
- * models.dev closes both gaps: it describes 33 `opencode-go` models with
+ * models.dev closes both gaps: it describes the `opencode-go` catalog with
  * `limit.context`, `limit.output`, `reasoning_options`, input modalities, cost,
  * and `family` — and it is the same source the OpenCode client itself reads.
  *

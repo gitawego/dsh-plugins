@@ -1,7 +1,7 @@
 /**
  * Build-output guard.
  *
- * The monorepo's AGENT.md records why this file exists: `packages/lsp` once
+ * The monorepo's AGENTS.md records why this file exists: `packages/lsp` once
  * shipped a browser bundle over the server's `lib/client.js`, and the failure
  * surfaced only when the harness booted. Two claims here are the cheap,
  * build-time version of that lesson:

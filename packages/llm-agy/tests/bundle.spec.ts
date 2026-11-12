@@ -1,6 +1,6 @@
 /**
  * Build-output guard. Runs after `pnpm build` (the package's `prepare` does it
- * on install), and catches the class of failure the monorepo AGENT.md records:
+ * on install), and catches the class of failure the monorepo AGENTS.md records:
  * the loader expects the server entry to exist, be ESM, and export `apply`,
  * `inject`, and `Config`.
  */
