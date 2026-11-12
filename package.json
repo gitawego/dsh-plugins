@@ -6,11 +6,12 @@
     "scripts": {
         "check": "node scripts/check-host-pins.mjs",
         "check:pins": "node scripts/check-host-pins.mjs",
+        "check:secrets": "node scripts/check-secrets.mjs",
         "fix:pins": "node scripts/check-host-pins.mjs --fix",
         "build": "pnpm -r build",
         "typecheck": "pnpm -r typecheck",
-        "test": "pnpm check:pins && pnpm -r test",
-        "verify": "pnpm check:pins && pnpm -r typecheck && pnpm -r build && pnpm -r test"
+        "test": "pnpm check:pins && pnpm check:secrets && pnpm -r test",
+        "verify": "pnpm check:pins && pnpm check:secrets && pnpm -r typecheck && pnpm -r build && pnpm -r test"
     },
     "packageManager": "pnpm@12.0.0-rc.7"
 }
