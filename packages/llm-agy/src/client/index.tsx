@@ -59,6 +59,7 @@ const CSS = `
 .aq-error{margin:0;font-size:12px;line-height:18px;color:var(--dsw-alias-state-error-primary)}
 .aq-hint{margin:0;font-size:12px;line-height:18px;color:var(--dsw-alias-label-tertiary)}
 .aq-divider{height:1px;background:var(--dsw-alias-border-l2);margin:2px 0}
+.aq-view-head{display:flex;align-items:center;justify-content:space-between;gap:10px;font-size:12px;line-height:18px;color:var(--dsw-alias-label-secondary)}
 .aq-accounts{display:flex;flex-direction:column;gap:8px}
 .aq-accounts-head{display:flex;align-items:center;justify-content:space-between;gap:10px}
 .aq-accounts h3{margin:0;font-size:12px;font-weight:600;text-transform:uppercase;letter-spacing:.06em;color:var(--dsw-alias-label-secondary)}
@@ -69,7 +70,9 @@ const CSS = `
 .aq-account[data-active="true"] .aq-account-mark{background:var(--dsw-alias-brand-primary);border-color:transparent}
 .aq-account-id{display:flex;flex-direction:column;gap:1px;min-width:0;font-size:12px;line-height:18px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .aq-account-id small{font-size:11px;line-height:16px;color:var(--dsw-alias-label-tertiary);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.aq-account-quota{font-size:11px;line-height:16px;color:var(--dsw-alias-label-tertiary);font-variant-numeric:tabular-nums;white-space:nowrap}
+.aq-account-quota{padding:0;border:0;background:none;font:inherit;font-size:11px;line-height:16px;color:var(--dsw-alias-label-tertiary);font-variant-numeric:tabular-nums;white-space:nowrap;cursor:pointer}
+.aq-account-quota:hover{color:var(--dsw-alias-label-primary)}
+.aq-account-quota[data-selected="true"]{color:var(--dsw-alias-brand-primary);text-decoration:underline}
 .aq-account-quota[data-tone="warn"]{color:var(--dsw-alias-state-warn-primary)}
 .aq-account-quota[data-tone="critical"]{color:var(--dsw-alias-state-error-primary)}
 .aq-account-actions{display:flex;align-items:center;gap:6px}
@@ -149,6 +152,7 @@ export function AntigravityQuotaPanel(props: PropsRuntime<'settings.section'> & 
     const [accountError, setAccountError] = useState<string | undefined>()
     const [accountNote, setAccountNote] = useState<string | undefined>()
     const [switchingId, setSwitchingId] = useState<string | undefined>()
+    const [selectedAccountId, setSelectedAccountId] = useState<string | undefined>()
     const [dialogOpen, setDialogOpen] = useState(false)
     const [login, setLogin] = useState<LoginView | undefined>()
     const [loginHint, setLoginHint] = useState<string | undefined>()
@@ -208,6 +212,12 @@ export function AntigravityQuotaPanel(props: PropsRuntime<'settings.section'> & 
     }, [accounts])
 
     useEffect(() => {
+        if (selectedAccountId !== undefined && !accounts.some((account) => account.id === selectedAccountId)) {
+            setSelectedAccountId(undefined)
+        }
+    }, [accounts, selectedAccountId])
+
+    useEffect(() => {
         const dialog = dialogRef.current
         if (dialogOpen && dialog !== null && !dialog.open) dialog.showModal()
     }, [dialogOpen])
@@ -240,6 +250,7 @@ export function AntigravityQuotaPanel(props: PropsRuntime<'settings.section'> & 
         try {
             const parsed = parseAccountList(await postJson(SWITCH_PATH, { id: account.id }))
             if (parsed !== undefined) setAccounts(parsed.accounts)
+            setSelectedAccountId(undefined)
             await loadQuota(true)
         } catch (error) {
             setAccountError(`${props.t('switchFailed')}: ${messageOf(error)}`)
@@ -292,6 +303,7 @@ export function AntigravityQuotaPanel(props: PropsRuntime<'settings.section'> & 
                 if (status.status === 'success') {
                     stopped = true
                     setAccounts(status.accounts)
+                    setSelectedAccountId(undefined)
                     const email = status.activeEmail ?? loginHint
                     setAccountNote(email !== undefined && email.length > 0 ? props.t('signedIn').replace('{email}', email) : undefined)
                     setLogin(undefined)
@@ -316,15 +328,22 @@ export function AntigravityQuotaPanel(props: PropsRuntime<'settings.section'> & 
         }
     }, [dialogOpen, login])
 
+    const selectedAccount = selectedAccountId !== undefined
+        ? accounts.find((account) => account.id === selectedAccountId)
+        : undefined
+    const detailView = selectedAccount !== undefined && !selectedAccount.active
+        ? accountQuotas[selectedAccount.id]
+        : view
+    const detailFetchedAt = detailView?.fetchedAt
     const groups = useMemo(() => {
         const byGroup = new Map<string, QuotaWindow[]>()
-        for (const window of view?.windows ?? []) {
+        for (const window of detailView?.windows ?? []) {
             const list = byGroup.get(window.group) ?? []
             list.push(window)
             byGroup.set(window.group, list)
         }
         return [...byGroup.entries()]
-    }, [view])
+    }, [detailView])
 
     const now = Date.now()
     return (
@@ -373,10 +392,18 @@ export function AntigravityQuotaPanel(props: PropsRuntime<'settings.section'> & 
                                         {account.identity}
                                         {account.label !== undefined && account.label !== account.identity ? <small>{account.label}</small> : null}
                                     </span>
-                                    <span className="aq-account-quota" data-tone={tone} title={detail}>
+                                    <button
+                                        className="aq-account-quota"
+                                        type="button"
+                                        data-tone={tone}
+                                        data-selected={!account.active && selectedAccountId === account.id}
+                                        title={detail ?? props.t('viewQuota').replace('{email}', account.identity)}
+                                        aria-label={props.t('viewQuota').replace('{email}', account.identity)}
+                                        onClick={() => setSelectedAccountId(account.active ? undefined : account.id)}
+                                    >
                                         {compact.weekly !== undefined ? `${Math.round(compact.weekly)}%` : '—'}
                                         {compact.fiveHour !== undefined ? ` · ${Math.round(compact.fiveHour)}%` : ''}
-                                    </span>
+                                    </button>
                                     <span className="aq-account-actions">
                                         <button
                                             className="aq-btn aq-btn--small"
@@ -410,8 +437,19 @@ export function AntigravityQuotaPanel(props: PropsRuntime<'settings.section'> & 
 
             <div className="aq-divider" />
 
-            {view?.error !== undefined ? <p className="aq-error">{`${props.t('failed')}: ${view.error}`}</p> : null}
-            {view !== undefined && view.windows.length === 0 && view.error === undefined ? <p className="aq-hint">{props.t('empty')}</p> : null}
+            {selectedAccount !== undefined && !selectedAccount.active ? (
+                <div className="aq-view-head">
+                    <span>{props.t('viewingQuota').replace('{email}', selectedAccount.identity)}</span>
+                    <button className="aq-btn aq-btn--small" type="button" onClick={() => setSelectedAccountId(undefined)}>
+                        {props.t('showActive')}
+                    </button>
+                </div>
+            ) : null}
+            {detailView?.error !== undefined ? <p className="aq-error">{`${props.t('failed')}: ${detailView.error}`}</p> : null}
+            {selectedAccount !== undefined && !selectedAccount.active && detailView === undefined
+                ? <p className="aq-hint">{props.t('reading')}</p>
+                : null}
+            {detailView !== undefined && detailView.windows.length === 0 && detailView.error === undefined ? <p className="aq-hint">{props.t('empty')}</p> : null}
             {groups.map(([group, windows]) => (
                 <section className="aq-group" key={group}>
                     <h3>{group}</h3>
@@ -435,7 +473,7 @@ export function AntigravityQuotaPanel(props: PropsRuntime<'settings.section'> & 
                     </ul>
                 </section>
             ))}
-            {fetchedAt !== undefined ? <p className="aq-hint">{props.t('readAt').replace('{time}', new Date(fetchedAt).toLocaleTimeString())}</p> : null}
+            {detailFetchedAt !== undefined ? <p className="aq-hint">{props.t('readAt').replace('{time}', new Date(detailFetchedAt).toLocaleTimeString())}</p> : null}
 
             <dialog
                 ref={dialogRef}
