@@ -14,7 +14,7 @@ import type { InjectFace, PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
 import type {} from '@deepseek-ai/dsh-client-locale/client'
 import type {} from '@deepseek-ai/dsh-client-ui-renderer/client'
 import type {} from '@deepseek-ai/dsh-client-ui-settings/client'
-import { parseAccountList, parseLoginStart, parseLoginStatus, type AccountView, type LoginView } from './account-format.ts'
+import { parseAccountList, parseLoginStart, parseLoginStatus, sortAccountViews, type AccountView, type LoginView } from './account-format.ts'
 import { formatCountdown, geminiQuota, labelFor, parseQuotaView, toneFor, type QuotaView, type QuotaWindow } from './quota-format.ts'
 import { en, zh, type Translate } from './strings.ts'
 
@@ -178,7 +178,7 @@ export function AntigravityQuotaPanel(props: PropsRuntime<'settings.section'> & 
     const loadAccounts = async (): Promise<void> => {
         try {
             const parsed = parseAccountList(await getJson(ACCOUNTS_PATH))
-            setAccounts(parsed?.accounts ?? [])
+            setAccounts(sortAccountViews(parsed?.accounts ?? []))
             setAccountsLoaded(true)
             setAccountError(undefined)
         } catch (error) {
@@ -249,7 +249,7 @@ export function AntigravityQuotaPanel(props: PropsRuntime<'settings.section'> & 
         setAccountNote(undefined)
         try {
             const parsed = parseAccountList(await postJson(SWITCH_PATH, { id: account.id }))
-            if (parsed !== undefined) setAccounts(parsed.accounts)
+            if (parsed !== undefined) setAccounts(sortAccountViews(parsed.accounts))
             setSelectedAccountId(undefined)
             await loadQuota(true)
         } catch (error) {
@@ -302,7 +302,7 @@ export function AntigravityQuotaPanel(props: PropsRuntime<'settings.section'> & 
                 if (stopped || status === undefined) return
                 if (status.status === 'success') {
                     stopped = true
-                    setAccounts(status.accounts)
+                    setAccounts(sortAccountViews(status.accounts))
                     setSelectedAccountId(undefined)
                     const email = status.activeEmail ?? loginHint
                     setAccountNote(email !== undefined && email.length > 0 ? props.t('signedIn').replace('{email}', email) : undefined)

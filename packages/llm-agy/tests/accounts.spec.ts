@@ -96,17 +96,15 @@ describe('store', () => {
         expect(findAccount(store, 'user@example.com')?.credential.accessToken).toBe('new')
     })
 
-    it('sorts the active account first and then by email', () => {
+    it('keeps a stable email order when the active account changes', () => {
         const store = emptyStore()
         upsertAccount(store, accountFromCredential(credential('z@example.com'), 'keyring')!)
         upsertAccount(store, accountFromCredential(credential('a@example.com'), 'keyring')!)
         upsertAccount(store, accountFromCredential(credential('m@example.com'), 'login')!)
-        expect(summarizeAccounts(store, 'm@example.com').map((account) => account.identity)).toEqual([
-            'm@example.com',
-            'a@example.com',
-            'z@example.com',
-        ])
-        expect(summarizeAccounts(store, 'm@example.com')[0]?.active).toBe(true)
+        const expected = ['a@example.com', 'm@example.com', 'z@example.com']
+        expect(summarizeAccounts(store, 'm@example.com').map((account) => account.identity)).toEqual(expected)
+        expect(summarizeAccounts(store, 'z@example.com').map((account) => account.identity)).toEqual(expected)
+        expect(summarizeAccounts(store, 'z@example.com').find((account) => account.active)?.identity).toBe('z@example.com')
     })
 
     it('writes a private registry file and reads it back', async () => {

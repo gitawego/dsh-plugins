@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { parseAccountList, parseLoginStart, parseLoginStatus } from '../src/client/account-format.ts'
+import { parseAccountList, parseLoginStart, parseLoginStatus, sortAccountViews } from '../src/client/account-format.ts'
 
 describe('parseAccountList', () => {
     it('keeps valid rows and drops malformed ones', () => {
@@ -24,6 +24,17 @@ describe('parseAccountList', () => {
     it('rejects a non-object body and normalizes an unknown source', () => {
         expect(parseAccountList(null)).toBeUndefined()
         expect(parseAccountList({ accounts: [{ id: 'a', identity: 'A', source: 'other' }] })?.accounts[0]?.source).toBe('keyring')
+    })
+})
+
+describe('sortAccountViews', () => {
+    it('keeps an email order that does not depend on the active row', () => {
+        const accounts = [
+            { id: 'z@example.com', identity: 'z@example.com', source: 'keyring' as const, active: true },
+            { id: 'a@example.com', identity: 'a@example.com', source: 'login' as const, active: false },
+        ]
+        expect(sortAccountViews(accounts).map((account) => account.id)).toEqual(['a@example.com', 'z@example.com'])
+        expect(sortAccountViews([...accounts].reverse()).map((account) => account.id)).toEqual(['a@example.com', 'z@example.com'])
     })
 })
 

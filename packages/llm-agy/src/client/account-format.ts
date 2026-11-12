@@ -47,6 +47,11 @@ function str(value: unknown): string | undefined {
  * @param payload - the decoded body.
  * @returns the view, or undefined when the body is not an object.
  */
+/** Stable display order that never depends on which account is active. */
+export function sortAccountViews(accounts: readonly AccountView[]): AccountView[] {
+    return [...accounts].sort((left, right) => left.id.localeCompare(right.id))
+}
+
 export function parseAccountList(payload: unknown): AccountListView | undefined {
     if (payload === null || typeof payload !== 'object' || Array.isArray(payload)) return undefined
     const raw = payload as Record<string, unknown>

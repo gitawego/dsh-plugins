@@ -232,15 +232,15 @@ export function findAccount(store: AccountStore, idOrEmail: string): AccountReco
     return store.accounts.find((account) => account.id === key || accountId(account.identity) === key)
 }
 
-/** Browser-safe rows, active first, then alphabetical. */
+/**
+ * Browser-safe rows in a stable email order.
+ *
+ * The active marker never moves a row: switching accounts must not reshuffle
+ * the list the user is looking at.
+ */
 export function summarizeAccounts(store: AccountStore, activeId: string | undefined): AccountSummary[] {
     return [...store.accounts]
-        .sort((left, right) => {
-            const leftActive = left.id === activeId ? 0 : 1
-            const rightActive = right.id === activeId ? 0 : 1
-            if (leftActive !== rightActive) return leftActive - rightActive
-            return left.identity.localeCompare(right.identity)
-        })
+        .sort((left, right) => left.id.localeCompare(right.id))
         .map((account) => ({
             id: account.id,
             identity: account.identity,

@@ -263,7 +263,7 @@ describe('AgyAccountManager', () => {
         const status = manager.loginStatus(started.loginId)
         if (status.status !== 'success') throw new Error('expected success')
         expect(status.accounts.activeEmail).toBe('new@example.com')
-        expect(status.accounts.accounts.map((account) => account.identity)).toEqual(['new@example.com', 'active@example.com'])
+        expect(status.accounts.accounts.map((account) => account.identity)).toEqual(['active@example.com', 'new@example.com'])
         expect(manager.epoch()).toBe(1)
         expect(credentialFromTokenPayload(storage.value!)?.email).toBe('new@example.com')
     })
