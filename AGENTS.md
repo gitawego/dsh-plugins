@@ -128,7 +128,8 @@ in their own shell rather than restarting it from a session.
 
 **A rebuild is not a deploy.** Bun snapshots `file:` dependencies, so
 `node_modules/@gitawego/dsh-*` holds a **copy** of the package, not a symlink
-(DSH's flat loader needs `--linker=hoisted`). Running `bun run build` in the
+(the profile keeps the flat `--linker=hoisted` layout it has always loaded
+from). Running `bun run build` in the
 repo changes nothing the host will ever load, and restarting then loads the
 same stale copy — a fix that "does not work" after a restart is this, every
 time. Deploy in two steps, in this order:
