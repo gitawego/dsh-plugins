@@ -33,13 +33,14 @@ describe('contentText', () => {
         ).toBe('hello\nworld')
     })
 
-    it('renders file and image placeholders', () => {
-        expect(
-            contentText([
-                { type: 'image', attachment: { attachmentId: 'a', mediaType: 'image/png', bytes: 1, width: 1, height: 1, name: 'shot.png' } },
-                { type: 'file', attachment: { attachmentId: 'b', name: 'notes.md', bytes: 2 } },
-            ] as never),
-        ).toBe('[image: shot.png]\n[file: notes.md]')
+    it('renders a file handle and an image placeholder', () => {
+        const text = contentText([
+            { type: 'image', attachment: { attachmentId: 'a', mediaType: 'image/png', bytes: 1, width: 1, height: 1, name: 'shot.png' } },
+            { type: 'file', attachment: { attachmentId: 'attachment:abcdef1234567890' as never, name: 'notes.md', bytes: 2 } },
+        ] as never)
+        expect(text).toContain('[image: shot.png]')
+        expect(text).toMatch(/File "notes\.md" \(2 bytes, sha256:[^)]+\) was uploaded/)
+        expect(text).toContain('cannot access a readable path')
     })
 })
 
@@ -147,6 +148,22 @@ describe('buildPromptContent', () => {
             throw new Error('should not read an offloaded image')
         })
         expect(built.content).toEqual([{ type: 'text', text: '[image: shot.png]' }])
+    })
+
+    it('keeps audio and video files as file handles, never media blocks', async () => {
+        const video = createUserMessage({
+            content: [{ type: 'file', attachment: { attachmentId: 'attachment:abcdef1234567890' as never, name: 'clip.mp4', bytes: 100 } }],
+            source: { kind: 'user' },
+        })
+        const built = await buildPromptContent(options([video]), new Set(), async () => {
+            throw new Error('a video file must not be read as an image')
+        })
+        expect(built.content).toHaveLength(1)
+        expect(built.content[0]?.type).toBe('text')
+        expect((built.content[0] as { text: string }).text).toContain('clip.mp4')
+        expect((built.content[0] as { text: string }).text).toContain('100 bytes')
+        expect((built.content[0] as { text: string }).text).toContain('cannot access a readable path')
+        expect(built.content.some((block) => block.type === 'audio' || block.type === 'image')).toBe(false)
     })
 
     it('labels images in replayed history', async () => {

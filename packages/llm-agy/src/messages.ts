@@ -12,7 +12,7 @@
  *
  * @module @gitawego/dsh-llm-agy/messages
  */
-import { LlmError, type ContentBlock, type GenerateOptions, type ImageBlock, type RequestMessage } from '@deepseek-ai/dsh-llm'
+import { LlmError, fileHandleText, type ContentBlock, type GenerateOptions, type ImageBlock, type RequestMessage } from '@deepseek-ai/dsh-llm'
 import type { AcpContentBlock } from './protocol.ts'
 
 /** Text carried by one content-block list, excluding internal reasoning. */
@@ -32,7 +32,10 @@ export function contentText(content: readonly ContentBlock[], options: { imagePl
                 }
                 break
             case 'file':
-                parts.push(`[file: ${block.attachment.name}]`)
+                // Request assembly normally replaces files with this handle
+                // before the adapter runs; keep the same shape defensively so
+                // an audio/video or text file is never mistaken for media.
+                parts.push(fileHandleText(block.attachment, undefined))
                 break
             case 'tool-call':
                 parts.push(`[tool call ${block.name} ${block.arguments}]`)

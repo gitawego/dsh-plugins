@@ -100,11 +100,31 @@ Practical consequences:
 - `agy` may edit files and run commands, subject to the approval bridge and the
   selected ACP mode.
 - With `imageInput: true` (the default), image attachments are resolved through
-  `ctx.attachments` and sent as ACP `image` content blocks; Gemini models are
-  therefore advertised as `text+image`. Set `imageInput: false` for a text-only
-  route.
+  `ctx.attachments` and sent as ACP `image` content blocks. The route advertises
+  `text+image`. Set `imageInput: false` for a text-only route.
 - ACP has no per-request `temperature`, `maxTokens`, or `stop` field. Those
   `GenerateOptions` fields are ignored; the model's own defaults apply.
+
+### Image, audio, and video
+
+- **Images** are native: DSH passes the durable image reference to the adapter,
+  which resolves the verified bytes through the attachment service and sends an
+  ACP `image` block. If the image was offloaded for context budget, it stays a
+  text placeholder instead.
+- **Audio** is not native. The ACP handshake currently advertises
+  `promptCapabilities.audio: false`, and this adapter never constructs an
+  `audio` block.
+- **Video** has no ACP content-block type at all, so it is not sent natively.
+- **Audio and video uploads** arrive as DSH `file` blocks. Request assembly
+  replaces every file with a read-only handle (name, byte size, hash, and a
+  saved path when one is resolvable), so `agy` can inspect the saved file with
+  its own tools, but the model never receives audio/video bytes. If no path is
+  resolvable, the handle explicitly says so rather than implying the content
+  was read.
+- ACP does not disclose per-model modalities, only an agent-level image
+  capability. The route therefore advertises `text+image` for discovered
+  models; a model that cannot accept an image will reject it at the agent
+  boundary rather than have the plugin invent a per-model table.
 
 ## Sessions and streaming
 
