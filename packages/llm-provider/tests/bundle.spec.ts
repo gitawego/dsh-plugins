@@ -12,7 +12,7 @@
  * 2. the server entry still exports what the loader mounts, and the two halves
  *    do not share a path.
  *
- * Runs against the built output, so it must run after `pnpm build`.
+ * Runs against the built output, so it must run after `bun run build`.
  */
 import { readFileSync, existsSync } from 'node:fs'
 import { createRequire } from 'node:module'
@@ -66,7 +66,7 @@ describe('server entry', () => {
     const entry = join(root, 'lib', 'index.js')
 
     it('exists and exports the plugin surface the loader mounts', () => {
-        expect(existsSync(entry), 'lib/index.js is missing — run `pnpm build` first').toBe(true)
+        expect(existsSync(entry), 'lib/index.js is missing — run `bun run build` first').toBe(true)
         const source = readFileSync(entry, 'utf8')
         for (const symbol of ['apply', 'inject', 'Config', 'DEFAULT_ROUTE', 'createStatusHandler']) {
             expect(source, `${symbol} is not exported by the server entry`).toMatch(new RegExp(`\\b${symbol}\\b`))
@@ -83,7 +83,7 @@ describe('client bundle', () => {
     const bundle = join(root, 'lib', 'client.js')
 
     it('exists', () => {
-        expect(existsSync(bundle), 'lib/client.js is missing — run `pnpm build` first').toBe(true)
+        expect(existsSync(bundle), 'lib/client.js is missing — run `bun run build` first').toBe(true)
     })
 
     it('registers itself under the package name, which is how the loader keys it', () => {

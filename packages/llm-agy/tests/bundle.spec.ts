@@ -1,5 +1,5 @@
 /**
- * Build-output guard. Runs after `pnpm build` (the package's `prepare` does it
+ * Build-output guard. Runs after `bun run build` (the package's `prepare` does it
  * on install), and catches the class of failure the monorepo AGENTS.md records:
  * the loader expects the server entry to exist, be ESM, and export `apply`,
  * `inject`, and `Config`.
@@ -27,7 +27,7 @@ describe('server entry', () => {
     const entry = join(root, 'lib', 'index.js')
 
     it('exists', () => {
-        expect(existsSync(entry), 'lib/index.js is missing — run `pnpm build` first').toBe(true)
+        expect(existsSync(entry), 'lib/index.js is missing — run `bun run build` first').toBe(true)
     })
 
     it('exports the plugin surface the loader mounts', () => {

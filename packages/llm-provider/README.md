@@ -82,8 +82,8 @@ is enabled in the card.
 ## Subscribe/install
 
 ```bash
-pnpm --filter @gitawego/dsh-llm-provider build
-cd ~/.dsh/profiles/web && rm -rf node_modules/@gitawego/dsh-llm-provider && pnpm install --offline
+bun run --filter @gitawego/dsh-llm-provider build
+bash scripts/install-plugins.sh "" llm-provider
 ```
 
 The profile is hoisted: a rebuild in this workspace is not a deploy until the

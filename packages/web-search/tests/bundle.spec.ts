@@ -8,7 +8,7 @@
  * the shared server table lives in `mcp-servers.ts` precisely so importing it
  * does not pull schemastery into the browser.
  *
- * Runs against the built output, so it must run after `pnpm build`.
+ * Runs against the built output, so it must run after `bun run build`.
  */
 import { readFileSync, existsSync } from 'node:fs'
 import { join } from 'node:path'
@@ -24,7 +24,7 @@ const pkg = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8')) as {
 
 describe('the built section bundle', () => {
     it('exists, and is the client export', () => {
-        expect(existsSync(bundle), 'lib/client.js is missing — run `pnpm build` first').toBe(true)
+        expect(existsSync(bundle), 'lib/client.js is missing — run `bun run build` first').toBe(true)
         expect(pkg.exports['./client']?.default).toBe('./lib/client.js')
     })
 

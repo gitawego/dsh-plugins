@@ -95,9 +95,9 @@ the only way to put that subscription behind `ctx.llm`.
 ## Commands
 
 ```bash
-pnpm --filter @gitawego/dsh-llm-agy typecheck
-pnpm --filter @gitawego/dsh-llm-agy test
-pnpm --filter @gitawego/dsh-llm-agy build
+bun run --filter @gitawego/dsh-llm-agy typecheck
+bun run --filter @gitawego/dsh-llm-agy test
+bun run --filter @gitawego/dsh-llm-agy build
 ```
 
 Real-CLI smoke checks are manual and require an authenticated `agy`. The unit

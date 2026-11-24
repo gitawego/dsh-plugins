@@ -1,5 +1,9 @@
 # DSH compatibility audit
 
+> Historical audit. The commands below record what was run at the time, with
+> pnpm. The repository now uses Bun; see [`README.md`](README.md) for the
+> current workflow.
+
 Audit date: 2026-11-03. Repo commit: `9f34a80`.
 
 ## What was tested
@@ -153,7 +157,7 @@ version. Port `lsp` and `llm-provider`.
 
 ## Migration checklist (when the host moves to 0.1.7+ / 0.2.x)
 
-1. Bump every DSH pin (peer + dev) to the host's exact version; `pnpm install`.
+1. Bump every DSH pin (peer + dev) to the host's exact version; `bun install`.
 2. `llm-provider`: rewrite `src/context.ts` against `Message` /
    `ToolResultMessage` / branded ids; use the default-exported image offload
    helper and its `width`/`height` target; replace `ctx.settings.register`

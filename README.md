@@ -2,15 +2,16 @@
 
 Monorepo of DeepSeek Harness (DSH) plugins. Each package is a publishable DSH
 plugin under the `@gitawego` npm scope, targeting the DSH **`^0.2.2-rc.1`**
-compatibility range (tested against the installed `0.2.2-rc.1`; the 0.1.x line
+compatibility range (the lockfile pins the tested `0.2.2-rc.5`; the 0.1.x line
 is not supported — see [`COMPATIBILITY.md`](COMPATIBILITY.md)).
 
 ## Commands
 
 ```bash
-pnpm check:pins   # every @deepseek-ai/* / @earendil-works/* declaration must accept the installed harness
-pnpm verify       # check:pins + typecheck + build + tests
-pnpm fix:pins     # widen declarations that reject the resolved host
+bun install        # install the workspace and build every package
+bun run check:pins # every @deepseek-ai/* / @earendil-works/* declaration must accept the installed harness
+bun run verify     # check:pins + typecheck + build + tests
+bun run fix:pins   # widen declarations that reject the resolved host
 ```
 
 A plugin runs *inside* the harness process, so a host package it declares at
@@ -18,7 +19,7 @@ runtime is a second copy: an older protocol, catalog, or endpoint than the host
 it loads into. That is not theory — one package here pinned `pi-ai@0.85.1`
 against a `1.5.0` host and grew a whole provider route to compensate. Runtime
 host dependencies are still forbidden. Development and peer declarations use
-ranges, and `pnpm check:pins` only fails when a range cannot accept the host
+ranges, and `bun run check:pins` only fails when a range cannot accept the host
 that is actually installed. `scripts/install-plugins.sh` refuses to deploy on
 that failure.
 
@@ -53,11 +54,12 @@ that failure.
 
 ## Layout & tooling
 
-- **pnpm workspace** (pnpm 12). Root `pnpm-workspace.yaml` declares
-  `packages/*` and, importantly, the **`allowBuilds`** map for native
-  dependencies that need a postinstall (esbuild, rollup + their platform
-  binaries). When you add a package that brings one of these, extend
-  `allowBuilds` — otherwise CI fails with `ERR_PNPM_IGNORED_BUILDS`.
+- **Bun workspace** (Bun 1.4.5). Root `package.json` declares
+  `workspaces: ["packages/*"]`; `bun.lock` pins the tested dependency graph.
+  Bun blocks dependency lifecycle scripts by default, so a package that needs a
+  postinstall (for example esbuild) must be listed in the root
+  **`trustedDependencies`**. Bun installs the workspace with an isolated
+  `node_modules` layout; the DSH profile uses a flat, hoisted one.
 - Each package self-contains its `package.json`, `tsconfig*.json`,
   `src/`, `tests/`, `scripts/`, and `cordis.patch.yml` (mirroring a
   standalone DSH plugin). A package is server-only, or also ships a Web client
@@ -69,21 +71,23 @@ that failure.
    `"name": "@gitawego/dsh-<name>"` with a build that emits `lib/`.
 2. Add its `cordis.patch.yml` (bundle patch) and, if it renders in the Web
    GUI, a `dsh.client` declaration.
-3. Extend `allowBuilds` in `pnpm-workspace.yaml` for any native deps.
-4. Install into a DSH profile (e.g. web) as a `file:` dep + `dsh plugin
-   --profile <name> install`.
+3. Extend `trustedDependencies` in the root `package.json` for any native deps
+   whose postinstall must run.
+4. Install into a DSH profile with `bash scripts/install-plugins.sh`, which
+   writes the `file:` dependency and runs Bun. DSH's `dsh plugin` command
+   forwards to pnpm, which this repository intentionally no longer uses.
 
 ## Commands
 
-- `pnpm install` — install all workspace deps (runs each package's `prepare`
+- `bun install` — install all workspace deps (runs each package's `prepare`
   build).
-- `pnpm -r --parallel typecheck` / `test` — per-package typecheck/tests.
-- `pnpm -r build` — build all packages to `lib/`.
+- `bun run --filter '*' typecheck` / `test` — per-package typecheck/tests.
+- `bun run --filter '*' build` — build all packages to `lib/`.
 
 ## CI / release
 
-- **CI** (`.github/workflows/ci.yml`): on push/PR, pnpm install →
-  typecheck → test → build for every package.
+- **CI** (`.github/workflows/ci.yml`): on push/PR, `bun install` →
+  typecheck → build → test for every package.
 - **Release** (`.github/workflows/release.yml`): push a `v*` tag → test/build
   → publish **every package whose version isn't already on npm** via OIDC
   trusted publishing (no token). The publish loop globs `packages/*`

@@ -88,10 +88,10 @@ code.
 ## Commands
 
 ```bash
-pnpm --filter @gitawego/dsh-llm-provider test     # vitest run
-pnpm --filter @gitawego/dsh-llm-provider build    # tsc x2 + esbuild client bundle
+bun run --filter @gitawego/dsh-llm-provider test     # vitest run
+bun run --filter @gitawego/dsh-llm-provider build    # tsc x2 + esbuild client bundle
 ```
 
-A build is not a deploy: the web profile is hoisted, so copy through
-`rm -rf node_modules/@gitawego/dsh-llm-provider && pnpm install --offline` and
-verify with `md5sum`.
+A build is not a deploy: Bun snapshots `file:` dependencies into the profile,
+so refresh it with `bash scripts/install-plugins.sh "" llm-provider` and verify
+with `md5sum`.

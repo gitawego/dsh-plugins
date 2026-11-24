@@ -89,9 +89,9 @@ All pi-lsp features map onto DSH extension points; the pi-specific lifecycle sur
   ```
 
   and exports `./client` (built browser bundle committed as `lib/client.js`, like vision/web-search).
-- Install: `dsh plugin --profile web add ~/workspace/dsh-plugins/packages/lsp`, then restart the Web profile
-  (and `--profile headless` for parity).
-- No **sharp**/**esbuild**/native deps → **no `allowBuilds` change** in `pnpm-workspace.yaml`; the package is
+- Install: from the monorepo root, `bash scripts/install-plugins.sh ~/.dsh/profiles/web lsp`, then restart
+  the Web profile (and `--profile headless` for parity).
+- No **sharp**/**esbuild**/native deps → **no `trustedDependencies` change** in the root `package.json`; the package is
   pure Node + browser TS (servers are spawned child processes only).
 - Peer deps: `cordis`, `@deepseek-ai/dsh-tools`, `@deepseek-ai/dsh-agent`, `@deepseek-ai/dsh-settings`,
   `@deepseek-ai/dsh-commands`, `schemastery`.
@@ -265,7 +265,7 @@ fixture (port of `test/fixtures/fake-server.mjs`) that echoes `initialize`, serv
 
 - `packages/lsp/` with `SPEC.md`, `cordis.patch.yml`, package.json, tsconfigs, `src/*`, `src/client/index.tsx`,
   `tests/*`, and `lib/` built output.
-- Typecheck (`tsc --noEmit` x2), `pnpm test`, `pnpm build` all green; `pnpm -r --parallel` covers it.
+- Typecheck (`tsc --noEmit` x2), `bun run test`, `bun run build` all green; `bun run --filter '*'` covers it.
 - Live smoke against a real `typescript-language-server` on a small TS fixture: `lsp_diagnostics` returns real
   type errors; progressive hook surfaces a summary after an `edit` that introduces an error; `/lsp` shows the
   session; `lsp_rename` + `lsp_hover` return correct payloads.

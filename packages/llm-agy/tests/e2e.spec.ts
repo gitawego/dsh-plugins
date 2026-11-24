@@ -5,7 +5,7 @@
  * Run this one explicitly when you need proof that the installed `agy` still
  * speaks the protocol this adapter implements:
  *
- *   DSH_AGY_E2E=1 pnpm --filter @gitawego/dsh-llm-agy test
+ *   DSH_AGY_E2E=1 bun run --filter @gitawego/dsh-llm-agy test
  */
 import { mkdtemp, rm } from 'node:fs/promises'
 import { join } from 'node:path'

@@ -7,7 +7,8 @@ persistent per-(project, server) sessions, progressive diagnostics after agent e
 ## Install
 
 ```bash
-dsh plugin --profile web add ~/workspace/dsh-plugins/packages/lsp
+# from the monorepo root
+bash scripts/install-plugins.sh ~/.dsh/profiles/web lsp
 ```
 
 Restart the Web profile (`--profile headless` for parity). The plugin registers the `lsp` bundle patch and,
@@ -141,10 +142,10 @@ binary attempt a managed install first.
 ## Development
 
 ```bash
-pnpm install
-pnpm test            # vitest (run serially — the fake-server integrations use stdio)
-pnpm typecheck       # tsc --noEmit (server + client)
-pnpm build           # tsc x2 + build-client → lib/
+bun install         # from the monorepo root
+bun run test        # vitest (run serially — the fake-server integrations use stdio)
+bun run typecheck   # tsc --noEmit (server + client)
+bun run build       # tsc x2 + build-client → lib/
 ```
 
 Design and feature-parity matrix: `SPEC.md`.

@@ -3,15 +3,21 @@
     "private": true,
     "description": "DSH plugin monorepo: deepseek-harness plugins",
     "type": "module",
+    "workspaces": [
+        "packages/*"
+    ],
     "scripts": {
-        "check": "node scripts/check-host-pins.mjs",
-        "check:pins": "node scripts/check-host-pins.mjs",
-        "check:secrets": "node scripts/check-secrets.mjs",
-        "fix:pins": "node scripts/check-host-pins.mjs --fix",
-        "build": "pnpm -r build",
-        "typecheck": "pnpm -r typecheck",
-        "test": "pnpm check:pins && pnpm check:secrets && pnpm -r test",
-        "verify": "pnpm check:pins && pnpm check:secrets && pnpm -r typecheck && pnpm -r build && pnpm -r test"
+        "check": "bun run scripts/check-host-pins.mjs",
+        "check:pins": "bun run scripts/check-host-pins.mjs",
+        "check:secrets": "bun run scripts/check-secrets.mjs",
+        "fix:pins": "bun run scripts/check-host-pins.mjs --fix",
+        "build": "bun run --filter '*' build",
+        "typecheck": "bun run --filter '*' typecheck",
+        "test": "bun run check:pins && bun run check:secrets && bun run --filter '*' test",
+        "verify": "bun run check:pins && bun run check:secrets && bun run --filter '*' typecheck && bun run --filter '*' build && bun run --filter '*' test"
     },
-    "packageManager": "pnpm@12.0.0-rc.7"
+    "packageManager": "bun@1.4.5",
+    "trustedDependencies": [
+        "esbuild"
+    ]
 }

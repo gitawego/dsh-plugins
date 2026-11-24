@@ -11,11 +11,20 @@
 # The script is idempotent: running it twice changes nothing unless a package
 # was added or removed from packages/.
 #
-# This works around a pnpm 12 limitation where `dsh plugin add <path>` fails
-# because the dsh plugin script's anchorPathSpec regex only handles relative
-# paths starting with . or .. — absolute paths pass through verbatim and pnpm
-# rejects them as package names. Instead, this script edits the profile
-# manifest directly (adding file deps + bundles) and runs pnpm install.
+# DSH's own `dsh plugin` command forwards to pnpm. This repository uses Bun
+# for the workspace and for profile installs, so the script edits the profile
+# manifest directly (adding file deps + bundles) and runs Bun itself. The two
+# install flags are load-bearing:
+#
+#   --linker=hoisted    a flat node_modules, the layout DSH loads from;
+#   --production        do not install the workspace packages' devDependencies;
+#   --omit=peer         do not install a profile-local copy of every
+#                       @deepseek-ai peer. A profile copy shadows the running
+#                       host, which is how an old dsh-host-webserver once broke
+#                       the web app after a host upgrade.
+#
+# Bun snapshots file: dependencies (it does not symlink them), so a repo build
+# is still not a deploy. The build below runs before the profile install.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -25,6 +34,11 @@ PKG="${2:-}"
 
 echo "monorepo: $MONOREPO_DIR"
 echo "profile:  $PROFILE"
+
+if ! command -v bun >/dev/null 2>&1; then
+  echo "ERROR: bun is not on PATH; install Bun 1.4.5 or newer." >&2
+  exit 1
+fi
 
 # Refuse to deploy a manifest that disagrees with the harness it will load into.
 # A runtime or stale dependency on a host package installs a second copy inside
@@ -44,9 +58,12 @@ if [ ! -f "$PROFILE/package.json" ]; then
   exit 1
 fi
 
+# Build the file: packages before they are snapshotted into the profile.
+bun run --cwd "$MONOREPO_DIR" --filter '*' build
+
 # Scan packages/ and update profile manifest
 python3 - "$MONOREPO_DIR" "$PROFILE" "$PKG" << 'PYEOF'
-import json, subprocess, os, sys
+import json, subprocess, os, shutil, sys
 
 monorepo = sys.argv[1]
 profile = sys.argv[2]
@@ -94,9 +111,28 @@ else:
     with open(manifest_path, 'w') as f:
         f.write(json.dumps(manifest, indent=2) + '\n')
 
-# Run pnpm install --offline
+# Make ad-hoc `bun install` in the profile behave like this script: flat layout,
+# no devDependencies, no profile-local peer copies. Do not overwrite a bunfig
+# the user already owns.
+bunfig = os.path.join(profile, 'bunfig.toml')
+if not os.path.exists(bunfig):
+    with open(bunfig, 'w') as f:
+        f.write('[install]\nlinker = "hoisted"\nproduction = true\npeer = false\n')
+    print('  + bunfig.toml (hoisted, production, no peers)')
+
+# A bun.lock written by an install that did not pass --omit=peer keeps host
+# peers in the graph, and a plain re-install will not remove them. Start clean
+# when the profile already has a profile-local host tree.
+host_tree = os.path.join(profile, 'node_modules', '@deepseek-ai')
+if os.path.isdir(host_tree):
+    print('  ! removing stale profile-local @deepseek-ai copies')
+    shutil.rmtree(host_tree)
+    lock = os.path.join(profile, 'bun.lock')
+    if os.path.exists(lock):
+        os.remove(lock)
+
 result = subprocess.run(
-    ['pnpm', 'install', '--offline'],
+    ['bun', 'install', '--linker=hoisted', '--production', '--omit=peer', '--prefer-offline'],
     cwd=profile,
     capture_output=True,
     text=True,
@@ -104,6 +140,12 @@ result = subprocess.run(
 print(result.stdout.strip())
 if result.returncode != 0:
     print(result.stderr.strip())
+    sys.exit(1)
+
+# The harness supplies these at runtime. A profile-local copy shadows it.
+if os.path.isdir(host_tree):
+    print('ERROR: bun installed a profile-local @deepseek-ai tree.')
+    print('       Remove bun.lock and retry; the profile must resolve host packages from dsh.')
     sys.exit(1)
 PYEOF
 

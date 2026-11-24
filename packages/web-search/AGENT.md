@@ -274,8 +274,8 @@ user's interactive shell, not from this session.
 
 ## Resume / restart checklist
 
-1. `cd packages/web-search && pnpm install --offline && pnpm typecheck && pnpm test && pnpm build`
-2. Refresh the worker in the web profile: `cd ~/.dsh/profiles/web && rm -rf node_modules/@gitawego/dsh-web-search && pnpm install --offline`
+1. From the monorepo root: `bun install && bun run --filter @gitawego/dsh-web-search typecheck && bun run --filter @gitawego/dsh-web-search test && bun run --filter @gitawego/dsh-web-search build`
+2. Refresh the worker in the web profile: `bash scripts/install-plugins.sh "" web-search`
 3. **Do NOT restart dsh.** Open a new browser tab.
 4. The Web Search (enhanced) card appears under Settings → Plugins →
    Plugin configuration. Toggle, stage, save.

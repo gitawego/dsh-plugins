@@ -1,5 +1,5 @@
-# Monorepo CI: typecheck + test + build for every package in packages/*.
-# Uses pnpm (the workspace package manager) with a cache on the lockfile.
+# Monorepo CI: typecheck + build + test for every package in packages/*.
+# Uses Bun (the workspace package manager) with a cache on the lockfile.
 name: CI
 
 on:
@@ -14,22 +14,31 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Enable pnpm (reads the root packageManager field)
-        uses: pnpm/action-setup@v4
+      - name: Enable Bun (reads the root packageManager field)
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.5
 
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
-          cache: pnpm
+
+      - name: Cache Bun downloads
+        uses: actions/cache@v4
+        with:
+          path: ~/.bun/install/cache
+          key: ${{ runner.os }}-bun-${{ hashFiles('bun.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-bun-
 
       - name: Install dependencies
-        run: pnpm install --frozen-lockfile
+        run: bun install --frozen-lockfile
 
       - name: Typecheck
-        run: pnpm -r --parallel typecheck
-
-      - name: Test
-        run: pnpm -r --parallel test
+        run: bun run --filter '*' typecheck
 
       - name: Build
-        run: pnpm -r build
+        run: bun run --filter '*' build
+
+      - name: Test
+        run: bun run --filter '*' test

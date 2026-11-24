@@ -34,7 +34,7 @@
  *   node scripts/check-host-pins.mjs --fix      # widen failing declarations
  *   node scripts/check-host-pins.mjs --host /path/to/@deepseek-ai/dsh
  *
- * Exit code 1 on any violation, so `pnpm check` fails a build rather than
+ * Exit code 1 on any violation, so `bun run check` fails a build rather than
  * letting a stale pin reach a profile.
  */
 import { accessSync, constants, existsSync, readFileSync, readdirSync, writeFileSync } from 'node:fs'
@@ -124,7 +124,7 @@ function satisfies(version, range) {
 
 /** The version the host resolves for a package, or undefined. */
 function hostVersion(hostDir, name) {
-    // Direct dependency of the harness, then hoisted one level up (pnpm store).
+    // Direct dependency of the harness, then hoisted one level up (install store).
     const direct = readJson(join(hostDir, 'node_modules', name, 'package.json'))
     if (direct !== undefined) return direct.version
     const hoisted = readJson(join(hostDir, '..', '..', name, 'package.json'))
@@ -204,7 +204,7 @@ for (const { path, manifest } of workspacePackages()) {
                     changed = true
                     console.log(`  fixed ${manifest.name}: ${section}.${name} ${declared} → ^${host.version}`)
                 } else {
-                    fail(manifest.name, `${section}.${name} = "${declared}" does not accept workspace ${pinned} and host ${host.version}; widen the range or run \`pnpm check:pins --fix\`.`)
+                    fail(manifest.name, `${section}.${name} = "${declared}" does not accept workspace ${pinned} and host ${host.version}; widen the range or run \`bun run fix:pins\`.`)
                 }
                 continue
             }
@@ -217,7 +217,7 @@ for (const { path, manifest } of workspacePackages()) {
                 changed = true
                 console.log(`  fixed ${manifest.name}: ${section}.${name} ${declared} → ^${pinned}`)
             } else {
-                fail(manifest.name, `${section}.${name} = "${declared}" does not accept the resolved ${name}@${pinned}. Widen the range or run \`pnpm check:pins --fix\`.`)
+                fail(manifest.name, `${section}.${name} = "${declared}" does not accept the resolved ${name}@${pinned}. Widen the range or run \`bun run fix:pins\`.`)
             }
         }
     }

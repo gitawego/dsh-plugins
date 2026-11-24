@@ -183,7 +183,7 @@ keeps GitHub secret scanning meaningful. Configure it once, either:
 
 ```bash
 # Extract and test the candidates from the installed agy binary
-pnpm --filter @gitawego/dsh-llm-agy oauth-secret
+bun run --filter @gitawego/dsh-llm-agy oauth-secret
 ```
 
 or set `ANTIGRAVITY_OAUTH_CLIENT_SECRET`. The extractor writes
@@ -234,9 +234,9 @@ does not mount the route.
 ## Development
 
 ```bash
-pnpm --filter @gitawego/dsh-llm-agy typecheck
-pnpm --filter @gitawego/dsh-llm-agy test
-pnpm --filter @gitawego/dsh-llm-agy build
+bun run --filter @gitawego/dsh-llm-agy typecheck
+bun run --filter @gitawego/dsh-llm-agy test
+bun run --filter @gitawego/dsh-llm-agy build
 ```
 
 The test suite includes a scriptable fake ACP agent (`tests/fixtures/fake-agy.mjs`)

@@ -73,8 +73,8 @@ with both shipped parsers — Parallel's JSON envelope, then Exa's
 
 ## Install / Uninstall contract (the `cordis.patch.yml`)
 
-Adding this package to a profile's `dsh.profile.bundles` (via `dsh plugin`)
-applies the bundle's `cordis.patch.yml` as one profile layer. The patch does
+Adding this package to a profile's `dsh.profile.bundles` (via the install
+script) applies the bundle's `cordis.patch.yml` as one profile layer. The patch does
 **two things** — together these are the install contract, and removing them
 on uninstall is automatic:
 
@@ -85,9 +85,8 @@ on uninstall is automatic:
 2. Override the `id: web` row's `config.searchProvider` so the seam routes
    `web_search` calls to this provider instead of `deepseek-official`.
 
-On **uninstall**, pnpm removes the package, the reconciler drops the entry
-from `dsh.profile.bundles`, and the next boot composes the tree **without**
-this bundle layer — so:
+On **uninstall**, the package and its entry in `dsh.profile.bundles` are
+removed, and the next boot composes the tree **without** this bundle layer — so:
 - this plugin no longer inserts and `apply()` never runs (its provider,
   the settings namespace, and the host routes are gone);
 - the `id: web` row's `config.searchProvider` reverts to whatever the
@@ -162,8 +161,8 @@ profile's own `cordis.patch.yml` (which outranks the bundle's layer) or
 ## Development
 
 ```
-pnpm install
-pnpm test        # vitest
-pnpm build       # tsc -> lib/
-pnpm typecheck
+bun install      # from the monorepo root
+bun run test     # vitest
+bun run build    # tsc -> lib/
+bun run typecheck
 ```

@@ -63,7 +63,7 @@ boot.
 - Import-graph tests are cheap and fast; prefer them over waiting for
   integration/boot failures.
 - Any test that touches build artifacts MUST run against a freshly built
-  output (`npm run build` first), never a stale `lib/`.
+  output (`bun run build` first), never a stale `lib/`.
 
 ---
 
@@ -90,8 +90,14 @@ together for version compatibility. Currently:
   `WebSearchProvider` (Anthropic + free MCP backends).
 - `packages/lsp` — LSP bridge.
 
-Each package is independently published and installed via `dsh plugin`,
-but they share the same Node version, pnpm version, and `0.2.2-rc.1` DSH pinning.
+Each package is independently published and installed into a DSH profile, but
+they share the same Node version, Bun version, and `^0.2.2-rc.1` DSH
+compatibility range.
+
+DSH's own `dsh plugin` command forwards to pnpm. This repository deliberately
+uses Bun for the workspace and for profile installs, so `dsh plugin
+add/remove/install` is not available for these profiles. Use
+`scripts/install-plugins.sh` instead; DSH boot itself does not need pnpm.
 
 ## Non-negotiable rules (apply to every package)
 
@@ -109,9 +115,9 @@ On Termux the in-place restart is fragile:
   browser chrome uses whichever one wins.
 
 The browser's `client.js` is loaded FRESH on each new tab via the
-`__DSH_BOOT__` script's URL. After `pnpm install --offline` in the profile
-directory (`~/.dsh/profiles/web`), **open a new browser tab** — the
-rebuilt bundle is picked up immediately.
+`__DSH_BOOT__` script's URL. After `bun install` in the profile directory
+(`~/.dsh/profiles/web`), **open a new browser tab** — the rebuilt bundle is
+picked up immediately.
 
 **Host halves are different: they need a restart.** A plugin's server-side
 `apply()` runs at boot, so new host code (a route registration, an adapter
@@ -120,15 +126,15 @@ symptom is a 404 from a route that exists on disk, or a fix that appears not to
 work. Client bundles reload per tab; host code does not. Ask the user to restart
 in their own shell rather than restarting it from a session.
 
-**A rebuild is not a deploy.** The profile installs these packages with
-`nodeLinker: hoisted` (see `~/.dsh/profiles/<profile>/pnpm-workspace.yaml`), so
-`node_modules/@gitawego/dsh-*` holds a **copy** of `lib/`, not a symlink. Running
-`pnpm build` in the repo changes nothing the host will ever load, and restarting
-then loads the same stale copy — a fix that "does not work" after a restart is
-this, every time. Deploy in two steps, in this order:
+**A rebuild is not a deploy.** Bun snapshots `file:` dependencies, so
+`node_modules/@gitawego/dsh-*` holds a **copy** of the package, not a symlink
+(DSH's flat loader needs `--linker=hoisted`). Running `bun run build` in the
+repo changes nothing the host will ever load, and restarting then loads the
+same stale copy — a fix that "does not work" after a restart is this, every
+time. Deploy in two steps, in this order:
 
 ```bash
-cd ~/.dsh/profiles/web && pnpm install --offline   # refresh the copied lib/
+bash scripts/install-plugins.sh   # build + refresh the profile copies
 # then restart dsh in the user's own shell, and open a new tab
 ```
 
@@ -151,18 +157,18 @@ This rule is recorded in each package's `AGENT.md` as
 
 DSH host packages use a **compatibility range**, not an exact pin. The current
 range is `^0.2.2-rc.1` for `@deepseek-ai/dsh-*`; `@deepseek-ai/cordis` and
-`@deepseek-ai/schemastery` keep `^4.1.0` / `^3.19.0`. The lockfile still pins the
-exact build this workspace was tested against, so a range does not silently
-change what CI compiles; it only says which host versions a plugin claims to
-accept.
+`@deepseek-ai/schemastery` keep `^4.1.0` / `^3.19.0`. The `bun.lock` lockfile
+still pins the exact build this workspace was tested against (currently
+`0.2.2-rc.5`), so a range does not silently change what CI compiles; it only
+says which host versions a plugin claims to accept.
 
 Semver excludes prereleases from ordinary ranges, so `^0.2.2-rc.1` accepts the
-current `0.2.2-rc.1`, `0.2.2`, and later stable `0.2.x` releases. The repository
+tested `0.2.2-rc.5`, `0.2.2`, and later stable `0.2.x` releases. The repository
 checker treats a `0.2.x` prerelease as inside the same line, because that is how
 the installed DSH rc line upgrades in practice. Package-manager peer warnings
 for prereleases are not install blockers; the host copy is what loads at runtime.
 
-**Less strict is not unbounded.** `pnpm check:pins`
+**Less strict is not unbounded.** `bun run check:pins`
 (`scripts/check-host-pins.mjs`) still enforces the rule that matters:
 
 - a `@deepseek-ai/*` or `@earendil-works/*` package must never be a runtime
@@ -170,29 +176,30 @@ for prereleases are not install blockers; the host copy is what loads at runtime
   broke the old `pi-ai` adapter;
 - every `devDependencies` / `peerDependencies` declaration must accept the host
   (and, for browser-side packages, the workspace client copy) actually resolved;
-- `pnpm fix:pins` widens a rejected declaration to `^<resolved host>` instead of
-  rewriting an exact pin.
+- `bun run fix:pins` widens a rejected declaration to `^<resolved host>` instead
+  of rewriting an exact pin.
 
-`pnpm test` runs the checker first, and `scripts/install-plugins.sh` refuses to
-deploy a profile when it fails.
+`bun run test` runs the checker first, and `scripts/install-plugins.sh` refuses
+to deploy a profile when it fails.
 
-**After a host upgrade:** run `pnpm install` in the repo to refresh the lockfile,
-run `pnpm -r typecheck && pnpm -r test`, then reinstall the profile. If the new
+**After a host upgrade:** run `bun install` in the repo to refresh the lockfile,
+run `bun run typecheck && bun run test`, then reinstall the profile. If the new
 host is outside the declared range, widen the range to `^<new host>` and fix the
 actual API break; do not “solve” it by adding a runtime host dependency. The
 range is a compatibility claim, so a host API change must surface as a type or
 test failure, not as a silent second copy.
 
-After every host upgrade, run `pnpm install` in the profile directory
-(`~/.dsh/profiles/web`) WITHOUT `--offline`/frozen lockfile, so stale pinned
-copies of host packages cannot linger there: the loader resolves bare module
-names profile-first, and a stale profile copy shadows the upgraded host
-(this is exactly how `dsh web` started serving bare HTTP 400 for `/` after
-the `0.1.0-rc.7 → 0.1.1-rc.1` upgrade: a profile-local
-`dsh-host-webserver@0.1.0-rc.7` without the new `renderIndex()` shadowed the
-host's rc.1 copy). Never add `dsh-host-webserver` as a regular dependency:
-it must stay an optional peer or be omitted entirely, otherwise pnpm hoists a
-frozen copy into the profile that later shadows the host.
+After every host upgrade, reinstall the profile with
+`--linker=hoisted --production --omit=peer` (the install script does this).
+`--omit=peer` is the safety belt: the loader resolves bare module names
+profile-first, so a profile-local `@deepseek-ai` copy shadows the upgraded host.
+Before switching a profile from pnpm, remove any legacy
+`node_modules/@deepseek-ai` tree left by pnpm. This is exactly how `dsh web`
+started serving bare HTTP 400 for `/` after the `0.1.0-rc.7 → 0.1.1-rc.1`
+upgrade: a profile-local `dsh-host-webserver@0.1.0-rc.7` without the new
+`renderIndex()` shadowed the host's rc.1 copy. Never add `dsh-host-webserver`
+as a regular dependency: it must stay an optional peer or be omitted entirely,
+otherwise the profile install hoists a frozen copy that later shadows the host.
 
 The DSH dependency set:
 
@@ -215,7 +222,7 @@ The DSH dependency set:
 - `@deepseek-ai/cordis` (peer, `^4.1.0`)
 - `@deepseek-ai/schemastery` (peer, `^3.19.0`)
 
-A `pnpm install` against a host at a different rc level will fail or
+A lockfile refresh against a host at a different rc level will fail or
 silently use the wrong type contracts.
 
 ### Non-DSH dependency policy
@@ -356,9 +363,8 @@ google-chrome --headless=new --no-sandbox --disable-gpu \
 Use the printed DevTools endpoint to open the DSH URL, click through the
 settings flow, and dump the rendered DOM plus console logs. Keep probe
 scripts and browser profiles outside this repository. Add diagnostic
-`console.log` lines to the plugin's React component, rebuild
-(`pnpm install --offline` in the profile dir), open a new tab, and read
-the logs.
+`console.log` lines to the plugin's React component, rebuild and refresh the
+profile (`bash scripts/install-plugins.sh`), open a new tab, and read the logs.
 
 This is the only way to verify `useSyncExternalStore` behavior, `useState`
 re-renders, and mobile touch target hit-tests without a real device.
@@ -369,8 +375,8 @@ re-renders, and mobile touch target hit-tests without a real device.
 dsh-plugins/
 ├── AGENTS.md               # this file (monorepo-wide + agent rules)
 ├── README.md
-├── package.json            # pnpm workspace root
-├── pnpm-workspace.yaml
+├── package.json            # Bun workspace root
+├── bun.lock
 ├── packages/
 │   ├── llm-provider/
 │   │   ├── AGENT.md       # architecture + design rules
@@ -391,9 +397,9 @@ dsh-plugins/
 
 ## Resume / dev workflow
 
-1. `cd dsh-plugins && pnpm install` (resolves workspace deps)
-2. For each package you want to touch: `cd packages/<name> && pnpm typecheck && pnpm test && pnpm build`. Report only the counts from the run you just performed.
-3. `cd ~/.dsh/profiles/web && rm -rf node_modules/<your-package> && pnpm install --offline` (refresh the worker)
+1. `cd dsh-plugins && bun install` (resolves workspace deps and builds)
+2. For each package you want to touch: `cd packages/<name> && bun run typecheck && bun run test && bun run build`. Report only the counts from the run you just performed.
+3. `bash scripts/install-plugins.sh` (build + refresh the profile copies)
 4. Open a new browser tab; the rebuilt bundle is picked up by the
    `__DSH_BOOT__` script.
 5. To verify a real user flow: use headless Chrome + CDP as described
