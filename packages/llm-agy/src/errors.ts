@@ -67,7 +67,7 @@ export function classifyAcpError(error: unknown): LlmError {
         if (/invalid|bad request|400/.test(detail)) {
             return new LlmError(error.message, 'INVALID_REQUEST', { cause: error })
         }
-        return new LlmError(error.message, 'ACP_ERROR', { cause: error })
+        return new LlmError(error.message, 'UNKNOWN', { cause: error })
     }
 
     const message = error instanceof Error ? error.message : String(error)

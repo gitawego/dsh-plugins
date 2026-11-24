@@ -444,7 +444,7 @@ export class AgyAdapter extends LlmAdapter {
         transient: boolean
         permissionSignal: AbortSignal | undefined
     }): Promise<SessionEntry> {
-        if (this.disposed) throw new LlmError('Antigravity provider is disposed', 'DISPOSED')
+        if (this.disposed) throw new LlmError('Antigravity provider is disposed', 'REGISTRATION_DISPOSED')
         const state: { signal?: AbortSignal } = { signal: input.permissionSignal }
         const onPermission: PermissionHandler = async (request: AcpRequestPermissionRequest) => {
             if (this.config().permissionMode === 'deny') return { outcome: { outcome: 'cancelled' } }

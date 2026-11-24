@@ -354,11 +354,11 @@ describe('AgyAdapter failures', () => {
         await expect(collect(adapter, options([user('hello')]))).rejects.toMatchObject({ code: 'EMPTY_RESPONSE' })
     })
 
-    it('classifies a JSON-RPC prompt failure as ACP_ERROR', async () => {
+    it('classifies a JSON-RPC prompt failure as UNKNOWN', async () => {
         const dir = await tempDir()
         setEnv({ FAKE_AGY_PROMPT_ERROR: '1' })
         const { adapter } = makeAdapter(dir)
-        await expect(collect(adapter, options([user('hello')]))).rejects.toMatchObject({ code: 'ACP_ERROR' })
+        await expect(collect(adapter, options([user('hello')]))).rejects.toMatchObject({ code: 'UNKNOWN' })
     })
 
     it('cancels an aborted turn and drops the session', async () => {

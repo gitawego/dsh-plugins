@@ -128,7 +128,7 @@ export class AcpSession {
             if (init.protocolVersion !== ACP_PROTOCOL_VERSION) {
                 throw new LlmError(
                     `Antigravity ACP speaks protocol ${init.protocolVersion}, but this adapter implements ${ACP_PROTOCOL_VERSION}`,
-                    'INCOMPATIBLE_PROTOCOL',
+                    'CLIENT_UPGRADE_REQUIRED',
                 )
             }
 
@@ -194,7 +194,7 @@ export class AcpSession {
     async configure(model: string, effort: string | undefined, mode: string): Promise<void> {
         const modelOption = findConfigOption(this.configOptions, 'model', 'model')
         if (modelOption === undefined) {
-            throw new LlmError('Antigravity ACP did not advertise a model selector', 'UNSUPPORTED_MODEL')
+            throw new LlmError('Antigravity ACP did not advertise a model selector', 'MODEL_UNSUPPORTED')
         }
         const values = selectOptions(modelOption).map((option) => option.value)
         if (values.length > 0 && !values.includes(model)) {
